@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TimeManagementModule } from './time-management/time-management.module';
-import { RecruitmentModule } from './recruitment/recruitment.module';
+import { RecruitmentModule } from './recruitment/recruitement.module';
 import { LeavesModule } from './leaves/leaves.module';
 
 import { PayrollTrackingModule } from './payroll-tracking/payroll-tracking.module';
