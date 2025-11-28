@@ -1,79 +1,35 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-
-// ---- IMPORT OTHER MODULES ----
-import { EmployeeModule } from '../employee-profile/employee-profile.module';
-import { PayrollModule } from '../payroll/payroll.module';
-import { LeavesModule } from 'src/leaves/leaves.module';  
-// ---- IMPORT ALL 19 SCHEMAS ----
-import { AttendanceCorrectionRequest, AttendanceCorrectionRequestSchema } from './schemas/attendance-correction-request.schema';
-import { AttendanceExceptionReport, AttendanceExceptionReportSchema } from './schemas/attendance-exception-report.schema';
-import { Attendance, AttendanceSchema } from './schemas/attendance.schema';
-
-import { EmployeeLatenessLog, EmployeeLatenessLogSchema } from './schemas/employee-lateness-log.schema';
-import { EmployeeLeaveAllocationLink, EmployeeLeaveAllocationLinkSchema } from './schemas/employee-leave-allocation-link.schema';
-
-import { ExceptionEscalationRule, ExceptionEscalationRuleSchema } from './schemas/exception-escalation-rule.schema';
-import { Holiday, HolidaySchema } from './schemas/holiday.schema';
-import { LatenessRule, LatenessRuleSchema } from './schemas/lateness-rules.schema';
-import { ManualCorrectionLog, ManualCorrectionLogSchema } from './schemas/manual-correction-log.schema';
-
-import { PayrollEscalation, PayrollEscalationSchema } from './schemas/payroll-escalation.schema';
-import { PayrollSyncLog, PayrollSyncLogSchema } from './schemas/payroll-sync-log.schema';
-
-import { PunchCorrectionRequest, PunchCorrectionRequestSchema } from './schemas/punch-correction-request.schema';
-import { Punch, PunchSchema } from './schemas/punch.schema';
-
-import { SchedulingRule, SchedulingRuleSchema } from './schemas/scheduling-rule.schema';
-import { ShiftAssignment, ShiftAssignmentSchema } from './schemas/shift-assignment.schema';
-import { ShiftType, ShiftTypeSchema } from './schemas/shift-type.schema';
-
-import { TimeExceptionApprovalLog, TimeExceptionApprovalLogSchema } from './schemas/time-exception-approval-log.schema';
-import { TimeExceptionRequest, TimeExceptionRequestSchema } from './schemas/time-exception-request.schema';
-
-import { WorkPolicy, WorkPolicySchema } from './schemas/work-polices.schema';
-import { TimeManagementService } from './time-management.service';
 import { TimeManagementController } from './time-management.controller';
+import { TimeManagementService } from './time-management.service';
+import { MongooseModule } from '@nestjs/mongoose';
+import { NotificationLogSchema, NotificationLog } from './models/notification-log.schema';
+import { AttendanceCorrectionRequestSchema, AttendanceCorrectionRequest } from './models/attendance-correction-request.schema';
+import { ShiftTypeSchema, ShiftType } from './models/shift-type.schema';
+import { ScheduleRuleSchema, ScheduleRule } from './models/schedule-rule.schema';
+import { AttendanceRecordSchema, AttendanceRecord } from './models/attendance-record.schema';
+import { TimeExceptionSchema, TimeException } from './models/time-exception.schema';
+import { OvertimeRuleSchema, OvertimeRule } from './models/overtime-rule.schema';
+import { ShiftSchema, Shift } from './models/shift.schema';
+import { ShiftAssignmentSchema, ShiftAssignment } from './models/shift-assignment.schema';
+import { LatenessRule, latenessRuleSchema } from './models/lateness-rule.schema';
+import { HolidaySchema, Holiday } from './models/holiday.schema';
+
 
 @Module({
-  imports: [
-    // Import other subsystem modules
-    EmployeeModule,
-    PayrollModule,
-    LeavesModule,
-    
-    // Import schemas for this module
-    MongooseModule.forFeature([
-      { name: AttendanceCorrectionRequest.name, schema: AttendanceCorrectionRequestSchema },
-      { name: AttendanceExceptionReport.name, schema: AttendanceExceptionReportSchema },
-      { name: Attendance.name, schema: AttendanceSchema },
-
-      { name: EmployeeLatenessLog.name, schema: EmployeeLatenessLogSchema },
-      { name: EmployeeLeaveAllocationLink.name, schema: EmployeeLeaveAllocationLinkSchema },
-
-      { name: ExceptionEscalationRule.name, schema: ExceptionEscalationRuleSchema },
-      { name: Holiday.name, schema: HolidaySchema },
-      { name: LatenessRule.name, schema: LatenessRuleSchema },
-      { name: ManualCorrectionLog.name, schema: ManualCorrectionLogSchema },
-
-      { name: PayrollEscalation.name, schema: PayrollEscalationSchema },
-      { name: PayrollSyncLog.name, schema: PayrollSyncLogSchema },
-
-      { name: PunchCorrectionRequest.name, schema: PunchCorrectionRequestSchema },
-      { name: Punch.name, schema: PunchSchema },
-
-      { name: SchedulingRule.name, schema: SchedulingRuleSchema },
-      { name: ShiftAssignment.name, schema: ShiftAssignmentSchema },
-      { name: ShiftType.name, schema: ShiftTypeSchema },
-
-      { name: TimeExceptionApprovalLog.name, schema: TimeExceptionApprovalLogSchema },
-      { name: TimeExceptionRequest.name, schema: TimeExceptionRequestSchema },
-
-      { name: WorkPolicy.name, schema: WorkPolicySchema },
-    ]),
-  ],
+  imports: [MongooseModule.forFeature([
+    { name: NotificationLog.name, schema: NotificationLogSchema },
+    { name: AttendanceCorrectionRequest.name, schema: AttendanceCorrectionRequestSchema },
+    { name: ShiftType.name, schema: ShiftTypeSchema },
+    { name: ScheduleRule.name, schema: ScheduleRuleSchema },
+    { name: AttendanceRecord.name, schema: AttendanceRecordSchema },
+    { name: TimeException.name, schema: TimeExceptionSchema },
+    { name: OvertimeRule.name, schema: OvertimeRuleSchema },
+    { name: Shift.name, schema: ShiftSchema },
+    { name: ShiftAssignment.name, schema: ShiftAssignmentSchema },
+    { name: LatenessRule.name, schema: latenessRuleSchema },
+    { name: Holiday.name, schema: HolidaySchema },
+  ])],
   controllers: [TimeManagementController],
-  providers: [TimeManagementService],
-  exports: [TimeManagementModule],
+  providers: [TimeManagementService]
 })
 export class TimeManagementModule {}

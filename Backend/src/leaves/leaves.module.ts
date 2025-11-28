@@ -1,52 +1,30 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-
-// Schemas
-import { LeaveCategory, LeaveCategorySchema } from './schemas';
-import { LeaveType, LeaveTypeSchema } from './schemas';
-import { VacationPackage, VacationPackageSchema } from './schemas';
-import { EmployeeLeaveBalance, EmployeeLeaveBalanceSchema } from './schemas';
-import { LeaveRequest, LeaveRequestSchema } from './schemas';
-import { ApprovalWorkflow, ApprovalWorkflowSchema } from './schemas';
-import { HolidayCalendar, HolidayCalendarSchema } from './schemas';
-import { LeaveBlockPeriod, LeaveBlockPeriodSchema } from './schemas';
-import { LeaveAdjustment, LeaveAdjustmentSchema } from './schemas';
-import { ManagerDelegation, ManagerDelegationSchema } from './schemas';
-
-// Controller and Service
 import { LeavesController } from './leaves.controller';
 import { LeavesService } from './leaves.service';
-
-// External modules for integration
-import { EmployeeModule } from '../employee-profile/employee-profile.module';
-import { OrganizationModule } from '../org-structure/org-structure.module';
+import { MongooseModule } from '@nestjs/mongoose';
+import { LeaveType, LeaveTypeSchema } from './models/leave-type.schema';
+import { LeaveRequest, LeaveRequestSchema } from './models/leave-request.schema';
+import { LeavePolicy, LeavePolicySchema } from './models/leave-policy.schema';
+import { LeaveEntitlement, LeaveEntitlementSchema } from './models/leave-entitlement.schema';
+import { LeaveCategory, LeaveCategorySchema } from './models/leave-category.schema';
+import { LeaveAdjustment, LeaveAdjustmentSchema } from './models/leave-adjustment.schema';
+import { Calendar, CalendarSchema} from './models/calendar.schema';
+import { Attachment,AttachmentSchema } from './models/attachment.schema';
+import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
 import { TimeManagementModule } from '../time-management/time-management.module';
-import { PayrollModule } from '../payroll/payroll.module';
 
 @Module({
-  imports: [
-    // Register all Leaves schemas
-    MongooseModule.forFeature([
-      { name: LeaveCategory.name, schema: LeaveCategorySchema },
-      { name: LeaveType.name, schema: LeaveTypeSchema },
-      { name: VacationPackage.name, schema: VacationPackageSchema },
-      { name: EmployeeLeaveBalance.name, schema: EmployeeLeaveBalanceSchema },
-      { name: LeaveRequest.name, schema: LeaveRequestSchema },
-      { name: ApprovalWorkflow.name, schema: ApprovalWorkflowSchema },
-      { name: HolidayCalendar.name, schema: HolidayCalendarSchema },
-      { name: LeaveBlockPeriod.name, schema: LeaveBlockPeriodSchema },
-      { name: LeaveAdjustment.name, schema: LeaveAdjustmentSchema },
-      { name: ManagerDelegation.name, schema: ManagerDelegationSchema },
-    ]),
-
-    // External module dependencies for integration
-    EmployeeModule,
-    OrganizationModule,
-    TimeManagementModule,
-    PayrollModule,
-  ],
+  imports:[MongooseModule.forFeature([{name:LeaveType.name,schema:LeaveTypeSchema},
+    {name:LeaveRequest.name, schema: LeaveRequestSchema},
+    {name:LeavePolicy.name, schema:LeavePolicySchema},
+    {name:LeaveEntitlement.name, schema:LeaveEntitlementSchema},
+    {name: LeaveCategory.name, schema:LeaveCategorySchema},
+    {name: LeaveAdjustment.name, schema:LeaveAdjustmentSchema},
+    {name:Calendar.name, schema:CalendarSchema},
+    {name:Attachment.name, schema: AttachmentSchema}
+  ]),EmployeeProfileModule,TimeManagementModule],
   controllers: [LeavesController],
   providers: [LeavesService],
-  exports: [LeavesService],
+  exports:[LeavesService]
 })
 export class LeavesModule {}
