@@ -1,27 +1,39 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { EmployeeProfileController } from './controllers/employee-profile.controller';
+import { EmployeeProfileController } from './employee-profile.controller';
+import { EmployeeProfileService } from './employee-profile.service';
+import { Candidate, CandidateSchema } from './models/candidate.schema';
 import {
   EmployeeProfile,
   EmployeeProfileSchema,
-} from './schemas/employee-profile.schema';
+} from './models/employee-profile.schema';
 import {
-  EmployeeChangeRequest,
-  EmployeeChangeRequestSchema,
-} from './schemas/employee-change-request.schema';
+  EmployeeSystemRole,
+  EmployeeSystemRoleSchema,
+} from './models/employee-system-role.schema';
+import {
+  EmployeeProfileChangeRequest,
+  EmployeeProfileChangeRequestSchema,
+} from './models/ep-change-request.schema';
+import {
+  EmployeeQualification,
+  EmployeeQualificationSchema,
+} from './models/qualification.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
+      { name: Candidate.name, schema: CandidateSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: EmployeeSystemRole.name, schema: EmployeeSystemRoleSchema },
       {
-        name: EmployeeChangeRequest.name,
-        schema: EmployeeChangeRequestSchema,
+        name: EmployeeProfileChangeRequest.name,
+        schema: EmployeeProfileChangeRequestSchema,
       },
+      { name: EmployeeQualification.name, schema: EmployeeQualificationSchema },
     ]),
   ],
   controllers: [EmployeeProfileController],
-  providers: [],
-  exports: [],
+  providers: [EmployeeProfileService],
 })
-export class EmployeeModule {}
+export class EmployeeProfileModule {}
