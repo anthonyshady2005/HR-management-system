@@ -1,13 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
-import { PerformanceService } from './performance.service';
+import { Controller } from '@nestjs/common';
 
 @Controller('performance')
-export class PerformanceController {
-  constructor(private readonly performanceService: PerformanceService) {}
-
-  @Get()
-  getAllTemplates() {
-    return this.performanceService.getDummyTemplates();
-  }
-}
-
+export class PerformanceController {}
