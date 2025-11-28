@@ -1,5 +1,5 @@
 import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { DisputeStatus } from '../models/AppraisalDispute.schema';
+import { AppraisalDisputeStatus } from '../enums/performance.enums';
 
 export class CreateAppraisalDisputeDto {
   @IsString()
@@ -11,8 +11,8 @@ export class CreateAppraisalDisputeDto {
   @IsString()
   reason: string;
 
-  @IsEnum(DisputeStatus)
-  status: DisputeStatus;
+  @IsEnum(AppraisalDisputeStatus)
+  status: AppraisalDisputeStatus;
 
   @IsOptional()
   @IsString()

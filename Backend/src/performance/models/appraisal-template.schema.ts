@@ -4,8 +4,8 @@ import {
   AppraisalRatingScaleType,
   AppraisalTemplateType,
 } from '../enums/performance.enums';
-import { Department } from '../../../organization-structure/models/department.schema';
-import { Position } from '../../../organization-structure/models/position.schema';
+import { Department } from '../../organization-structure/models/department.schema';
+import { Position } from '../../organization-structure/models/position.schema';
 
 export type AppraisalTemplateDocument = HydratedDocument<AppraisalTemplate>;
 

@@ -1,5 +1,5 @@
 import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
-import { AppraisalAssignmentStatus } from '../models/AppraisalAssignment.schema';
+import { AppraisalAssignmentStatus } from '../enums/performance.enums';
 
 export class CreateAppraisalAssignmentDto {
   @IsString()
