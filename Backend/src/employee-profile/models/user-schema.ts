@@ -16,7 +16,7 @@ export class Address {
 
 export const AddressSchema = SchemaFactory.createForClass(Address);
 
-@Schema()
+@Schema({ _id: false })
 export class UserProfileBase {
   // Names
   @Prop({ type: String, required: true })
