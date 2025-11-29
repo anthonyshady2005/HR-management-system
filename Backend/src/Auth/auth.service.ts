@@ -57,6 +57,7 @@ export class AuthService {
         // Fetch roles assigned to this user (empty array if none)
         const roleDoc = await this.roleModel.findOne({ employeeProfileId: user._id });
         const roles = roleDoc?.roles ?? [];
+        console.log('User logged in with roles: ' + roles);
 
         // Only include user id and roles in payload
         const token = this.jwtService.sign({ sub: user._id, roles });
