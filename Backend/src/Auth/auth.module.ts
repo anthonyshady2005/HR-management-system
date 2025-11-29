@@ -5,19 +5,29 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { UserProfileBase, UserProfileBaseSchema } from '../employee-profile/models/user-schema';
+import {
+    EmployeeProfile,
+    EmployeeProfileSchema,
+} from '../employee-profile/models/employee-profile.schema';
+import {
+    EmployeeSystemRole,
+    EmployeeSystemRoleSchema,
+} from '../employee-profile/models/employee-system-role.schema';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: UserProfileBase.name, schema: UserProfileBaseSchema }]),
-    PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'DEFAULT_SECRET',
-      signOptions: { expiresIn: '7d' },
-    }),
-  ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtStrategy],
+    imports: [
+        MongooseModule.forFeature([
+            { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+            { name: EmployeeSystemRole.name, schema: EmployeeSystemRoleSchema },
+        ]),
+        PassportModule,
+        JwtModule.register({
+            secret: process.env.JWT_SECRET || 'DEFAULT_SECRET',
+            signOptions: { expiresIn: '7d' },
+        }),
+    ],
+    controllers: [AuthController],
+    providers: [AuthService, JwtStrategy],
+    exports: [AuthService, JwtStrategy],
 })
 export class AuthModule {}
