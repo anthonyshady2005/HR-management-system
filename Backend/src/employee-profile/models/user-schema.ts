@@ -2,7 +2,6 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { Gender, MaritalStatus } from '../enums/employee-profile.enums';
 
-
 @Schema({ _id: false })
 export class Address {
   @Prop({ type: String })
@@ -17,7 +16,7 @@ export class Address {
 
 export const AddressSchema = SchemaFactory.createForClass(Address);
 
-@Schema({ _id: false })
+@Schema()
 export class UserProfileBase {
   // Names
   @Prop({ type: String, required: true })
