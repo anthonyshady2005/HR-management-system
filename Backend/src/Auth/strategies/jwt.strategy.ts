@@ -25,9 +25,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             throw new UnauthorizedException('User not found');
         }
         // Attach only the required properties to request.user
+        // Ensure roles array is always present on request.user
+        const rolesArray = Array.isArray(payload.roles)
+            ? payload.roles
+            : payload.role
+              ? [payload.role]
+              : [];
         return {
             _id: user._id,
-            role: Array.isArray(payload.roles) ? payload.roles : payload.role,
+            roles: rolesArray,
         };
     }
 }

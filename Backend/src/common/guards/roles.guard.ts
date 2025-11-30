@@ -23,8 +23,13 @@ export class RolesGuard implements CanActivate {
             return false;
         }
 
-        // Expect an array of roles on req.user.roles
-        const userRoles: string[] = Array.isArray(user.roles) ? user.roles : [];
+        // Support both user.roles (array) and user.role (single string)
+        const userRoles: string[] = Array.isArray(user.roles)
+            ? user.roles
+            : typeof user.role === 'string'
+              ? [user.role]
+              : [];
+        console.log('User roles:', userRoles);
         return requiredRoles.some((role) => userRoles.includes(role));
     }
 }
