@@ -1,8 +1,8 @@
 import { IsOptional, IsMongoId, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { AdjustmentType } from '../enums/adjustment-type.enum';
+import { LeaveStatus } from '../enums/leave-status.enum';
 
-export class AdjustmentQueryDto {
+export class LeaveRequestQueryDto {
   @ApiPropertyOptional({
     description: 'Filter by employee ID',
     example: '507f1f77bcf86cd799439011',
@@ -20,11 +20,11 @@ export class AdjustmentQueryDto {
   leaveTypeId?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by adjustment type',
-    example: 'add',
-    enum: AdjustmentType,
+    description: 'Filter by status',
+    example: 'pending',
+    enum: LeaveStatus,
   })
-  @IsEnum(AdjustmentType)
+  @IsEnum(LeaveStatus)
   @IsOptional()
-  adjustmentType?: AdjustmentType;
+  status?: LeaveStatus;
 }
