@@ -39,7 +39,7 @@ export class AuthService {
         // Initialize a role record for the user if none exists
         await this.roleModel.create({
             employeeProfileId: user._id as Types.ObjectId,
-            roles: [],
+            roles: dto.roles || [],
             permissions: [],
             isActive: true,
         } as Partial<EmployeeSystemRole>);
