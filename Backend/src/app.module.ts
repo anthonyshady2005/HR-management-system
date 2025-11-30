@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TimeManagementModule } from './time-management/time-management.module';
@@ -13,6 +14,8 @@ import { PayrollConfigurationModule } from './payroll-configuration/payroll-conf
 import { PayrollExecutionModule } from './payroll-execution/payroll-execution.module';
 import { AuthModule } from './Auth/auth.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { CommonModule } from './common/common.module';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 
 @Module({
   imports: [
@@ -29,9 +32,15 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     OrganizationStructureModule,
     PerformanceModule,
     AuthModule,
-  ],
+    CommonModule],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

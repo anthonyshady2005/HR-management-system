@@ -39,7 +39,7 @@ export class AuthService {
         // Initialize a role record for the user if none exists
         await this.roleModel.create({
             employeeProfileId: user._id as Types.ObjectId,
-            roles: [],
+            roles: dto.roles || [],
             permissions: [],
             isActive: true,
         } as Partial<EmployeeSystemRole>);
@@ -57,6 +57,7 @@ export class AuthService {
         // Fetch roles assigned to this user (empty array if none)
         const roleDoc = await this.roleModel.findOne({ employeeProfileId: user._id });
         const roles = roleDoc?.roles ?? [];
+        console.log('User logged in with roles: ' + roles);
 
         // Only include user id and roles in payload
         const token = this.jwtService.sign({ sub: user._id, roles });
