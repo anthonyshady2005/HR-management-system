@@ -159,68 +159,48 @@ export class OrganizationStructureService {
     // Validate department exists and is active
     const department = await this.departmentModel.findById(dto.departmentId);
     if (!department) {
-      throw new NotFoundException(
-        `Department with ID ${dto.departmentId} not found`,
-      );
+      throw new NotFoundException(`Department with ID ${dto.departmentId} not found`);
     }
     if (!department.isActive) {
-      throw new BadRequestException(
-        `Department with ID ${dto.departmentId} is not active`,
-      );
+      throw new BadRequestException(`Department with ID ${dto.departmentId} is not active`);
     }
-
-    // Validate reportsTo position if provided
-    if (dto.reportsTo) {
-      const reportsToPosition = await this.positionModel.findById(
-        dto.reportsTo,
-      );
-      if (!reportsToPosition) {
-        throw new NotFoundException(
-          `Position with ID ${dto.reportsTo} not found`,
-        );
-      }
-      if (!reportsToPosition.isActive) {
-        throw new BadRequestException(
-          `Position with ID ${dto.reportsTo} is not active`,
-        );
-      }
-    }
-
+  
     // Check if position code already exists
-    const existingPosition = await this.positionModel.findOne({
-      code: dto.code,
-    });
+    const existingPosition = await this.positionModel.findOne({ code: dto.code });
     if (existingPosition) {
       throw new ConflictException(`Position with code ${dto.code} already exists`);
     }
-
-    // Map DTO to Position schema
+  
+    // Determine reportsToPositionId (if not provided, assign department head)
+    let reportsToPositionId: Types.ObjectId | undefined = dto.reportsTo;
+    if (!reportsToPositionId && department.headPositionId) {
+      reportsToPositionId = department.headPositionId;
+    }
+  
     const positionData: Partial<Position> = {
       title: dto.title,
       code: dto.code,
       departmentId: dto.departmentId,
-      reportsToPositionId: dto.reportsTo,
+      reportsToPositionId,
       isActive: dto.status === 'active',
     };
-
-    // Create position (pre-save hook will auto-set reportsToPositionId if not provided)
+  
+    // Create and save position
     const position = new this.positionModel(positionData);
     const savedPosition = await position.save();
-
-    // Capture after snapshot
-    const afterSnapshot = savedPosition.toObject() as unknown as Record<string, unknown>;
-
+  
     // Log change
     await this.changeLogService.logChange(
       ChangeLogAction.CREATED,
       'Position',
       savedPosition._id,
       null,
-      afterSnapshot,
+      savedPosition.toObject() as unknown as Record<string, unknown>,
     );
-
+  
     return savedPosition;
   }
+  
 
   async updatePosition(
     id: string,
