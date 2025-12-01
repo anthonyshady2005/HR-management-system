@@ -1,20 +1,62 @@
-import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
-import { AppraisalAssignmentStatus } from '../models/AppraisalAssignment.schema';
+import { IsString, IsOptional, IsEnum, IsDateString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { Types } from 'mongoose';
+import { AppraisalAssignmentStatus } from '../enums/performance.enums';
 
-export class CreateAppraisalAssignmentDto {
+export class CreateAppraisalAssignmentDTO {
+  @ApiProperty()
   @IsString()
-  @IsNotEmpty()
-  cycleId: string;
+  cycleId: Types.ObjectId;
 
+  @ApiProperty()
   @IsString()
-  appraisalTemplate: string;
+  templateId: Types.ObjectId;
 
+  @ApiProperty()
   @IsString()
-  employeeId: string;
+  employeeProfileId: Types.ObjectId;
 
+  @ApiProperty()
   @IsString()
-  managerId: string;
+  managerProfileId: Types.ObjectId;
 
+  @ApiProperty()
+  @IsString()
+  departmentId: Types.ObjectId;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  positionId?: Types.ObjectId;
+
+  @ApiPropertyOptional({ enum: AppraisalAssignmentStatus })
+  @IsOptional()
   @IsEnum(AppraisalAssignmentStatus)
-  assignmentStatus: AppraisalAssignmentStatus;
+  status?: AppraisalAssignmentStatus;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @IsDateString()
+  assignedAt?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @IsDateString()
+  dueDate?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @IsDateString()
+  submittedAt?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @IsDateString()
+  publishedAt?: Date;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  latestAppraisalId?: Types.ObjectId;
 }

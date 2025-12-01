@@ -1,23 +1,84 @@
-import { IsDateString, IsEnum, IsNotEmpty, IsString, IsArray } from 'class-validator';
+import { IsDate, IsEnum, IsNotEmpty, IsString, IsArray, IsOptional, ValidateNested } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AppraisalTemplateType, AppraisalCycleStatus } from '../enums/performance.enums';
+import { Types } from 'mongoose';
 
-export class CreateAppraisalCycleDto {
+class CycleTemplateAssignmentDTO {
+  @ApiProperty({ description: 'Template ID' })
+  @IsString()
+  templateId: string;
+
+  @ApiProperty({ description: 'Departments assigned to this template', type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  departmentIds: string[];
+}
+
+export class CreateAppraisalCycleDTO {
+  @ApiProperty({ description: 'Name of the appraisal cycle' })
   @IsString()
   @IsNotEmpty()
   name: string;
 
-  @IsDateString()
+  @ApiPropertyOptional({ description: 'Description of the cycle' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ enum: AppraisalTemplateType })
+  @IsEnum(AppraisalTemplateType)
+  cycleType: AppraisalTemplateType;
+
+  @ApiProperty({ type: Date })
+  @Type(() => Date)
+  @IsDate()
   startDate: Date;
 
-  @IsDateString()
+  @ApiProperty({ type: Date })
+  @Type(() => Date)
+  @IsDate()
   endDate: Date;
 
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  managerDueDate?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  employeeAcknowledgementDueDate?: Date;
+
+  @ApiPropertyOptional({ type: [CycleTemplateAssignmentDTO] })
+  @ValidateNested({ each: true })
+  @Type(() => CycleTemplateAssignmentDTO)
+  @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  template_ids: string[];
+  templateAssignments?: CycleTemplateAssignmentDTO[];
 
-  @IsString()
-  createdBy: string;
+  @ApiPropertyOptional({ enum: AppraisalCycleStatus })
+  @IsEnum(AppraisalCycleStatus)
+  @IsOptional()
+  status?: AppraisalCycleStatus;
 
-  @IsEnum(['annual', 'semi-annual', 'Probationary'])
-  cycleType: string;
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  archivedAt?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  publishedAt?: Date;
+
+  @ApiPropertyOptional({ type: Date })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  closedAt?: Date;
 }
