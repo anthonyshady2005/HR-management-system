@@ -1,0 +1,3 @@
+# MongoDB Automated Backup - Runs daily at midnight
+0 0 * * * cd /home/amir-bassem/Payroll-Subsystem/backend && /bin/bash scripts/backup.sh >> backups/cron.log 2>&1
+

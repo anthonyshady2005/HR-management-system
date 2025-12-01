@@ -25,6 +25,7 @@ import {
   EmployeeProfile,
   EmployeeProfileSchema,
 } from '../employee-profile/models/employee-profile.schema';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import {
       },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
     ]),
+    CommonModule,
   ],
   controllers: [OrganizationStructureController],
   providers: [OrganizationStructureService, StructureChangeLogService],

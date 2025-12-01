@@ -33,7 +33,7 @@ export class payrollRuns {
   @Prop({ required: true, type: String, enum: PayRollPaymentStatus, default: PayRollPaymentStatus.PENDING })
   paymentStatus: PayRollPaymentStatus;
 
-  @Prop({ required: true, type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
   payrollManagerId?: mongoose.Schema.Types.ObjectId;
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
   financeStaffId?: mongoose.Schema.Types.ObjectId;
@@ -54,8 +54,3 @@ export class payrollRuns {
 
 
 export const payrollRunsSchema = SchemaFactory.createForClass(payrollRuns);
-
-
-
-
-
