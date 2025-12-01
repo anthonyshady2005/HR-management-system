@@ -3,7 +3,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 import { AppraisalDisputeStatus } from '../enums/performance.enums';
-
 export class CreateAppraisalDisputeDTO {
   @ApiProperty()
   @IsString()

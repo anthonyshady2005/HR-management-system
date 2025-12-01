@@ -16,9 +16,10 @@ import { AppraisalDispute, AppraisalDisputeDocument } from './models/appraisal-d
 import { CreateAppraisalDisputeDTO } from './DTOs/CreateAppraisalDispute.dto';
 import { UpdateAppraisalDisputeDto } from './DTOs/UpdateAppraisalDispute.dto';
 import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
-import { AppraisalAssignmentStatus, AppraisalRecordStatus } from '../performance/enums/performance.enums';
+import { AppraisalAssignmentStatus, AppraisalRecordStatus ,AppraisalDisputeStatus} from '../performance/enums/performance.enums';
 import { Types } from 'mongoose';
 import { Type } from 'class-transformer';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class PerformanceService {
@@ -204,7 +205,6 @@ return savedAssignments;
 
    
   // REQ-AE-07: Flag or raise a concern about a rating (Req 10)
-
 async createAppraisalDispute(dto: CreateAppraisalDisputeDTO): Promise<AppraisalDispute> {
   // Validate IDs
   const idFields = ['appraisalId', 'assignmentId', 'cycleId', 'raisedByEmployeeId'] as const;
@@ -224,35 +224,27 @@ async createAppraisalDispute(dto: CreateAppraisalDisputeDTO): Promise<AppraisalD
   const daysSincePublication = Math.floor(
     (new Date().getTime() - new Date(appraisal.hrPublishedAt).getTime()) / (1000 * 60 * 60 * 24)
   );
-
   if (daysSincePublication > 7) {
     throw new BadRequestException('Dispute must be filed within 7 days of appraisal publication');
   }
 
-  // Create and save dispute
-  const dispute = new this.disputeModel({
-    ...dto,
-    appraisalId: new Types.ObjectId(dto.appraisalId),
-    assignmentId: new Types.ObjectId(dto.assignmentId),
-    cycleId: new Types.ObjectId(dto.cycleId),
-    raisedByEmployeeId: new Types.ObjectId(dto.raisedByEmployeeId),
-    assignedReviewerEmployeeId: dto.assignedReviewerEmployeeId
-      ? new Types.ObjectId(dto.assignedReviewerEmployeeId)
-      : undefined,
-    resolvedByEmployeeId: dto.resolvedByEmployeeId
-      ? new Types.ObjectId(dto.resolvedByEmployeeId)
-      : undefined,
-    submittedAt: dto.submittedAt ? new Date(dto.submittedAt) : new Date(),
-    status: dto.status || 'OPEN',
-  });
+  // **Do NOT include _id from DTO**
+  
 
-  try {
-    return await dispute.save();
-  } catch (error) {
-    console.error('Error saving dispute:', error);
-    throw error;
-  }
+  const dispute = new this.disputeModel({
+  _id: uuidv4(), // manually generate unique id
+  appraisalId: new Types.ObjectId(dto.appraisalId),
+  assignmentId: new Types.ObjectId(dto.assignmentId),
+  cycleId: new Types.ObjectId(dto.cycleId),
+  raisedByEmployeeId: new Types.ObjectId(dto.raisedByEmployeeId),
+  reason: dto.reason,
+  status: dto.status || 'OPEN',
+});
+
+  return await dispute.save();
 }
+
+
 
 
 
