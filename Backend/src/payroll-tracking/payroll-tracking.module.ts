@@ -1,24 +1,28 @@
-import { forwardRef, Module } from '@nestjs/common';
-import { PayrollTrackingController } from './payroll-tracking.controller';
+import { Module } from '@nestjs/common';
 import { PayrollTrackingService } from './payroll-tracking.service';
+import { PayrollTrackingController } from './payroll-tracking.controller';
 import { MongooseModule } from '@nestjs/mongoose';
-import { refunds, refundsSchema } from './models/refunds.schema';
 import { claims, claimsSchema } from './models/claims.schema';
 import { disputes, disputesSchema } from './models/disputes.schema';
-import { PayrollConfigurationModule } from '../payroll-configuration/payroll-configuration.module';
-import { PayrollExecutionModule } from '../payroll-execution/payroll-execution.module';
+import { refunds, refundsSchema } from './models/refunds.schema';
+import { paySlip, paySlipSchema } from '../payroll-execution/models/payslip.schema';
+import { EmployeeProfileSchema } from '../employee-profile/models/employee-profile.schema';
+import { NotificationLogSchema } from '../time-management/models/notification-log.schema';
+import { EmployeeSystemRoleSchema } from '../employee-profile/models/employee-system-role.schema';
 
 @Module({
-  
   imports: [
-    PayrollConfigurationModule,forwardRef(()=> PayrollExecutionModule),
     MongooseModule.forFeature([
-      { name: refunds.name, schema: refundsSchema },
       { name: claims.name, schema: claimsSchema },
       { name: disputes.name, schema: disputesSchema },
-    ])],
-  controllers: [PayrollTrackingController],
+      { name: refunds.name, schema: refundsSchema },
+      { name: 'paySlip', schema: paySlipSchema },
+      { name: 'EmployeeProfile', schema: EmployeeProfileSchema },
+      { name: 'NotificationLog', schema: NotificationLogSchema },
+      { name: 'EmployeeSystemRole', schema: EmployeeSystemRoleSchema },
+    ]),
+  ],
   providers: [PayrollTrackingService],
-  exports:[PayrollTrackingService]
+  controllers: [PayrollTrackingController],
 })
 export class PayrollTrackingModule { }

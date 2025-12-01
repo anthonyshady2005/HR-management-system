@@ -1,0 +1,21 @@
+import { IsMongoId, IsOptional, IsString, IsEnum } from "class-validator";
+import { Types } from "mongoose";
+import { CorrectionRequestStatus } from "../models/enums";
+
+export class AttendanceCorrectionRequestUpdateDTO {
+  @IsOptional()
+  @IsMongoId()
+  employeeId?: Types.ObjectId;
+
+  @IsOptional()
+  @IsMongoId()
+  attendanceRecord?: Types.ObjectId;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsEnum(CorrectionRequestStatus)
+  status?: CorrectionRequestStatus;
+}

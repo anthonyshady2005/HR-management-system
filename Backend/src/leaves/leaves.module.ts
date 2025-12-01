@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { LeavesController } from './leaves.controller';
 import { LeavesService } from './leaves.service';
 import { LeavesScheduler } from './leaves.scheduler';
@@ -40,6 +40,7 @@ import { TimeManagementModule } from '../time-management/time-management.module'
   imports: [
     ConfigModule.forRoot(),
     ScheduleModule.forRoot(),
+
     MongooseModule.forFeature([
       { name: LeaveType.name, schema: LeaveTypeSchema },
       { name: LeaveRequest.name, schema: LeaveRequestSchema },
@@ -52,11 +53,20 @@ import { TimeManagementModule } from '../time-management/time-management.module'
       { name: PositionAssignment.name, schema: PositionAssignmentSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
     ]),
+
     EmployeeProfileModule,
-    TimeManagementModule,
+
+    // IMPORTANT: fix circular dependency
+    forwardRef(() => TimeManagementModule),
   ],
+
   controllers: [LeavesController],
   providers: [LeavesService, LeavesScheduler],
-  exports: [LeavesService],
+
+  // IMPORTANT FIX: Export all mongoose models by exporting MongooseModule
+  exports: [
+    LeavesService,
+    MongooseModule,
+  ],
 })
 export class LeavesModule {}

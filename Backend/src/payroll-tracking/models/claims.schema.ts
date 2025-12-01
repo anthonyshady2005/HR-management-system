@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory, } from '@nestjs/mongoose';
 import mongoose, { HydratedDocument } from 'mongoose';
-import {  EmployeeProfile as Employee} from '../../employee-profile/models/employee-profile.schema';
+import { EmployeeProfile as Employee } from '../../employee-profile/models/employee-profile.schema';
 import { ClaimStatus } from '../enums/payroll-tracking-enum';
 
 export type claimsDocument = HydratedDocument<claims>
@@ -21,6 +21,12 @@ export class claims {
 
     @Prop({ type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
     financeStaffId?: mongoose.Types.ObjectId;
+
+    @Prop({ type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
+    payrollSpecialistId?: mongoose.Types.ObjectId;
+
+    @Prop({ type: mongoose.Schema.Types.ObjectId, ref: Employee.name })
+    payrollManagerId?: mongoose.Types.ObjectId;
 
     @Prop({ required: true })
     amount: number;
