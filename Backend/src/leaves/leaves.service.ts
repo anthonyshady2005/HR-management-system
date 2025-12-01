@@ -31,6 +31,10 @@ import {
   PositionAssignment,
   PositionAssignmentDocument,
 } from '../organization-structure/models/position-assignment.schema';
+import {
+  EmployeeProfile,
+  EmployeeProfileDocument,
+} from '../employee-profile/models/employee-profile.schema';
 import { HolidayType } from '../time-management/models/enums';
 import { LeaveStatus } from './enums/leave-status.enum';
 import { RoundingRule } from './enums/rounding-rule.enum';
@@ -68,6 +72,8 @@ export class LeavesService {
     @InjectModel(Calendar.name) private calendarModel: Model<CalendarDocument>,
     @InjectModel(Attachment.name)
     private attachmentModel: Model<AttachmentDocument>,
+    @InjectModel(EmployeeProfile.name)
+    private employeeProfileModel: Model<EmployeeProfileDocument>,
     @InjectModel(PositionAssignment.name)
     private positionAssignmentModel: Model<PositionAssignmentDocument>,
   ) {}
@@ -522,32 +528,86 @@ export class LeavesService {
     employeeId?: string;
     leaveTypeId?: string;
     status?: string;
+    startDate?: string;
+    endDate?: string;
+    departmentId?: string;
+    sortBy?: 'dates.from' | 'createdAt';
+    sortOrder?: 'asc' | 'desc';
   }) {
-    const query: any = {};
+    const baseMatch: any = {};
 
     if (filters?.employeeId) {
       if (!Types.ObjectId.isValid(filters.employeeId)) {
         throw new BadRequestException('Invalid employee ID format');
       }
-      query.employeeId = filters.employeeId;
+      baseMatch.employeeId = new Types.ObjectId(filters.employeeId);
     }
 
     if (filters?.leaveTypeId) {
       if (!Types.ObjectId.isValid(filters.leaveTypeId)) {
         throw new BadRequestException('Invalid leave type ID format');
       }
-      query.leaveTypeId = filters.leaveTypeId;
+      baseMatch.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
     }
 
     if (filters?.status) {
-      query.status = filters.status;
+      baseMatch.status = filters.status;
     }
 
+    // Date range filter on request dates
+    if (filters?.startDate || filters?.endDate) {
+      const range: any = {};
+      if (filters.startDate) {
+        range.$gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        range.$lte = new Date(filters.endDate);
+      }
+      baseMatch['dates.from'] = range;
+    }
+
+    const sortField = filters?.sortBy || 'createdAt';
+    const sortOrder = filters?.sortOrder === 'asc' ? 1 : -1;
+
+    // If department filter is provided, use aggregation with lookup to employee_profiles
+    if (filters?.departmentId) {
+      if (!Types.ObjectId.isValid(filters.departmentId)) {
+        throw new BadRequestException('Invalid department ID format');
+      }
+      const deptId = new Types.ObjectId(filters.departmentId);
+      const pipeline: any[] = [
+        { $match: baseMatch },
+        {
+          $lookup: {
+            from: 'employee_profiles',
+            localField: 'employeeId',
+            foreignField: '_id',
+            as: 'employeeDoc',
+          },
+        },
+        { $unwind: '$employeeDoc' },
+        { $match: { 'employeeDoc.primaryDepartmentId': deptId } },
+        {
+          $lookup: {
+            from: 'leavetypes',
+            localField: 'leaveTypeId',
+            foreignField: '_id',
+            as: 'leaveType',
+          },
+        },
+        { $unwind: { path: '$leaveType', preserveNullAndEmptyArrays: true } },
+        { $sort: { [sortField]: sortOrder } },
+      ];
+
+      return await this.leaveRequestModel.aggregate(pipeline).exec();
+    }
+
+    // Default path without department filter
     return await this.leaveRequestModel
-      .find(query)
+      .find(baseMatch)
       .populate('leaveTypeId')
       .populate('employeeId')
-      .sort({ createdAt: -1 })
+      .sort({ [sortField]: sortOrder })
       .exec();
   }
 
@@ -986,6 +1046,8 @@ export class LeavesService {
       totalAvailable: entitlement.yearlyEntitlement + entitlement.carryForward,
       taken: entitlement.taken,
       pending: entitlement.pending,
+      accruedActual: entitlement.accruedActual,
+      accruedRounded: entitlement.accruedRounded,
       remaining: entitlement.remaining,
       lastAccrualDate: entitlement.lastAccrualDate,
       nextResetDate: entitlement.nextResetDate,
@@ -1722,39 +1784,92 @@ export class LeavesService {
   /**
    * REQ-034: View team leave balances
    * BR-46: Manager access to team absence reports
-   *
-   * NOTE: Requires integration with Employee Profile module to get team members
    */
-  async getTeamBalances(managerId: string) {
+  private async resolveTeamMembers(
+    managerId: string,
+    departmentId?: string,
+  ): Promise<{ members: EmployeeProfileDocument[] }> {
     if (!Types.ObjectId.isValid(managerId)) {
       throw new BadRequestException('Invalid manager ID format');
     }
 
-    // TODO: Fetch team members from Employee Profile module
-    // For now, return empty array with proper structure
-    // const teamMembers = await this.employeeProfileService.getTeamMembers(managerId);
+    const managerProfile = await this.employeeProfileModel.findById(managerId);
+    if (!managerProfile) {
+      throw new NotFoundException('Manager profile not found');
+    }
 
-    const teamBalances = [];
+    const deptFilter = departmentId
+      ? new Types.ObjectId(departmentId)
+      : managerProfile.primaryDepartmentId;
 
-    // Example structure (to be implemented with actual employee data):
-    // for (const member of teamMembers) {
-    //     const entitlements = await this.leaveEntitlementModel
-    //         .find({ employeeId: member._id })
-    //         .populate('leaveTypeId');
-    //
-    //     teamBalances.push({
-    //         employeeId: member._id,
-    //         employeeName: member.fullName,
-    //         employeeNumber: member.employeeNumber,
-    //         balances: entitlements.map(e => ({
-    //             leaveType: e.leaveTypeId.name,
-    //             remaining: e.remaining,
-    //             taken: e.taken,
-    //             pending: e.pending,
-    //             carryForward: e.carryForward
-    //         }))
-    //     });
-    // }
+    const query: any = { _id: { $ne: new Types.ObjectId(managerId) } };
+    const or: any[] = [];
+
+    if (managerProfile.primaryPositionId) {
+      or.push({ supervisorPositionId: managerProfile.primaryPositionId });
+    }
+    if (deptFilter) {
+      or.push({ primaryDepartmentId: deptFilter });
+    }
+    if (or.length) {
+      query.$or = or;
+    }
+
+    const members = await this.employeeProfileModel.find(query).exec();
+    return { members };
+  }
+
+  async getTeamBalances(
+    managerId: string,
+    options?: { leaveTypeId?: string; departmentId?: string },
+  ) {
+    const { members } = await this.resolveTeamMembers(
+      managerId,
+      options?.departmentId,
+    );
+
+    type TeamBalance = {
+      employeeId: string;
+      employeeName?: string;
+      employeeNumber: string;
+      balances: {
+        leaveType: string;
+        remaining: number;
+        taken: number;
+        pending: number;
+        carryForward: number;
+      }[];
+    };
+
+    const teamBalances: TeamBalance[] = [];
+
+    for (const member of members) {
+      const entQuery: any = { employeeId: member._id };
+      if (options?.leaveTypeId) {
+        if (!Types.ObjectId.isValid(options.leaveTypeId)) {
+          throw new BadRequestException('Invalid leave type ID format');
+        }
+        entQuery.leaveTypeId = new Types.ObjectId(options.leaveTypeId);
+      }
+
+      const entitlements = await this.leaveEntitlementModel
+        .find(entQuery)
+        .populate('leaveTypeId')
+        .exec();
+
+      teamBalances.push({
+        employeeId: member._id.toString(),
+        employeeName: member.fullName,
+        employeeNumber: String((member as any).employeeNumber ?? ''),
+        balances: entitlements.map((e) => ({
+          leaveType: (e.leaveTypeId as any)?.name || 'Unknown',
+          remaining: e.remaining,
+          taken: e.taken,
+          pending: e.pending,
+          carryForward: e.carryForward,
+        })),
+      });
+    }
 
     return teamBalances;
   }
@@ -1762,30 +1877,68 @@ export class LeavesService {
   /**
    * REQ-034: View team upcoming leaves
    */
-  async getTeamUpcomingLeaves(managerId: string) {
-    if (!Types.ObjectId.isValid(managerId)) {
-      throw new BadRequestException('Invalid manager ID format');
+  async getTeamUpcomingLeaves(
+    managerId: string,
+    options?: {
+      leaveTypeId?: string;
+      status?: LeaveStatus;
+      startDate?: string;
+      endDate?: string;
+      departmentId?: string;
+      sortOrder?: 'asc' | 'desc';
+    },
+  ) {
+    const { members } = await this.resolveTeamMembers(
+      managerId,
+      options?.departmentId,
+    );
+    const employeeIds = members.map((m) => m._id);
+
+    if (!employeeIds.length) {
+      return [];
     }
 
-    // TODO: Fetch team member IDs from Employee Profile module
-    // const teamMembers = await this.employeeProfileService.getTeamMembers(managerId);
-    // const employeeIds = teamMembers.map(m => m._id);
+    const query: any = {
+      employeeId: { $in: employeeIds },
+    };
 
-    // For now, return empty array
-    const upcomingLeaves = [];
+    if (options?.leaveTypeId) {
+      if (!Types.ObjectId.isValid(options.leaveTypeId)) {
+        throw new BadRequestException('Invalid leave type ID format');
+      }
+      query.leaveTypeId = new Types.ObjectId(options.leaveTypeId);
+    }
 
-    // Example query (to be implemented):
-    // const upcomingLeaves = await this.leaveRequestModel
-    //     .find({
-    //         employeeId: { $in: employeeIds },
-    //         status: LeaveStatus.APPROVED,
-    //         'dates.from': { $gte: new Date() }
-    //     })
-    //     .populate('employeeId')
-    //     .populate('leaveTypeId')
-    //     .sort({ 'dates.from': 1 });
+    query.status = options?.status || LeaveStatus.APPROVED;
 
-    return upcomingLeaves;
+    if (options?.startDate || options?.endDate) {
+      const range: any = {};
+      if (options.startDate) range.$gte = new Date(options.startDate);
+      if (options.endDate) range.$lte = new Date(options.endDate);
+      query['dates.from'] = range;
+    } else {
+      query['dates.from'] = { $gte: new Date() };
+    }
+
+    const sortOrder = options?.sortOrder === 'desc' ? -1 : 1;
+
+    const leaves = await this.leaveRequestModel
+      .find(query)
+      .populate('employeeId')
+      .populate('leaveTypeId')
+      .sort({ 'dates.from': sortOrder })
+      .exec();
+
+    return leaves.map((lr) => ({
+      requestId: lr._id.toString(),
+      employeeId: (lr.employeeId as any)?._id?.toString() || '',
+      employeeName: (lr.employeeId as any)?.fullName || '',
+      leaveType: (lr.leaveTypeId as any)?.name || '',
+      from: lr.dates.from,
+      to: lr.dates.to,
+      durationDays: lr.durationDays,
+      status: lr.status,
+    }));
   }
 
   /**
@@ -1862,19 +2015,19 @@ export class LeavesService {
       .populate('leaveTypeId');
 
     const settlements = [];
-
-    for (const entitlement of entitlements) {
-      const leaveType = entitlement.leaveTypeId as any;
-
-      // Only encash annual leave types
-      if (leaveType.code === 'ANNUAL' && entitlement.remaining > 0) {
-        const encashment = await this.calculateEncashment(
-          employeeId,
-          leaveType._id,
-        );
-        settlements.push(encashment);
-      }
-    }
+      // TODO: Replace with actual
+    // for (const entitlement of entitlements) {
+    //   const leaveType = entitlement.leaveTypeId as any;
+    //
+    //   // Only encash annual leave types
+    //   if (leaveType.code === 'ANNUAL' && entitlement.remaining > 0) {
+    //     const encashment = await this.calculateEncashment(
+    //       employeeId,
+    //       leaveType._id,
+    //     );
+    //     settlements.push(encashment);
+    //   }
+    // }
 
     return settlements;
   }

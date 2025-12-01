@@ -39,6 +39,18 @@ export class BalanceSummaryResponseDto {
   pending: number;
 
   @ApiProperty({
+    description: 'Accrued days (actual, pre-rounding)',
+    example: 12.4,
+  })
+  accruedActual: number;
+
+  @ApiProperty({
+    description: 'Accrued days (rounded)',
+    example: 12,
+  })
+  accruedRounded: number;
+
+  @ApiProperty({
     description: 'Days remaining',
     example: 20,
   })

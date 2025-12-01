@@ -24,9 +24,10 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Types } from 'mongoose';
 import { LeavesService } from './leaves.service';
-import { JwtAuthGuard, RolesGuard } from '@common/guards';
-import { Roles } from '@common/decorators';
+import { JwtAuthGuard, RolesGuard } from '../common/guards';
+import { Roles } from '../common/decorators';
 
 // Category DTOs
 import { CreateLeaveCategoryDto } from './dto/create-leave-category.dto';
@@ -75,6 +76,7 @@ import { TeamBalanceResponseDto } from './dto/team-balance-response.dto';
 import { UpcomingLeaveResponseDto } from './dto/upcoming-leave-response.dto';
 import { EncashmentResponseDto } from './dto/encashment-response.dto';
 import { AuditTrailResponseDto } from './dto/audit-trail-response.dto';
+import { LeaveStatus } from './enums/leave-status.enum';
 import { AddHolidayDto } from './dto/add-holiday.dto';
 
 @ApiTags('Leaves Management')
@@ -511,7 +513,8 @@ export class LeavesController {
   @Get('requests')
   @ApiOperation({
     summary: 'Get all leave requests',
-    description: 'Retrieves leave requests with optional filters',
+    description:
+      'Retrieves leave requests with optional filters (employee, leave type, status, date range, department) and sorting',
   })
   @ApiQuery({
     name: 'employeeId',
@@ -528,12 +531,40 @@ export class LeavesController {
     required: false,
     description: 'Filter by status',
   })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Filter by start date (YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'Filter by end date (YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'departmentId',
+    required: false,
+    description: 'Filter by employee department ID',
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    description: 'Sort by dates.from or createdAt',
+    enum: ['dates.from', 'createdAt'],
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    description: 'Sort order asc|desc',
+    enum: ['asc', 'desc'],
+  })
   @ApiResponse({
     status: 200,
     description: 'Leave requests retrieved successfully',
     type: [LeaveRequestResponseDto],
   })
   async getAllLeaveRequests(@Query() query: LeaveRequestQueryDto) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return await this.leavesService.getAllLeaveRequests(query);
   }
 
@@ -607,6 +638,7 @@ export class LeavesController {
 
     return await this.leavesService.updateLeaveRequestStatus(id, {
       ...dto,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       decidedBy: currentUserId,
     });
   }
@@ -1117,6 +1149,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * REQ-039: Flag irregular leave pattern
    */
   @Patch('requests/:id/flag-irregular')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
   @ApiOperation({ summary: 'Flag irregular leave pattern' })
   @ApiParam({ name: 'id', description: 'Leave request ID' })
   @ApiResponse({ status: 200, description: 'Request flagged successfully' })
@@ -1171,38 +1204,104 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * BR-46: Manager access to team reports
    */
   @Get('manager/team-balances')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
   @ApiOperation({ summary: 'Get leave balances for all team members' })
   @ApiQuery({
     name: 'managerId',
     description: 'Manager employee ID',
     required: true,
   })
+  @ApiQuery({
+    name: 'leaveTypeId',
+    description: 'Optional leave type filter',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'departmentId',
+    description: 'Optional department filter (overrides manager department)',
+    required: false,
+  })
   @ApiResponse({
     status: 200,
     description: 'Team balances retrieved successfully',
     type: [TeamBalanceResponseDto],
   })
-  async getTeamBalances(@Query('managerId') managerId: string) {
-    return this.leavesService.getTeamBalances(managerId);
+  async getTeamBalances(
+    @Query('managerId') managerId: string,
+    @Query('leaveTypeId') leaveTypeId?: string,
+    @Query('departmentId') departmentId?: string,
+  ) {
+    return this.leavesService.getTeamBalances(managerId, {
+      leaveTypeId,
+      departmentId,
+    });
   }
 
   /**
    * REQ-034: View team upcoming leaves
    */
   @Get('manager/team-upcoming-leaves')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
   @ApiOperation({ summary: 'Get upcoming approved leaves for team members' })
   @ApiQuery({
     name: 'managerId',
     description: 'Manager employee ID',
     required: true,
   })
+  @ApiQuery({
+    name: 'leaveTypeId',
+    description: 'Optional leave type filter',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'status',
+    description: 'Optional status filter',
+    required: false,
+    enum: ['pending', 'approved', 'rejected', 'cancelled'],
+  })
+  @ApiQuery({
+    name: 'startDate',
+    description: 'Filter by start date (YYYY-MM-DD)',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'endDate',
+    description: 'Filter by end date (YYYY-MM-DD)',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'departmentId',
+    description: 'Optional department filter',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    description: 'Sort order asc|desc',
+    required: false,
+    enum: ['asc', 'desc'],
+  })
   @ApiResponse({
     status: 200,
     description: 'Upcoming leaves retrieved successfully',
     type: [UpcomingLeaveResponseDto],
   })
-  async getTeamUpcomingLeaves(@Query('managerId') managerId: string) {
-    return this.leavesService.getTeamUpcomingLeaves(managerId);
+  async getTeamUpcomingLeaves(
+    @Query('managerId') managerId: string,
+    @Query('leaveTypeId') leaveTypeId?: string,
+    @Query('status') status?: LeaveStatus,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+  ) {
+    return this.leavesService.getTeamUpcomingLeaves(managerId, {
+      leaveTypeId,
+      status,
+      startDate,
+      endDate,
+      departmentId,
+      sortOrder,
+    });
   }
 
   // ==================== ENCASHMENT & FINAL SETTLEMENT (EXTENDED) ====================
@@ -1412,7 +1511,13 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
   async runAccrualForEmployee(@Param('employeeId') employeeId: string) {
     const entitlements =
       await this.leavesService.getEmployeeEntitlements(employeeId);
-    const results = [];
+    type AccrualResult =
+      | {
+          leaveTypeId: Types.ObjectId;
+          accrued: { actual: number; rounded: number };
+        }
+      | { leaveTypeId: Types.ObjectId; error: string };
+    const results: AccrualResult[] = [];
 
     for (const entitlement of entitlements) {
       try {
@@ -1431,15 +1536,16 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
           accruedActual: (entitlement.accruedActual || 0) + accrual.actual,
           accruedRounded: (entitlement.accruedRounded || 0) + accrual.rounded,
         });
-
         results.push({
           leaveTypeId: entitlement.leaveTypeId,
           accrued: accrual,
         });
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
         results.push({
           leaveTypeId: entitlement.leaveTypeId,
-          error: error.message,
+          error: errorMessage,
         });
       }
     }
