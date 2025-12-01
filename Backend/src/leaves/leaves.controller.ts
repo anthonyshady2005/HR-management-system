@@ -89,9 +89,31 @@ export class LeavesController {
 
   constructor(private readonly leavesService: LeavesService) {}
 
+  // ==================== ATTACHMENTS ====================
+
+  @Get('attachments/:attachmentId')
+  @Roles('HR Admin', 'HR Manager')
+  @ApiOperation({
+    summary: 'Get attachment metadata by ID (HR only)',
+  })
+  @ApiParam({
+    name: 'attachmentId',
+    description: 'Attachment ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Attachment retrieved successfully',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid attachment ID format' })
+  @ApiResponse({ status: 404, description: 'Attachment not found' })
+  async getAttachmentById(@Param('attachmentId') attachmentId: string) {
+    return await this.leavesService.getAttachmentForHr(attachmentId);
+  }
+
   // ==================== LEAVE CATEGORIES ====================
 
   @Post('categories')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Create a new leave category',
     description: 'Creates a new leave category with a unique name',
@@ -147,6 +169,7 @@ export class LeavesController {
   }
 
   @Put('categories/:id')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Update leave category',
     description: 'Updates an existing leave category',
@@ -564,7 +587,6 @@ export class LeavesController {
     type: [LeaveRequestResponseDto],
   })
   async getAllLeaveRequests(@Query() query: LeaveRequestQueryDto) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return await this.leavesService.getAllLeaveRequests(query);
   }
 
@@ -638,7 +660,6 @@ export class LeavesController {
 
     return await this.leavesService.updateLeaveRequestStatus(id, {
       ...dto,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       decidedBy: currentUserId,
     });
   }

@@ -24,5 +24,6 @@ import { EmployeeSystemRoleSchema } from '../employee-profile/models/employee-sy
   ],
   providers: [PayrollTrackingService],
   controllers: [PayrollTrackingController],
+  exports: [PayrollTrackingService],
 })
 export class PayrollTrackingModule { }
