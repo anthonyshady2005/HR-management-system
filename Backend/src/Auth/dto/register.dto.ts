@@ -1,5 +1,5 @@
-import { IsString, IsEmail, MinLength } from 'class-validator';
-
+import { IsString, IsEmail, MinLength ,IsArray,IsOptional,IsEnum} from 'class-validator';
+import { SystemRole } from '../../employee-profile/enums/employee-profile.enums';
 export class RegisterDto {
   @IsString()
   firstName: string;
@@ -16,4 +16,10 @@ export class RegisterDto {
   @IsString()
   @MinLength(5)
   password: string;
+
+  
+  @IsOptional()
+  @IsArray()
+  @IsEnum(SystemRole, { each: true })
+  roles?: SystemRole[];
 }
