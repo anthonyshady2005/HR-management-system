@@ -29,6 +29,10 @@ import {
   PositionAssignment,
   PositionAssignmentSchema,
 } from '../organization-structure/models/position-assignment.schema';
+import {
+  EmployeeProfile,
+  EmployeeProfileSchema,
+} from '../employee-profile/models/employee-profile.schema';
 import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
 import { TimeManagementModule } from '../time-management/time-management.module';
 
@@ -46,6 +50,7 @@ import { TimeManagementModule } from '../time-management/time-management.module'
       { name: Calendar.name, schema: CalendarSchema },
       { name: Attachment.name, schema: AttachmentSchema },
       { name: PositionAssignment.name, schema: PositionAssignmentSchema },
+      { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
     ]),
     EmployeeProfileModule,
     TimeManagementModule,
