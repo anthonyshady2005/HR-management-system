@@ -1,35 +1,63 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+
 import { TimeManagementController } from './time-management.controller';
 import { TimeManagementService } from './time-management.service';
-import { MongooseModule } from '@nestjs/mongoose';
-import { NotificationLogSchema, NotificationLog } from './models/notification-log.schema';
-import { AttendanceCorrectionRequestSchema, AttendanceCorrectionRequest } from './models/attendance-correction-request.schema';
-import { ShiftTypeSchema, ShiftType } from './models/shift-type.schema';
-import { ScheduleRuleSchema, ScheduleRule } from './models/schedule-rule.schema';
-import { AttendanceRecordSchema, AttendanceRecord } from './models/attendance-record.schema';
-import { TimeExceptionSchema, TimeException } from './models/time-exception.schema';
-import { OvertimeRuleSchema, OvertimeRule } from './models/overtime-rule.schema';
-import { ShiftSchema, Shift } from './models/shift.schema';
-import { ShiftAssignmentSchema, ShiftAssignment } from './models/shift-assignment.schema';
-import { LatenessRule, latenessRuleSchema } from './models/lateness-rule.schema';
-import { HolidaySchema, Holiday } from './models/holiday.schema';
 
+// Models (Schemas)
+import { AttendanceRecord, AttendanceRecordSchema } from './models/attendance-record.schema';
+import { ShiftAssignment, ShiftAssignmentSchema } from './models/shift-assignment.schema';
+import { Shift, ShiftSchema } from './models/shift.schema';
+import { ShiftType, ShiftTypeSchema } from './models/shift-type.schema';
+import { TimeException, TimeExceptionSchema } from './models/time-exception.schema';
+import { LatenessRule, latenessRuleSchema } from './models/lateness-rule.schema';
+import { OvertimeRule, OvertimeRuleSchema } from './models/overtime-rule.schema';
+import { Holiday, HolidaySchema } from './models/holiday.schema';
+import { ScheduleRule, ScheduleRuleSchema } from './models/schedule-rule.schema';
+import { AttendanceCorrectionRequest, AttendanceCorrectionRequestSchema } from './models/attendance-correction-request.schema';
+import { NotificationLog, NotificationLogSchema } from './models/notification-log.schema';
+
+// External modules
+import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
+import { LeavesModule } from '../leaves/leaves.module';
+import { PayrollTrackingModule } from '../payroll-tracking/payroll-tracking.module';
+import { OrganizationStructureModule } from '../organization-structure/organization-structure.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([
-    { name: NotificationLog.name, schema: NotificationLogSchema },
-    { name: AttendanceCorrectionRequest.name, schema: AttendanceCorrectionRequestSchema },
-    { name: ShiftType.name, schema: ShiftTypeSchema },
-    { name: ScheduleRule.name, schema: ScheduleRuleSchema },
-    { name: AttendanceRecord.name, schema: AttendanceRecordSchema },
-    { name: TimeException.name, schema: TimeExceptionSchema },
-    { name: OvertimeRule.name, schema: OvertimeRuleSchema },
-    { name: Shift.name, schema: ShiftSchema },
-    { name: ShiftAssignment.name, schema: ShiftAssignmentSchema },
-    { name: LatenessRule.name, schema: latenessRuleSchema },
-    { name: Holiday.name, schema: HolidaySchema },
-  ])],
+  imports: [
+    // Register all Time Management Schemas
+    MongooseModule.forFeature([
+      { name: AttendanceRecord.name, schema: AttendanceRecordSchema },
+      { name: ShiftAssignment.name, schema: ShiftAssignmentSchema },
+      { name: Shift.name, schema: ShiftSchema },
+      { name: ShiftType.name, schema: ShiftTypeSchema },
+      { name: TimeException.name, schema: TimeExceptionSchema },
+      { name: LatenessRule.name, schema: latenessRuleSchema },
+      { name: OvertimeRule.name, schema: OvertimeRuleSchema },
+      { name: Holiday.name, schema: HolidaySchema },
+      { name: ScheduleRule.name, schema: ScheduleRuleSchema },
+      { name: AttendanceCorrectionRequest.name, schema: AttendanceCorrectionRequestSchema },
+      { name: NotificationLog.name, schema: NotificationLogSchema },
+    ]),
+
+    // External Modules (safe)
+    EmployeeProfileModule,
+
+    // Critical: solve circular dependency
+    forwardRef(() => LeavesModule),
+
+    PayrollTrackingModule,
+    OrganizationStructureModule,
+  ],
+
   controllers: [TimeManagementController],
-  providers: [TimeManagementService]
+
+  providers: [
+    TimeManagementService,
+  ],
+
+  exports: [
+    TimeManagementService,
+  ],
 })
 export class TimeManagementModule {}

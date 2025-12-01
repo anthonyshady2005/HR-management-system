@@ -15,18 +15,29 @@ import { EmployeeProfileModule } from '../employee-profile/employee-profile.modu
 import { LeavesModule } from '../leaves/leaves.module';
 
 @Module({
-  imports: [forwardRef(() => PayrollTrackingModule), PayrollConfigurationModule, TimeManagementModule, EmployeeProfileModule, LeavesModule,
-  MongooseModule.forFeature([
-    { name: payrollRuns.name, schema: payrollRunsSchema },
-    { name: paySlip.name, schema: paySlipSchema },
-    { name: employeePayrollDetails.name, schema: employeePayrollDetailsSchema },
-    { name: employeeSigningBonus.name, schema: employeeSigningBonusSchema },
-    { name: terminationAndResignationBenefits.name, schema: terminationAndResignationBenefitsSchema },
-    { name: employeePenalties.name, schema: employeePenaltiesSchema },
+  imports: [
+    forwardRef(() => PayrollTrackingModule),
+    PayrollConfigurationModule,
 
-  ])],
+    // ✔ REQUIRED FIX
+    forwardRef(() => TimeManagementModule),
+
+    EmployeeProfileModule,
+
+    // ✔ REQUIRED FIX
+    forwardRef(() => LeavesModule),
+
+    MongooseModule.forFeature([
+      { name: payrollRuns.name, schema: payrollRunsSchema },
+      { name: paySlip.name, schema: paySlipSchema },
+      { name: employeePayrollDetails.name, schema: employeePayrollDetailsSchema },
+      { name: employeeSigningBonus.name, schema: employeeSigningBonusSchema },
+      { name: terminationAndResignationBenefits.name, schema: terminationAndResignationBenefitsSchema },
+      { name: employeePenalties.name, schema: employeePenaltiesSchema },
+    ]),
+  ],
   controllers: [PayrollExecutionController],
   providers: [PayrollExecutionService],
   exports: [PayrollExecutionService]
 })
-export class PayrollExecutionModule { }
+export class PayrollExecutionModule {}
