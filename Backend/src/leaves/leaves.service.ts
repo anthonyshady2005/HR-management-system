@@ -39,6 +39,7 @@ import { HolidayType } from '../time-management/models/enums';
 import { LeaveStatus } from './enums/leave-status.enum';
 import { RoundingRule } from './enums/rounding-rule.enum';
 import { AccrualMethod } from './enums/accrual-method.enum';
+import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
 
 @Injectable()
 export class LeavesService {
@@ -705,33 +706,79 @@ export class LeavesService {
     location?: string;
   } | null> {
     try {
-      // TODO: Replace with actual Employee Profile service call when integrated
-      // Example: const employee = await this.employeeProfileService.getEmployeeById(employeeId);
+      if (!Types.ObjectId.isValid(employeeId)) {
+        this.logger.warn(
+          `Invalid employeeId provided for eligibility lookup: ${employeeId}`,
+        );
+        return null;
+      }
 
-      // For now, return null to indicate Employee Profile integration is pending
-      // This will allow the system to work without strict validation until integration is complete
-      return null;
+      // Get employee profile with pay grade snapshot
+      const employee = await this.employeeProfileModel
+        .findById(employeeId)
+        .populate('payGradeId')
+        .lean()
+        .exec();
 
-      /* When Employee Profile is integrated, implement like this:
-            const employee = await this.employeeProfileService.getEmployeeById(employeeId);
+      if (!employee) {
+        this.logger.warn(
+          `Employee profile not found for eligibility validation: ${employeeId}`,
+        );
+        return null;
+      }
 
-            // Calculate tenure in months
-            const hireDate = new Date(employee.hireDate);
-            const now = new Date();
-            const tenureMonths = Math.floor((now.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+      // Determine current position title (if any)
+      const now = new Date();
+      const assignment = await this.positionAssignmentModel
+        .findOne({
+          employeeProfileId: new Types.ObjectId(employeeId),
+          startDate: { $lte: now },
+          $or: [
+            { endDate: { $exists: false } },
+            { endDate: null },
+            { endDate: { $gte: now } },
+          ],
+        })
+        .populate('positionId')
+        .lean()
+        .exec();
 
-            return {
-                tenureMonths,
-                position: employee.jobTitle || employee.position,
-                contractType: employee.contractType,
-                grade: employee.grade || employee.level,
-                location: employee.location || employee.office
-            };
-            */
+      const positionDoc = assignment?.positionId as any;
+      const position =
+        positionDoc?.title || positionDoc?.code || positionDoc?.name;
+
+      // Calculate tenure in months using hire date
+      const hireDate = employee.dateOfHire
+        ? new Date(employee.dateOfHire)
+        : null;
+      const tenureMonths =
+        hireDate && !isNaN(hireDate.getTime())
+          ? Math.max(
+              0,
+              Math.floor(
+                (now.getTime() - hireDate.getTime()) /
+                  (1000 * 60 * 60 * 24 * 30),
+              ),
+            )
+          : 0;
+
+      const grade = (employee as any)?.payGradeId?.grade;
+      const location =
+        (employee as any)?.address?.city ||
+        (employee as any)?.address?.country ||
+        undefined;
+
+      return {
+        tenureMonths,
+        position,
+        contractType: employee.contractType,
+        grade,
+        location,
+      };
     } catch (error) {
-      console.error(
-        'Failed to fetch employee data from Employee Profile module:',
-        error.message,
+      this.logger.error(
+        'Failed to fetch employee data from Employee Profile module',
+        error instanceof Error ? error.stack : undefined,
       );
       return null;
     }
@@ -1245,7 +1292,7 @@ export class LeavesService {
     if (!calendar) {
       return false;
     }
-
+    // TODO: check other years prev and next
     return calendar.blockedPeriods.some((period) => {
       const from = new Date(period.from);
       const to = new Date(period.to);
@@ -1478,6 +1525,24 @@ export class LeavesService {
         }
       }
     }
+  }
+
+  /**
+   * HR Manager/Admin: Fetch attachment metadata by ID
+   */
+  async getAttachmentForHr(
+    attachmentId: string,
+  ): Promise<AttachmentDocument | null> {
+    if (!Types.ObjectId.isValid(attachmentId)) {
+      throw new BadRequestException('Invalid attachment ID format');
+    }
+
+    const attachment = await this.attachmentModel.findById(attachmentId).exec();
+    if (!attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    return attachment;
   }
 
   /**
@@ -2781,6 +2846,10 @@ export class LeavesService {
     request: LeaveRequest,
     userId: string,
   ): Promise<boolean> {
+    if (!Types.ObjectId.isValid(userId)) {
+      return false;
+    }
+
     // Find first pending step
     const currentStep = request.approvalFlow.find(
       (s) => s.status === 'pending',
@@ -2789,19 +2858,114 @@ export class LeavesService {
       return false;
     }
 
-    // Manager step: check if user is assigned manager or HR Admin (override capability)
+    const now = new Date();
+
+    // Quick HR role check (access profile -> roles array)
+    const hasHrRole = async (): Promise<boolean> => {
+      const profile = await this.employeeProfileModel
+        .findById(userId)
+        .populate('accessProfileId')
+        .lean()
+        .exec();
+
+      const roles =
+        ((profile as any)?.accessProfileId?.roles as SystemRole[]) || [];
+
+      return roles.some((role) =>
+        [
+          SystemRole.HR_ADMIN,
+          SystemRole.HR_MANAGER,
+          SystemRole.HR_EMPLOYEE,
+        ].includes(role),
+      );
+    };
+
+    // Check if user sits anywhere in the employee's manager chain via reportsToPositionId
+    const isInReportingChain = async (): Promise<boolean> => {
+      const employeeId =
+        (request.employeeId as any)?.toString?.() || (request.employeeId as any);
+
+      if (!Types.ObjectId.isValid(employeeId)) {
+        return false;
+      }
+
+      // Get the employee's active position assignment and follow its manager chain
+      const employeeAssignment = await this.positionAssignmentModel
+        .findOne({
+          employeeProfileId: new Types.ObjectId(employeeId),
+          startDate: { $lte: now },
+          $or: [
+            { endDate: { $exists: false } },
+            { endDate: null },
+            { endDate: { $gte: now } },
+          ],
+        })
+        .populate('positionId')
+        .lean()
+        .exec();
+
+      const managerPositionIds: string[] = [];
+      let currentPosition = employeeAssignment?.positionId as any;
+
+      // Walk up the reports-to chain collecting manager positions
+      while (currentPosition?.reportsToPositionId) {
+        const managerPositionId = currentPosition.reportsToPositionId.toString();
+        managerPositionIds.push(managerPositionId);
+
+        const managerAssignment = await this.positionAssignmentModel
+          .findOne({
+            positionId: new Types.ObjectId(managerPositionId),
+            startDate: { $lte: now },
+            $or: [
+              { endDate: { $exists: false } },
+              { endDate: null },
+              { endDate: { $gte: now } },
+            ],
+          })
+          .populate('positionId')
+          .lean()
+          .exec();
+
+        currentPosition = managerAssignment?.positionId as any;
+      }
+
+      if (!managerPositionIds.length) {
+        return false;
+      }
+
+      // Does the user hold any of those manager positions (at any level)?
+      const userAssignment = await this.positionAssignmentModel
+        .findOne({
+          employeeProfileId: new Types.ObjectId(userId),
+          positionId: {
+            $in: managerPositionIds.map((id) => new Types.ObjectId(id)),
+          },
+          startDate: { $lte: now },
+          $or: [
+            { endDate: { $exists: false } },
+            { endDate: null },
+            { endDate: { $gte: now } },
+          ],
+        })
+        .lean()
+        .exec();
+
+      return Boolean(userAssignment);
+    };
+
+    const [hrRole, managerInChain] = await Promise.all([
+      hasHrRole(),
+      isInReportingChain(),
+    ]);
+
+    // Manager step: user must be in reporting chain or HR override
     if (currentStep.role === 'Manager') {
-      const isAssignedManager = currentStep.decidedBy?.toString() === userId;
-      // TODO: Check if user has HR Admin role (from Employee Profile or JWT)
-      // const isHRAdmin = await this.checkUserRole(userId, 'HR Admin');
-      return isAssignedManager; // || isHRAdmin;
+      return managerInChain || hrRole;
     }
 
     // HR step: check if user has HR role
     if (currentStep.role === 'HR') {
-      // TODO: Check if user has HR role
-      // return await this.checkUserRole(userId, ['HR Admin', 'HR Manager']);
-      return true; // Temporary - allow any HR role
+      return hrRole;
     }
 
     return false;

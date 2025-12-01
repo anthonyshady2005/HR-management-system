@@ -5,17 +5,41 @@ import { TimeManagementController } from './time-management.controller';
 import { TimeManagementService } from './time-management.service';
 
 // Models (Schemas)
-import { AttendanceRecord, AttendanceRecordSchema } from './models/attendance-record.schema';
-import { ShiftAssignment, ShiftAssignmentSchema } from './models/shift-assignment.schema';
+import {
+  AttendanceRecord,
+  AttendanceRecordSchema,
+} from './models/attendance-record.schema';
+import {
+  ShiftAssignment,
+  ShiftAssignmentSchema,
+} from './models/shift-assignment.schema';
 import { Shift, ShiftSchema } from './models/shift.schema';
 import { ShiftType, ShiftTypeSchema } from './models/shift-type.schema';
-import { TimeException, TimeExceptionSchema } from './models/time-exception.schema';
-import { LatenessRule, latenessRuleSchema } from './models/lateness-rule.schema';
-import { OvertimeRule, OvertimeRuleSchema } from './models/overtime-rule.schema';
+import {
+  TimeException,
+  TimeExceptionSchema,
+} from './models/time-exception.schema';
+import {
+  LatenessRule,
+  latenessRuleSchema,
+} from './models/lateness-rule.schema';
+import {
+  OvertimeRule,
+  OvertimeRuleSchema,
+} from './models/overtime-rule.schema';
 import { Holiday, HolidaySchema } from './models/holiday.schema';
-import { ScheduleRule, ScheduleRuleSchema } from './models/schedule-rule.schema';
-import { AttendanceCorrectionRequest, AttendanceCorrectionRequestSchema } from './models/attendance-correction-request.schema';
-import { NotificationLog, NotificationLogSchema } from './models/notification-log.schema';
+import {
+  ScheduleRule,
+  ScheduleRuleSchema,
+} from './models/schedule-rule.schema';
+import {
+  AttendanceCorrectionRequest,
+  AttendanceCorrectionRequestSchema,
+} from './models/attendance-correction-request.schema';
+import {
+  NotificationLog,
+  NotificationLogSchema,
+} from './models/notification-log.schema';
 
 // External modules
 import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
@@ -36,7 +60,10 @@ import { OrganizationStructureModule } from '../organization-structure/organizat
       { name: OvertimeRule.name, schema: OvertimeRuleSchema },
       { name: Holiday.name, schema: HolidaySchema },
       { name: ScheduleRule.name, schema: ScheduleRuleSchema },
-      { name: AttendanceCorrectionRequest.name, schema: AttendanceCorrectionRequestSchema },
+      {
+        name: AttendanceCorrectionRequest.name,
+        schema: AttendanceCorrectionRequestSchema,
+      },
       { name: NotificationLog.name, schema: NotificationLogSchema },
     ]),
 
@@ -52,12 +79,8 @@ import { OrganizationStructureModule } from '../organization-structure/organizat
 
   controllers: [TimeManagementController],
 
-  providers: [
-    TimeManagementService,
-  ],
+  providers: [TimeManagementService],
 
-  exports: [
-    TimeManagementService,
-  ],
+  exports: [TimeManagementService],
 })
 export class TimeManagementModule {}
