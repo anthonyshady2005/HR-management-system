@@ -2,7 +2,6 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { Gender, MaritalStatus } from '../enums/employee-profile.enums';
 
-
 @Schema({ _id: false })
 export class Address {
   @Prop({ type: String })
