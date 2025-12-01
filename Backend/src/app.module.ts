@@ -4,7 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TimeManagementModule } from './time-management/time-management.module';
-import { RecruitmentModule } from './recruitment/recruitement.module';
+import { RecruitmentModule } from './recruitment/recruitment.module';
 import { LeavesModule } from './leaves/leaves.module';
 import { PayrollTrackingModule } from './payroll-tracking/payroll-tracking.module';
 import { EmployeeProfileModule } from './employee-profile/employee-profile.module';
