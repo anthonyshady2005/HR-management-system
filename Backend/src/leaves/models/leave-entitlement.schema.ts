@@ -49,4 +49,4 @@ export class LeaveEntitlement {
 }
 
 export const LeaveEntitlementSchema =
-  SchemaFactory.createForClass(LeaveEntitlement);
+    SchemaFactory.createForClass(LeaveEntitlement);

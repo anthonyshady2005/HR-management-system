@@ -32,6 +32,10 @@ import {
   PositionAssignmentDocument,
 } from '../organization-structure/models/position-assignment.schema';
 import {
+  NotificationLog,
+  NotificationLogDocument,
+} from '../time-management/models/notification-log.schema';
+import {
   EmployeeProfile,
   EmployeeProfileDocument,
 } from '../employee-profile/models/employee-profile.schema';
@@ -39,7 +43,10 @@ import { HolidayType } from '../time-management/models/enums';
 import { LeaveStatus } from './enums/leave-status.enum';
 import { RoundingRule } from './enums/rounding-rule.enum';
 import { AccrualMethod } from './enums/accrual-method.enum';
-import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
+import { SystemRole, EmployeeStatus } from '../employee-profile/enums/employee-profile.enums';
+import { paySlip, PayslipDocument } from '../payroll-execution/models/payslip.schema';
+import { employeePayrollDetails, employeePayrollDetailsDocument } from '../payroll-execution/models/employeePayrollDetails.schema';
+import {AdjustmentType} from "./enums/adjustment-type.enum";
 
 @Injectable()
 export class LeavesService {
@@ -77,7 +84,37 @@ export class LeavesService {
     private employeeProfileModel: Model<EmployeeProfileDocument>,
     @InjectModel(PositionAssignment.name)
     private positionAssignmentModel: Model<PositionAssignmentDocument>,
+    @InjectModel(NotificationLog.name)
+    private notificationLogModel: Model<NotificationLogDocument>,
+    @InjectModel('paySlip') private paySlipModel: Model<PayslipDocument>,
+    @InjectModel(employeePayrollDetails.name)
+    private employeePayrollDetailsModel: Model<employeePayrollDetailsDocument>,
   ) {}
+
+  /**
+   * Utility: fire-and-forget notification log
+   */
+  private async logNotification(
+    to: string,
+    type: string,
+    message?: string,
+  ): Promise<void> {
+    if (!Types.ObjectId.isValid(to)) {
+      return;
+    }
+    try {
+      await this.notificationLogModel.create({
+        to: new Types.ObjectId(to),
+        type,
+        message,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to log notification to ${to} [${type}]`,
+        err instanceof Error ? err.stack : undefined,
+      );
+    }
+  }
 
   // ==================== LEAVE CATEGORIES ====================
 
@@ -447,6 +484,24 @@ export class LeavesService {
       throw new NotFoundException('Leave type not found');
     }
 
+    // Enforce late submission window: allow backdated requests only within minNoticeDays
+    const policy = await this.leavePolicyModel
+      .findOne({ leaveTypeId: data.leaveTypeId })
+      .exec();
+    if (policy?.minNoticeDays !== undefined) {
+      const now = new Date();
+      if (fromDate < now) {
+        const daysLate = Math.floor(
+          (now.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24),
+        );
+        if (daysLate > policy.minNoticeDays) {
+          throw new BadRequestException(
+            `Late submission exceeds allowed window: ${daysLate} days late, policy permits ${policy.minNoticeDays} day(s)`,
+          );
+        }
+      }
+    }
+
     // Enforce blocked periods
     await this.checkBlockedPeriods(fromDate, toDate);
 
@@ -522,7 +577,32 @@ export class LeavesService {
     // balanceCheck.paidDays and balanceCheck.unpaidDays indicate the split
     // No need to store in request - can be calculated on retrieval
 
-    return await request.save();
+    const saved = await request.save();
+
+    // Track pending balance for paid leave types
+    await this.addToPendingBalance(
+      data.employeeId,
+      data.leaveTypeId,
+      netDays,
+    );
+
+    // Notify employee (submission acknowledgement)
+    await this.logNotification(
+      data.employeeId,
+      'LEAVE_SUBMITTED',
+      `Leave request submitted for ${fromDate.toDateString()} to ${toDate.toDateString()}`,
+    );
+
+    // Notify direct manager (action required)
+    if (managerId) {
+      await this.logNotification(
+        managerId,
+        'LEAVE_ACTION_REQUIRED',
+        `New leave request awaiting your approval for employee ${data.employeeId}`,
+      );
+    }
+
+    return saved;
   }
 
   async getAllLeaveRequests(filters?: {
@@ -647,6 +727,8 @@ export class LeavesService {
       throw new NotFoundException('Leave request not found');
     }
 
+    const wasStatus = request.status;
+
     // Update overall status
     request.status = data.status;
 
@@ -664,7 +746,62 @@ export class LeavesService {
       }
     }
 
-    return await request.save();
+    const saved = await request.save();
+
+    // Balance updates based on final status changes
+    if (data.status === LeaveStatus.APPROVED) {
+      await this.deductFromBalance(
+        request.employeeId.toString(),
+        request.leaveTypeId.toString(),
+        request.durationDays,
+      );
+
+      // Sync with payroll: Handle paid/unpaid leave deductions/encashments
+      await this.syncLeaveApprovalWithPayroll(
+        request.employeeId.toString(),
+        request.leaveTypeId.toString(),
+        request.durationDays,
+        request.dates.from,
+        request.dates.to,
+      );
+    } else if (
+      data.status === LeaveStatus.REJECTED ||
+      data.status === LeaveStatus.CANCELLED
+    ) {
+      // Release pending back to remaining on rejection/cancellation
+      await this.releasePendingBalance(
+        request.employeeId.toString(),
+        request.leaveTypeId.toString(),
+        request.durationDays,
+      );
+    }
+
+    const employeeId = request.employeeId.toString();
+    const managerStep = request.approvalFlow.find((f) => f.role === 'Manager');
+    const managerId = managerStep?.decidedBy?.toString();
+
+    // Notify employee on status change
+    await this.logNotification(
+      employeeId,
+      `LEAVE_${data.status.toUpperCase()}`,
+      `Your leave request was ${data.status}`,
+    );
+
+    // Notify manager when finalized (approved/rejected/cancelled)
+    if (
+      [LeaveStatus.APPROVED, LeaveStatus.REJECTED, LeaveStatus.CANCELLED].includes(
+        data.status,
+      ) &&
+      managerId
+    ) {
+      await this.logNotification(
+        managerId,
+        `LEAVE_${data.status.toUpperCase()}_NOTIFY`,
+        `Leave request for employee ${employeeId} is now ${data.status}`,
+      );
+    }
+
+    return saved;
   }
 
   async cancelLeaveRequest(id: string, employeeId: string) {
@@ -688,7 +825,33 @@ export class LeavesService {
     }
 
     request.status = LeaveStatus.CANCELLED;
-    return await request.save();
+    const saved = await request.save();
+
+    // Release pending back to remaining for paid leave
+    await this.releasePendingBalance(
+      employeeId,
+      request.leaveTypeId.toString(),
+      request.durationDays,
+    );
+
+    // Notify employee (self) and manager if available
+    await this.logNotification(
+      employeeId,
+      'LEAVE_CANCELLED',
+      'Your leave request has been cancelled',
+    );
+
+    const managerStep = request.approvalFlow.find((f) => f.role === 'Manager');
+    const managerId = managerStep?.decidedBy?.toString();
+    if (managerId) {
+      await this.logNotification(
+        managerId,
+        'LEAVE_CANCELLED_NOTIFY',
+        `Employee ${employeeId} cancelled their leave request`,
+      );
+    }
+
+    return saved;
   }
 
   // ==================== LEAVE ENTITLEMENTS ====================
@@ -1138,7 +1301,7 @@ export class LeavesService {
   async createAdjustment(data: {
     employeeId: string;
     leaveTypeId: string;
-    adjustmentType: string;
+    adjustmentType: AdjustmentType;
     amount: number;
     reason: string;
     hrUserId: string;
@@ -1151,7 +1314,73 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
-    const adjustment = new this.leaveAdjustmentModel(data);
+    const amount = Math.abs(data.amount);
+    if (amount <= 0) {
+      throw new BadRequestException('Adjustment amount must be greater than zero');
+    }
+
+    const entitlement = await this.leaveEntitlementModel.findOne({
+      employeeId: data.employeeId,
+      leaveTypeId: data.leaveTypeId,
+    });
+
+    if (!entitlement) {
+      throw new NotFoundException('Leave entitlement not found');
+    }
+
+    // Apply adjustment to entitlement in real-time
+    const applyDeduction = (days: number) => {
+      const available =
+        (entitlement.yearlyEntitlement || 0) +
+        (entitlement.carryForward || 0) -
+        (entitlement.taken || 0) -
+        (entitlement.pending || 0);
+
+      if (available < days) {
+        throw new BadRequestException(
+          'Adjustment would make balance negative; increase grant before deducting',
+        );
+      }
+
+      // Prefer to deduct from carryForward first, then yearlyEntitlement
+      const fromCarry = Math.min(entitlement.carryForward || 0, days);
+      entitlement.carryForward = Math.max(
+        0,
+        (entitlement.carryForward || 0) - fromCarry,
+      );
+
+      const remaining = days - fromCarry;
+      if (remaining > 0) {
+        entitlement.yearlyEntitlement = Math.max(
+          0,
+          (entitlement.yearlyEntitlement || 0) - remaining,
+        );
+      }
+    };
+
+    switch (data.adjustmentType) {
+      case AdjustmentType.ADD:
+        entitlement.carryForward = (entitlement.carryForward || 0) + amount;
+        break;
+      case AdjustmentType.DEDUCT:
+      case AdjustmentType.ENCASHMENT:
+        applyDeduction(amount);
+        break;
+      default:
+        throw new BadRequestException('Unsupported adjustment type');
+    }
+
+    const total =
+      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
+    entitlement.remaining = total - (entitlement.taken || 0) - (entitlement.pending || 0);
+
+    await entitlement.save();
+
+    // Persist adjustment audit log
+    const adjustment = new this.leaveAdjustmentModel({
+      ...data,
+      amount,
+    });
     return await adjustment.save();
   }
 
@@ -1439,6 +1668,12 @@ export class LeavesService {
       );
     }
 
+    // Enforce carry-forward expiry if configured
+    const policyForExpiry = await this.leavePolicyModel
+      .findOne({ leaveTypeId })
+      .exec();
+    await this.enforceCarryForwardExpiry(entitlement, policyForExpiry || undefined);
+
     const available = entitlement.remaining || 0;
 
     // STEP 4: If sufficient balance, approve all as paid
@@ -1706,6 +1941,51 @@ export class LeavesService {
   }
 
   /**
+   * Release pending days back to remaining (e.g., rejection/cancellation)
+   * Mirrors addToPendingBalance but subtracts from pending.
+   */
+  private async releasePendingBalance(
+    employeeId: string,
+    leaveTypeId: string,
+    days: number,
+  ): Promise<void> {
+    if (
+      !Types.ObjectId.isValid(employeeId) ||
+      !Types.ObjectId.isValid(leaveTypeId)
+    ) {
+      throw new BadRequestException('Invalid ID format');
+    }
+
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    if (!leaveType) {
+      throw new NotFoundException('Leave type not found');
+    }
+
+    // Skip pending adjustments for unpaid leave types
+    if (!leaveType.paid) {
+      return;
+    }
+
+    const entitlement = await this.leaveEntitlementModel.findOne({
+      employeeId,
+      leaveTypeId,
+    });
+
+    if (!entitlement) {
+      throw new NotFoundException('Leave entitlement not found');
+    }
+
+    entitlement.pending = Math.max(0, entitlement.pending - days);
+
+    // Recalculate remaining
+    const total =
+      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
+    entitlement.remaining = total - entitlement.taken - entitlement.pending;
+
+    await entitlement.save();
+  }
+
+  /**
    * REQ-018: Return days to balance when leave is cancelled
    * BR-18: Auto-return days on cancellation
    * BR-29: Only return for paid leave types
@@ -1866,8 +2146,11 @@ export class LeavesService {
     const deptFilter = departmentId
       ? new Types.ObjectId(departmentId)
       : managerProfile.primaryDepartmentId;
+    // If departmentId parameter is provided → convert it to Types.ObjectId and use that.
+    // Otherwise use managerProfile.primaryDepartmentId.  
 
     const query: any = { _id: { $ne: new Types.ObjectId(managerId) } };
+    // Find all employees whose _id is NOT equal to the manager’s ID.
     const or: any[] = [];
 
     if (managerProfile.primaryPositionId) {
@@ -1879,6 +2162,16 @@ export class LeavesService {
     if (or.length) {
       query.$or = or;
     }
+    // If there are OR conditions, add them into the final query
+    // example:
+    // query = {
+    //   _id: { $ne: managerId },
+    //   $or: [
+    //     { supervisorPositionId: managerPrimaryPosition },
+    //     { primaryDepartmentId: deptFilter }
+    //   ]
+    // }
+
 
     const members = await this.employeeProfileModel.find(query).exec();
     return { members };
@@ -1940,6 +2233,104 @@ export class LeavesService {
   }
 
   /**
+   * Get pending leave requests for a manager's team, with optional overlap filter
+   */
+  async getManagerPendingTeamRequests(
+    managerId: string,
+    options?: { overlappingOnly?: boolean },
+  ): Promise<{
+    requests: LeaveRequest[];
+    overlaps: { requestA: string; requestB: string }[];
+  }> {
+    if (!Types.ObjectId.isValid(managerId)) {
+      throw new BadRequestException('Invalid manager ID format');
+    }
+
+    const now = new Date();
+
+    const managerAssignment = await this.positionAssignmentModel
+      .findOne({
+        employeeProfileId: new Types.ObjectId(managerId),
+        startDate: { $lte: now },
+        $or: [
+          { endDate: { $exists: false } },
+          { endDate: null },
+          { endDate: { $gte: now } },
+        ],
+      })
+      .populate('positionId')
+      .lean()
+      .exec();
+
+    if (!managerAssignment?.positionId) {
+      throw new NotFoundException('Manager position not found or inactive');
+    }
+
+    const managerPositionId = (managerAssignment.positionId as any)?._id;
+
+    const teamAssignments = await this.positionAssignmentModel
+      .find({
+        startDate: { $lte: now },
+        $or: [
+          { endDate: { $exists: false } },
+          { endDate: null },
+          { endDate: { $gte: now } },
+        ],
+      })
+      .populate('positionId')
+      .lean()
+      .exec();
+
+    const teamMemberIds = teamAssignments
+      .filter((a) =>
+        (a.positionId as any)?.reportsToPositionId?.equals(managerPositionId),
+      )
+      .map((a) => (a.employeeProfileId as Types.ObjectId).toString());
+
+    if (!teamMemberIds.length) {
+      return { requests: [], overlaps: [] };
+    }
+
+    const pendingRequests = await this.leaveRequestModel
+      .find({
+        status: LeaveStatus.PENDING,
+        employeeId: { $in: teamMemberIds.map((id) => new Types.ObjectId(id)) },
+      })
+      .populate('employeeId')
+      .populate('leaveTypeId')
+      .lean()
+      .exec();
+
+    const overlaps: { requestA: string; requestB: string }[] = [];
+    const overlappingIds = new Set<string>();
+
+    for (let i = 0; i < pendingRequests.length; i++) {
+      for (let j = i + 1; j < pendingRequests.length; j++) {
+        const a = pendingRequests[i];
+        const b = pendingRequests[j];
+        if (
+          a.dates.from <= b.dates.to &&
+          a.dates.to >= b.dates.from &&
+          a.employeeId.toString() !== b.employeeId.toString()
+        ) {
+          overlaps.push({
+            requestA: a._id.toString(),
+            requestB: b._id.toString(),
+          });
+          overlappingIds.add(a._id.toString());
+          overlappingIds.add(b._id.toString());
+        }
+      }
+    }
+
+    const filteredRequests = options?.overlappingOnly
+      ? pendingRequests.filter((r) => overlappingIds.has(r._id.toString()))
+      : pendingRequests;
+
+    return { requests: filteredRequests as any, overlaps };
+  }
+
+  /**
    * REQ-034: View team upcoming leaves
    */
   async getTeamUpcomingLeaves(
@@ -1983,6 +2374,7 @@ export class LeavesService {
       query['dates.from'] = range;
     } else {
       query['dates.from'] = { $gte: new Date() };
+      // Show only upcoming leaves starting today or after, if no exact dates available
     }
 
     const sortOrder = options?.sortOrder === 'desc' ? -1 : 1;
@@ -2047,9 +2439,17 @@ export class LeavesService {
       throw new NotFoundException('Leave entitlement not found');
     }
 
-    // TODO: Fetch daily salary rate from Payroll module
-    // const dailySalaryRate = await this.payrollService.getDailySalaryRate(employeeId);
-    const dailySalaryRate = 0; // Placeholder
+    // Fetch daily salary rate from employee's base salary
+    const baseSalary = await this.getEmployeeBaseSalary(employeeId);
+    if (!baseSalary || baseSalary <= 0) {
+      throw new NotFoundException(
+        'Employee base salary not found. Cannot calculate encashment.',
+      );
+    }
+
+    // Calculate daily salary rate: Base Salary / Work Days in Month
+    const workDaysInMonth = this.getWorkDaysInMonth(new Date());
+    const dailySalaryRate = baseSalary / workDaysInMonth;
 
     // BR-53: Capped at 30 days
     const unusedDays = Math.min(entitlement.remaining, 30);
@@ -2075,26 +2475,8 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee ID format');
     }
 
-    const entitlements = await this.leaveEntitlementModel
-      .find({ employeeId })
-      .populate('leaveTypeId');
-
-    const settlements = [];
-      // TODO: Replace with actual
-    // for (const entitlement of entitlements) {
-    //   const leaveType = entitlement.leaveTypeId as any;
-    //
-    //   // Only encash annual leave types
-    //   if (leaveType.code === 'ANNUAL' && entitlement.remaining > 0) {
-    //     const encashment = await this.calculateEncashment(
-    //       employeeId,
-    //       leaveType._id,
-    //     );
-    //     settlements.push(encashment);
-    //   }
-    // }
-
-    return settlements;
+    await this.processFinalSettlementForTerminatedEmployee(employeeId);
+    return { processed: true };
   }
 
   // ==================== AUDIT & REPORTING (EXTENDED) ====================
@@ -2245,6 +2627,38 @@ export class LeavesService {
   // ==================== HELPER/UTILITY METHODS (EXTENDED) ====================
 
   /**
+   * Zero out expired carry-forward and recompute remaining
+   */
+  private async enforceCarryForwardExpiry(
+    entitlement: LeaveEntitlementDocument,
+    policy?: LeavePolicyDocument | null,
+  ): Promise<void> {
+    if (!policy) {
+      policy = await this.leavePolicyModel
+        .findOne({ leaveTypeId: entitlement.leaveTypeId })
+        .exec();
+    }
+
+    if (!policy || !policy.expiryAfterMonths || !entitlement.nextResetDate) {
+      return;
+    }
+
+    const expiryDate = new Date(entitlement.nextResetDate);
+    expiryDate.setMonth(expiryDate.getMonth() + policy.expiryAfterMonths);
+
+    if (expiryDate < new Date()) {
+      entitlement.carryForward = 0;
+      const total =
+        (entitlement.yearlyEntitlement || 0) +
+        (entitlement.carryForward || 0) +
+        (entitlement.accruedRounded || 0);
+      entitlement.remaining =
+        total - (entitlement.taken || 0) - (entitlement.pending || 0);
+      await entitlement.save();
+    }
+  }
+
+  /**
    * Apply rounding rule to accrual calculation
    * BR-20: Rounding methods
    */
@@ -2271,11 +2685,20 @@ export class LeavesService {
    */
   private async getEmployeeHireDate(employeeId: string): Promise<Date | null> {
     try {
-      // TODO: Replace with actual Employee Profile service call
-      // const employee = await this.employeeProfileService.getEmployeeById(employeeId);
-      // return new Date(employee.hireDate);
+      if (!Types.ObjectId.isValid(employeeId)) {
+        return null;
+      }
 
-      // For now, return null - will need Employee Profile integration
+      const employee = await this.employeeProfileModel
+        .findById(employeeId)
+        .lean()
+        .exec();
+
+      if (employee?.dateOfHire) {
+        const hireDate = new Date(employee.dateOfHire);
+        return isNaN(hireDate.getTime()) ? null : hireDate;
+      }
+
       return null;
     } catch (error) {
       console.error(
@@ -2300,6 +2723,33 @@ export class LeavesService {
     endDate: Date,
   ): Promise<number> {
     try {
+      // Include suspension periods if employee is suspended and effective date overlaps
+      let suspensionDays = 0;
+      const employeeProfile = await this.employeeProfileModel
+        .findById(employeeId)
+        .lean()
+        .exec();
+
+      if (
+        employeeProfile &&
+        employeeProfile.status === EmployeeStatus.SUSPENDED &&
+        employeeProfile.statusEffectiveFrom
+      ) {
+        const suspensionStart = new Date(employeeProfile.statusEffectiveFrom);
+        const suspensionEnd = endDate; // treat as ongoing suspension
+
+        if (suspensionStart <= endDate) {
+          const overlapStart = suspensionStart < startDate ? startDate : suspensionStart;
+          const overlapEnd = suspensionEnd;
+          const days =
+            Math.ceil(
+              (overlapEnd.getTime() - overlapStart.getTime()) /
+                (1000 * 60 * 60 * 24),
+            ) + 1;
+          suspensionDays += days;
+        }
+      }
+
       // Check Leave Requests for unpaid leave
       const unpaidLeaves = await this.leaveRequestModel
         .find({
@@ -2310,7 +2760,7 @@ export class LeavesService {
         })
         .exec();
 
-      let unpaidDays = 0;
+      let unpaidDays = suspensionDays;
       for (const leave of unpaidLeaves) {
         // Check if this is unpaid leave by checking if leave type is not paid
         const leaveType = await this.leaveTypeModel.findById(leave.leaveTypeId);
@@ -2330,10 +2780,6 @@ export class LeavesService {
           unpaidDays += days;
         }
       }
-
-      // TODO: Also check Employee Profile for suspension periods
-      // const suspensionDays = await this.employeeProfileService.getSuspensionDays(employeeId, startDate, endDate);
-      // unpaidDays += suspensionDays;
 
       return unpaidDays;
     } catch (error) {
@@ -2688,12 +3134,6 @@ export class LeavesService {
       (entitlement.yearlyEntitlement || 0) + carriedForward;
 
     // Calculate expiry date if specified
-    if (policy.expiryAfterMonths && entitlement.nextResetDate) {
-      const expiryDate = new Date(entitlement.nextResetDate);
-      expiryDate.setMonth(expiryDate.getMonth() + policy.expiryAfterMonths);
-      // Note: We don't have an expiryDate field in schema, but logic is here for when it's added
-    }
-
     await entitlement.save();
   }
 
@@ -3063,31 +3503,43 @@ export class LeavesService {
             await request.save();
             escalated++;
 
-            // TODO: Send notification to new manager
-          } else {
-            // No higher manager - auto-approve and move to HR
-            currentStep.status = 'approved';
-            currentStep.decidedAt = new Date();
+            await this.logNotification(
+              newManagerId,
+              'LEAVE_ESCALATED',
+              `Leave request for employee ${request.employeeId.toString()} escalated to you after pending > ${thresholdHours} hours`,
+            );
 
-            await request.save();
-            escalated++;
+            await this.logNotification(
+              request.employeeId.toString(),
+              'LEAVE_ESCALATED_INFO',
+              'Your leave request was escalated to a higher-level manager due to pending approval.',
+            );
+          } else {
+            // No higher manager available; leave pending and record for monitoring
+            errors.push(
+              `Request ${request._id}: no higher manager found for escalation`,
+            );
           }
         } else if (currentStep.role === 'HR') {
-          // HR step stale - auto-approve (final escalation)
-          currentStep.status = 'approved';
-          currentStep.decidedAt = new Date();
+          // HR stale: notify HR and employee but do not auto-approve
+          const managerStep = request.approvalFlow.find(
+            (f) => f.role === 'Manager',
+          );
+          const managerId = managerStep?.decidedBy?.toString();
 
-          request.status = LeaveStatus.APPROVED;
-
-          // Deduct balance
-          await this.deductFromBalance(
+          await this.logNotification(
             request.employeeId.toString(),
-            request.leaveTypeId.toString(),
-            request.durationDays,
+            'LEAVE_HR_PENDING_ESCALATION',
+            'Your leave request is pending HR action beyond the escalation window',
           );
 
-          await request.save();
-          escalated++;
+          if (managerId) {
+            await this.logNotification(
+              managerId,
+              'LEAVE_HR_PENDING_ESCALATION_NOTIFY',
+              `Leave request for employee ${request.employeeId.toString()} is pending HR action beyond escalation window`,
+            );
+          }
         }
       } catch (error) {
         errors.push(`Request ${request._id}: ${error.message}`);
@@ -3114,16 +3566,16 @@ export class LeavesService {
       throw new NotFoundException('Leave request not found');
     }
 
-    if (request.status !== LeaveStatus.PENDING) {
-      throw new BadRequestException('Can only override pending requests');
-    }
+    // if (request.status !== LeaveStatus.PENDING) {
+    //   throw new BadRequestException('Can only override pending requests');
+    // }
 
     const now = new Date();
 
     if (decision === 'approve') {
       // Approve all pending steps
       for (const step of request.approvalFlow) {
-        if (step.status === 'pending') {
+        if (step.status !== decision) {
           step.status = 'approved';
           step.decidedBy = new Types.ObjectId(hrAdminId);
           step.decidedAt = now;
@@ -3155,10 +3607,25 @@ export class LeavesService {
       request.status = LeaveStatus.REJECTED;
     }
 
-    await request.save();
-    // TODO: Send notification
+    const saved = await request.save();
 
-    return request;
+    await this.logNotification(
+      request.employeeId.toString(),
+      `LEAVE_${request.status.toUpperCase()}`,
+      `Your leave request was ${request.status} by HR override`,
+    );
+
+    const managerStep = request.approvalFlow.find((f) => f.role === 'Manager');
+    const managerId = managerStep?.decidedBy?.toString();
+    if (managerId) {
+      await this.logNotification(
+        managerId,
+        `LEAVE_${request.status.toUpperCase()}_NOTIFY`,
+        `Leave request for employee ${request.employeeId.toString()} ${request.status} by HR override`,
+      );
+    }
+
+    return saved;
   }
 
   /**
@@ -3223,5 +3690,439 @@ export class LeavesService {
     };
 
     return typeMap[attachmentType] || typeMap['OTHER'];
+  }
+
+  // ==================== PAYROLL INTEGRATION ====================
+
+  /**
+   * Sync leave approval with payroll system
+   * Handles paid/unpaid leave deductions and encashments in real-time
+   * @param employeeId Employee ID
+   * @param leaveTypeId Leave type ID
+   * @param durationDays Number of leave days
+   * @param fromDate Leave start date
+   * @param toDate Leave end date
+   */
+  private async syncLeaveApprovalWithPayroll(
+    employeeId: string,
+    leaveTypeId: string,
+    durationDays: number,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<void> {
+    try {
+      // Get leave type to check if paid or unpaid
+      const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+      if (!leaveType) {
+        this.logger.warn(
+          `Leave type not found for payroll sync: ${leaveTypeId}`,
+        );
+        return;
+      }
+
+      // Check if employee is terminated/resigned - process final settlement
+      const employee = await this.employeeProfileModel.findById(employeeId);
+      if (
+        employee &&
+        (employee.status === EmployeeStatus.TERMINATED ||
+          employee.status === EmployeeStatus.RETIRED)
+      ) {
+        await this.processFinalSettlementForTerminatedEmployee(employeeId);
+        return;
+      }
+
+      // For unpaid leave: Calculate and add deduction to payroll
+      if (!leaveType.paid) {
+        await this.addUnpaidLeaveDeduction(
+          employeeId,
+          durationDays,
+          fromDate,
+          toDate,
+        );
+      }
+
+      // For paid leave: No deduction needed (balance already deducted)
+      // Encashment will be handled during final settlement if employee terminates
+    } catch (error) {
+      this.logger.error(
+        `Failed to sync leave approval with payroll for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      // Don't throw - allow leave approval to proceed even if payroll sync fails
+    }
+  }
+
+  /**
+   * Add unpaid leave deduction to payroll
+   * Formula: (Base Salary / Work Days in Month) × Unpaid Leave Days
+   * @param employeeId Employee ID
+   * @param unpaidDays Number of unpaid leave days
+   * @param fromDate Leave start date
+   * @param toDate Leave end date
+   */
+  private async addUnpaidLeaveDeduction(
+    employeeId: string,
+    unpaidDays: number,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<void> {
+    try {
+      // Get employee's base salary from latest payroll details or employee profile
+      const baseSalary = await this.getEmployeeBaseSalary(employeeId);
+      if (!baseSalary || baseSalary <= 0) {
+        this.logger.warn(
+          `Cannot calculate unpaid leave deduction: base salary not found for employee ${employeeId}`,
+        );
+        return;
+      }
+
+      // Calculate work days in the month (typically 22-23 working days)
+      const workDaysInMonth = this.getWorkDaysInMonth(fromDate);
+
+      // Calculate deduction: (Base Salary / Work Days in Month) × Unpaid Leave Days
+      const deductionAmount = (baseSalary / workDaysInMonth) * unpaidDays;
+
+      // Find or create payslip for the current payroll period
+      const payrollPeriod = this.getPayrollPeriodForDate(fromDate);
+      const payslip = await this.findOrCreatePayslipForPeriod(
+        employeeId,
+        payrollPeriod,
+      );
+
+      if (payslip) {
+        // Add unpaid leave deduction to penalties
+        if (!payslip.deductionsDetails) {
+          payslip.deductionsDetails = {
+            taxes: [],
+            insurances: [],
+            penalties: {
+              employeeId: new Types.ObjectId(employeeId),
+              penalties: [],
+            },
+          };
+        }
+
+        if (!payslip.deductionsDetails.penalties) {
+          payslip.deductionsDetails.penalties = {
+            employeeId: new Types.ObjectId(employeeId),
+            penalties: [],
+          };
+        }
+
+        // Add unpaid leave penalty
+        if (payslip.deductionsDetails.penalties && payslip.deductionsDetails.penalties.penalties) {
+          payslip.deductionsDetails.penalties.penalties.push({
+            reason: `Unpaid Leave Deduction (${unpaidDays} days from ${fromDate.toISOString().split('T')[0]} to ${toDate.toISOString().split('T')[0]})`,
+            amount: deductionAmount,
+          });
+
+          // Recalculate totals
+          const totalPenalties = payslip.deductionsDetails.penalties.penalties.reduce(
+            (sum, p) => sum + p.amount,
+            0,
+          );
+          const previousPenaltyTotal = payslip.deductionsDetails.penalties.penalties.length > 1
+            ? payslip.deductionsDetails.penalties.penalties[
+                payslip.deductionsDetails.penalties.penalties.length - 2
+              ]?.amount || 0
+            : 0;
+          const totalDeductions =
+            (payslip.totaDeductions || 0) +
+            deductionAmount -
+            previousPenaltyTotal;
+          payslip.totaDeductions = totalDeductions;
+          payslip.netPay = payslip.totalGrossSalary - totalDeductions;
+
+          await payslip.save();
+
+          this.logger.log(
+            `Added unpaid leave deduction of ${deductionAmount} for employee ${employeeId}`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to add unpaid leave deduction for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  /**
+   * Process unapproved absences by adding unpaid leave deductions to payroll
+   * Formula: (Base Salary / Work Days in Month) x Unpaid Leave Days
+   */
+  async processUnapprovedAbsence(
+    employeeId: string,
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<void> {
+    const unpaidDays =
+      Math.ceil(
+        (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24),
+      ) + 1;
+    await this.addUnpaidLeaveDeduction(employeeId, unpaidDays, fromDate, toDate);
+  }
+
+  /**
+   * Process final settlement for terminated/resigned employee
+   * Automatically converts remaining leave balance to encashment or deduction
+   * @param employeeId Employee ID
+   */
+  async processFinalSettlementForTerminatedEmployee(
+    employeeId: string,
+  ): Promise<void> {
+    try {
+      const employee = await this.employeeProfileModel.findById(employeeId);
+      if (!employee) {
+        throw new NotFoundException('Employee not found');
+      }
+
+      if (
+        employee.status !== EmployeeStatus.TERMINATED &&
+        employee.status !== EmployeeStatus.RETIRED
+      ) {
+        // Only process for terminated/resigned employees
+        return;
+      }
+
+      // Get all entitlements for the employee
+      const entitlements = await this.leaveEntitlementModel
+        .find({ employeeId })
+        .populate('leaveTypeId')
+        .exec();
+
+      for (const entitlement of entitlements) {
+        const leaveType = entitlement.leaveTypeId as any;
+
+        // Only process encashment for paid leave types with remaining balance
+        if (leaveType.paid && entitlement.remaining > 0) {
+          // Calculate encashment
+          const encashment = await this.calculateEncashment(
+            employeeId,
+            leaveType._id.toString(),
+          );
+
+          if (encashment.encashmentAmount > 0) {
+            // Add encashment to payroll
+            await this.addLeaveEncashmentToPayroll(
+              employeeId,
+              encashment.encashmentAmount,
+              leaveType.name,
+              entitlement.remaining,
+            );
+
+            // Reset entitlement after encashment
+            entitlement.remaining = 0;
+            entitlement.taken = 0;
+            entitlement.pending = 0;
+            await entitlement.save();
+
+            this.logger.log(
+              `Processed final settlement: ${encashment.encashmentAmount} encashment for employee ${employeeId}, leave type ${leaveType.name}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to process final settlement for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  /**
+   * Add leave encashment to payroll earnings
+   * @param employeeId Employee ID
+   * @param encashmentAmount Encashment amount
+   * @param leaveTypeName Leave type name
+   * @param unusedDays Number of unused days encashed
+   */
+  private async addLeaveEncashmentToPayroll(
+    employeeId: string,
+    encashmentAmount: number,
+    leaveTypeName: string,
+    unusedDays: number,
+  ): Promise<void> {
+    try {
+      const now = new Date();
+      const payrollPeriod = this.getPayrollPeriodForDate(now);
+      const payslip = await this.findOrCreatePayslipForPeriod(
+        employeeId,
+        payrollPeriod,
+      );
+
+      if (payslip) {
+        // Add encashment to earnings refunds
+        if (!payslip.earningsDetails) {
+          payslip.earningsDetails = {
+            baseSalary: 0,
+            allowances: [],
+            bonuses: [],
+            benefits: [],
+            refunds: [],
+          };
+        }
+
+        if (!payslip.earningsDetails.refunds) {
+          payslip.earningsDetails.refunds = [];
+        }
+
+        payslip.earningsDetails.refunds.push({
+          description: `Leave Encashment - ${leaveTypeName} (${unusedDays} days)`,
+          amount: encashmentAmount,
+        } as any);
+
+        // Recalculate totals
+        const totalRefunds = payslip.earningsDetails.refunds.reduce(
+          (sum, r) => sum + (r.amount || 0),
+          0,
+        );
+        payslip.totalGrossSalary =
+          (payslip.totalGrossSalary || 0) + encashmentAmount;
+        payslip.netPay = payslip.totalGrossSalary - (payslip.totaDeductions || 0);
+
+        await payslip.save();
+
+        this.logger.log(
+          `Added leave encashment of ${encashmentAmount} to payroll for employee ${employeeId}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to add leave encashment to payroll for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  /**
+   * Get employee base salary from latest payroll details or employee profile
+   * @param employeeId Employee ID
+   * @returns Base salary amount
+   */
+  private async getEmployeeBaseSalary(employeeId: string): Promise<number | null> {
+    try {
+      // Try to get from latest payroll details
+      const latestPayrollDetails = await this.employeePayrollDetailsModel
+        .findOne({ employeeId: new Types.ObjectId(employeeId) })
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+
+      if (latestPayrollDetails && latestPayrollDetails.baseSalary > 0) {
+        return latestPayrollDetails.baseSalary;
+      }
+
+      // Fallback: Try to get from latest payslip
+      const latestPayslip = await this.paySlipModel
+        .findOne({ employeeId: new Types.ObjectId(employeeId) })
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+
+      if (latestPayslip && latestPayslip.earningsDetails?.baseSalary) {
+        return latestPayslip.earningsDetails.baseSalary;
+      }
+
+      // Fallback: Try to get from employee profile pay grade (if populated)
+      const profileWithGrade = await this.employeeProfileModel
+        .findById(employeeId)
+        .populate('payGradeId')
+        .lean()
+        .exec();
+
+      const payGradeDoc = (profileWithGrade as any)?.payGradeId;
+      if (payGradeDoc && typeof payGradeDoc.baseSalary === 'number' && payGradeDoc.baseSalary > 0) {
+        return payGradeDoc.baseSalary;
+      }
+
+      // If payroll module provides another salary source, hook it here
+      return null;
+    } catch (error) {
+      this.logger.error(
+        `Failed to get base salary for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get work days in a month (excluding weekends)
+   * Typically 22-23 working days per month
+   * @param date Date in the month
+   * @returns Number of work days
+   */
+  private getWorkDaysInMonth(date: Date): number {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+
+    let workDays = 0;
+    for (let day = firstDay.getDate(); day <= lastDay.getDate(); day++) {
+      const currentDate = new Date(year, month, day);
+      const dayOfWeek = currentDate.getDay();
+      // Exclude Saturday (6) and Sunday (0)
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        workDays++;
+      }
+    }
+
+    return workDays || 22; // Default to 22 if calculation fails
+  }
+
+  /**
+   * Get payroll period identifier for a given date
+   * Format: YYYY-MM (e.g., "2024-01")
+   * @param date Date
+   * @returns Payroll period string
+   */
+  private getPayrollPeriodForDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  }
+
+  /**
+   * Find or create payslip for a payroll period
+   * @param employeeId Employee ID
+   * @param payrollPeriod Payroll period (YYYY-MM format)
+   * @returns Payslip document or null
+   */
+  private async findOrCreatePayslipForPeriod(
+    employeeId: string,
+    payrollPeriod: string,
+  ): Promise<PayslipDocument | null> {
+    try {
+      // Try to find existing payslip for this period
+      // Note: This assumes payrollRunId or period tracking exists
+      // For now, we'll find the most recent payslip or create a placeholder
+      const existingPayslip = await this.paySlipModel
+        .findOne({ employeeId: new Types.ObjectId(employeeId) })
+        .sort({ createdAt: -1 })
+        .exec();
+
+      if (existingPayslip) {
+        return existingPayslip;
+      }
+
+      // If no payslip exists, we cannot create one without a payrollRunId
+      // Log this for payroll processing to handle
+      this.logger.warn(
+        `No payslip found for employee ${employeeId} in period ${payrollPeriod}. Payroll processing should create payslip first.`,
+      );
+
+      // Return null - payroll processing should create payslips
+      return null;
+    } catch (error) {
+      this.logger.error(
+        `Failed to find or create payslip for employee ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return null;
+    }
   }
 }

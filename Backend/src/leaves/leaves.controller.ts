@@ -1744,4 +1744,31 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     );
     return { message: 'Document validation passed', documentsValid: true };
   }
+
+  // ==================== MANAGER PENDING TEAM REQUESTS ====================
+  @Get('requests/manager/:managerId/pending-team')
+  @Roles('Manager', 'HR Admin', 'HR Manager')
+  @ApiOperation({
+    summary: 'Get pending leave requests for a manager’s team',
+    description:
+      'Returns pending leave requests for team members reporting to this manager. Optional filter to only include overlapping pending leaves.',
+  })
+  @ApiParam({
+    name: 'managerId',
+    description: 'Manager employee profile ID',
+  })
+  @ApiQuery({
+    name: 'overlappingOnly',
+    required: false,
+    description: 'If true, only return requests that overlap with another team member',
+  })
+  async getManagerPendingTeamRequests(
+    @Param('managerId') managerId: string,
+    @Query('overlappingOnly') overlappingOnly?: string,
+  ) {
+    const overlapFlag = overlappingOnly === 'true';
+    return this.leavesService.getManagerPendingTeamRequests(managerId, {
+      overlappingOnly: overlapFlag,
+    });
+  }
 }
