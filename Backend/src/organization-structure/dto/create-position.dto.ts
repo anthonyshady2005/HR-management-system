@@ -23,11 +23,6 @@ export class CreatePositionDto {
   @IsMongoId()
   reportsTo?: Types.ObjectId;
 
-  @ApiProperty({ description: 'PayGrade ObjectId' })
-  @IsNotEmpty()
-  @IsMongoId()
-  payGrade: Types.ObjectId;
-
   @ApiPropertyOptional({ description: 'Status', enum: ['active', 'inactive'], default: 'active' })
   @IsOptional()
   @IsEnum(['active', 'inactive'])
