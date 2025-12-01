@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrganizationStructureController } from './organization-structure.controller';
 import { OrganizationStructureService } from './organization-structure.service';
+import { StructureChangeLogService } from './structure-change-log.service';
 import { Department, DepartmentSchema } from './models/department.schema';
 import { Position, PositionSchema } from './models/position.schema';
 import {
@@ -20,6 +21,10 @@ import {
   StructureChangeRequest,
   StructureChangeRequestSchema,
 } from './models/structure-change-request.schema';
+import {
+  EmployeeProfile,
+  EmployeeProfileSchema,
+} from '../employee-profile/models/employee-profile.schema';
 
 @Module({
   imports: [
@@ -33,9 +38,10 @@ import {
         name: StructureChangeRequest.name,
         schema: StructureChangeRequestSchema,
       },
+      { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
     ]),
   ],
   controllers: [OrganizationStructureController],
-  providers: [OrganizationStructureService],
+  providers: [OrganizationStructureService, StructureChangeLogService],
 })
 export class OrganizationStructureModule {}

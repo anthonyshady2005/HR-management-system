@@ -22,6 +22,11 @@ import {
   AppraisalDispute,
   AppraisalDisputeSchema,
 } from './models/appraisal-dispute.schema';
+import {
+  EmployeeProfile,
+  EmployeeProfileSchema,
+} from '../employee-profile/models/employee-profile.schema';
+import { AuthModule } from 'src/Auth/auth.module';
 
 @Module({
   imports: [
@@ -31,7 +36,9 @@ import {
       { name: AppraisalAssignment.name, schema: AppraisalAssignmentSchema },
       { name: AppraisalRecord.name, schema: AppraisalRecordSchema },
       { name: AppraisalDispute.name, schema: AppraisalDisputeSchema },
+      { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
     ]),
+    AuthModule
   ],
   controllers: [PerformanceController],
   providers: [PerformanceService],

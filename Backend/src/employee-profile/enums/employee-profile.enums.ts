@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 export enum Gender {
   MALE = 'MALE',
   FEMALE = 'FEMALE',
@@ -20,6 +21,41 @@ export enum EmployeeStatus {
   TERMINATED = 'TERMINATED',
 }
 
+// Employment-related enums to standardize profile fields
+export enum PayGrade {
+  PG1 = 'PG1',
+  PG2 = 'PG2',
+  PG3 = 'PG3',
+  PG4 = 'PG4',
+  PG5 = 'PG5',
+  EXECUTIVE = 'EXECUTIVE',
+}
+
+export enum JobPosition {
+  INTERN = 'INTERN',
+  JUNIOR = 'JUNIOR',
+  MID = 'MID',
+  SENIOR = 'SENIOR',
+  LEAD = 'LEAD',
+  MANAGER = 'MANAGER',
+  DIRECTOR = 'DIRECTOR',
+  VP = 'VP',
+  C_LEVEL = 'C_LEVEL',
+}
+
+export enum DepartmentCategory {
+  ENGINEERING = 'ENGINEERING',
+  HR = 'HR',
+  FINANCE = 'FINANCE',
+  OPERATIONS = 'OPERATIONS',
+  SALES = 'SALES',
+  MARKETING = 'MARKETING',
+  IT = 'IT',
+  LEGAL = 'LEGAL',
+  PROCUREMENT = 'PROCUREMENT',
+  OTHER = 'OTHER',
+}
+
 export enum ContractType {
   FULL_TIME_CONTRACT = 'FULL_TIME_CONTRACT',
   PART_TIME_CONTRACT = 'PART_TIME_CONTRACT',
@@ -36,6 +72,7 @@ export enum SystemRole {
   HR_MANAGER = 'HR Manager',
   HR_EMPLOYEE = 'HR Employee',
   PAYROLL_SPECIALIST = 'Payroll Specialist',
+  PAYROLL_MANAGER='Payroll Manager',
   SYSTEM_ADMIN = 'System Admin',
   LEGAL_POLICY_ADMIN = 'Legal & Policy Admin',
   RECRUITER = 'Recruiter',
