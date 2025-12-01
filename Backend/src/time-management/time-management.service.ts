@@ -5,7 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Parser as Json2CsvParser } from 'json2csv';
-
+import { v4 as uuidv4 } from 'uuid';
 // Schemas (Models)
 import { AttendanceRecord, AttendanceRecordDocument } from './models/attendance-record.schema';
 import { AttendanceCorrectionRequest, AttendanceCorrectionRequestDocument } from './models/attendance-correction-request.schema';
@@ -24,6 +24,7 @@ import { Position, PositionDocument } from 'src/organization-structure/models/po
 import { LeaveRequest,LeaveRequestDocument} from 'src/leaves/models/leave-request.schema';
 import { LeavesService } from 'src/leaves/leaves.service';
 import {PayrollTrackingService} from 'src/payroll-tracking/payroll-tracking.service';
+import { EmployeeSystemRole, EmployeeSystemRoleDocument } from 'src/employee-profile/models/employee-system-role.schema';
 // Enums
 import {
   PunchType,
@@ -131,6 +132,9 @@ export class TimeManagementService {
 
     @Inject(PayrollTrackingService)
     private readonly payrollTrackingService: PayrollTrackingService,
+
+    @InjectModel(EmployeeSystemRole.name)
+    private readonly employeeSystemRoleModel: Model<EmployeeSystemRoleDocument>,
   
 
 
@@ -520,45 +524,90 @@ export class TimeManagementService {
    * Default: notify 3 days before expiry.
    */
   async notifyUpcomingShiftExpiry(daysBefore: number = 3) {
-    const now = new Date();
+  const now = new Date();
 
-    const targetDate = new Date();
-    targetDate.setDate(now.getDate() + daysBefore);
+  const targetDate = new Date();
+  targetDate.setDate(now.getDate() + daysBefore);
 
-    // Find all assignments that:
-    // - have an endDate within N days
-    // - are not expired yet
-    const expiringSoon = await this.shiftAssignmentModel.find({
+  // Find assignments that end soon and are not expired
+  const expiringSoon = await this.shiftAssignmentModel
+    .find({
       endDate: { $lte: targetDate, $gte: now },
-      status: { $ne: 'EXPIRED' }
-    }).populate('employeeId');
+      status: { $ne: 'EXPIRED' },
+    })
+    .populate('employeeId', 'firstName lastName');
 
-    if (!expiringSoon.length) return { message: 'No upcoming expirations.' };
-
-    // Notify HR/Admin (we assume an "HR Admin" system user or role)
-    const hrAdmins = await this.employeeModel.find({ role: 'HR_ADMIN' });
-
-    if (!hrAdmins.length) return { message: 'No HR admins found.' };
-
-    const notifications = [];
-
-    for (const assignment of expiringSoon) {
-      for (const admin of hrAdmins) {
-       // notifications.push({
-         // to: admin._id,
-         // type: 'SHIFT_EXPIRY_WARNING',
-         // message: `Shift for employee ${assignment.employeeId?.name ?? assignment.employeeId} expires on ${assignment.endDate}`
-       // });
-      }
-    }
-
-    await this.notificationLogModel.insertMany(notifications);
-
-    return {
-      notifiedAdmins: hrAdmins.length,
-      records: expiringSoon.length,
-    };
+  if (!expiringSoon.length) {
+    return { message: 'No upcoming expirations.' };
   }
+
+  // 1. Fetch HR Admins from employee_system_roles
+const hrRoleDocs = await this.employeeSystemRoleModel.find({
+  roles: { $in: ['HR Admin'] }   // EXACT match based on your enum
+});
+
+if (!hrRoleDocs.length) {
+  return { message: "No HR Admins found in system roles." };
+}
+
+// 2. Extract employeeProfileIds
+const adminProfileIds = hrRoleDocs.map(doc => doc.employeeProfileId);
+
+// 3. Load full employee profiles
+const hrAdmins = await this.employeeModel.find({
+  _id: { $in: adminProfileIds }
+});
+
+if (!hrAdmins.length) {
+  return { message: "HR Admin profiles exist in system_roles but not in employee_profiles." };
+}
+
+
+
+
+
+  if (!hrAdmins.length) {
+    return { message: 'No HR admins found.' };
+  }
+
+  const notifications: any[] = [];
+
+
+  for (const assignment of expiringSoon) {
+    // Safe narrow of employee profile
+    const emp = assignment.employeeId as
+      | { firstName?: string; lastName?: string }
+      | undefined;
+
+    // Build employee display name safely
+    const employeeLabel =
+      emp?.firstName && emp?.lastName
+        ? `${emp.firstName} ${emp.lastName}`
+        : assignment.employeeId?.toString() ?? 'Unknown Employee';
+
+    // Safe formatted date
+    const expiryDate = assignment.endDate
+      ? assignment.endDate.toISOString().split('T')[0]
+      : 'Unknown date';
+
+    for (const admin of hrAdmins) {
+      notifications.push({
+        to: admin._id,
+        type: 'SHIFT_EXPIRY_WARNING',
+        message: `Shift for employee ${employeeLabel} expires on ${expiryDate}.`,
+        createdAt: new Date(),
+      });
+    }
+  }
+
+  await this.notificationLogModel.insertMany(notifications);
+
+  return {
+    notifiedAdmins: hrAdmins.length,
+    records: expiringSoon.length,
+    notificationsCreated: notifications.length,
+  };
+}
 
   /**
    * This method can be used by a cron job.
@@ -622,50 +671,100 @@ export class TimeManagementService {
    * Optional: real-time clock-in using employee email (or id).
    * This can be used by a web/mobile endpoint.
    */
-  async clockIn(employeeIdentifier: string) {
-    const employee = await this.employeeModel.findOne({ email: employeeIdentifier });
 
-    if (!employee) {
-      throw new NotFoundException(`Employee not found for identifier: ${employeeIdentifier}`);
-    }
 
-    const now = new Date();
-    const attendance = await this.getOrCreateAttendanceRecordForDate(employee._id, now);
+async clockIn(employeeIdentifier: string) {
+  // 1. Find employee by personalEmail
+  const employee = await this.employeeModel.findOne({
+    personalEmail: employeeIdentifier,
+  });
 
-    attendance.punches.push({
-      type: PunchType.IN,
-      time: now,
-    });
-
-    this.recalculateAttendanceDerivedFields(attendance);
-    await attendance.save();
-
-    return attendance;
+  if (!employee) {
+    throw new NotFoundException(
+      `Employee not found for identifier: ${employeeIdentifier}`,
+    );
   }
+
+  const now = new Date();
+
+  // 2. Try to find an attendance record for this employee & date
+  let attendance = await this.attendanceRecordModel.findOne({
+    employeeId: employee._id,
+    date: {
+      $gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+      $lt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
+    },
+  });
+
+  // 3. If no record exists → create a new one WITH a unique attendanceId
+  if (!attendance) {
+    attendance = new this.attendanceRecordModel({
+      attendanceId: uuidv4(),     // ⭐ FIX: ensure non-null, unique
+      employeeId: employee._id,
+      date: now,
+      punches: [],
+      status: 'PRESENT',
+    });
+  }
+
+  // 4. Push the punch
+  attendance.punches.push({
+    type: PunchType.IN,
+    time: now,
+  });
+
+  // 5. Recalculate fields
+  this.recalculateAttendanceDerivedFields(attendance);
+
+  // 6. Save the updated record
+  await attendance.save();
+
+  return attendance;
+}
+
 
   /**
    * Optional: real-time clock-out using employee email (or id).
    */
   async clockOut(employeeIdentifier: string) {
-    const employee = await this.employeeModel.findOne({ email: employeeIdentifier });
+  // Fix 1: Use personalEmail (your employee document uses personalEmail)
+  const employee = await this.employeeModel.findOne({
+    personalEmail: employeeIdentifier,
+  });
 
-    if (!employee) {
-      throw new NotFoundException(`Employee not found for identifier: ${employeeIdentifier}`);
-    }
-
-    const now = new Date();
-    const attendance = await this.getOrCreateAttendanceRecordForDate(employee._id, now);
-
-    attendance.punches.push({
-      type: PunchType.OUT,
-      time: now,
-    });
-
-    this.recalculateAttendanceDerivedFields(attendance);
-    await attendance.save();
-
-    return attendance;
+  if (!employee) {
+    throw new NotFoundException(
+      `Employee not found for identifier: ${employeeIdentifier}`,
+    );
   }
+
+  const now = new Date();
+
+  // Get or create attendance record
+  let attendance = await this.getOrCreateAttendanceRecordForDate(
+    employee._id,
+    now,
+  );
+
+  // Fix 2: Ensure attendanceId is ALWAYS present (typed as any to avoid TS error if schema lacks attendanceId)
+  if (!(attendance as any).attendanceId) {
+    (attendance as any).attendanceId = uuidv4();
+  }
+
+  // Add punch
+  attendance.punches.push({
+    type: PunchType.OUT,
+    time: now,
+  });
+
+  // Recalculate derived fields
+  this.recalculateAttendanceDerivedFields(attendance);
+
+  // Save safely
+  await attendance.save();
+
+  return attendance;
+}
 
 // ================================================
 // USER STORY 5 — INTERNAL HELPERS (FINAL VERSION)
@@ -792,78 +891,103 @@ private recalculateAttendanceDerivedFields(record: AttendanceRecordDocument) {
    * - Recalculates total work minutes + missed punch flag
    */
   async correctAttendance(input: {
-    managerId: Types.ObjectId;
-    employeeId: Types.ObjectId;
-    date: string;          // YYYY-MM-DD
-    newPunches: { type: PunchType; time: string }[]; // example: [{type: "IN", time:"08:55"}, {...}]
-    reason: string;
-  }) {
+  manager: string;           // email | personalEmail | employeeNumber
+  employee: string;          // email | personalEmail | employeeNumber
+  date: string;              // YYYY-MM-DD
+  newPunches: { type: PunchType; time: string }[];
+  reason: string;
+}) {
 
-    // Convert date-only to real Date
-    const dateStart = new Date(`${input.date}T00:00:00`);
-    const dateEnd   = new Date(`${input.date}T23:59:59`);
+  // 1️⃣ Resolve employee
+  const employee = await this.employeeModel.findOne({
+    $or: [
+      { personalEmail: input.employee },
+      { email: input.employee },
+      { employeeNumber: input.employee }
+    ]
+  });
 
-    // Find or create attendance record
-    let record = await this.attendanceRecordModel.findOne({
-      employeeId: input.employeeId,
-      'punches.time': { $gte: dateStart, $lte: dateEnd }
-    });
-
-    if (!record) {
-      record = new this.attendanceRecordModel({
-        employeeId: input.employeeId,
-        punches: [],
-        totalWorkMinutes: 0,
-        hasMissedPunch: false,
-        exceptionIds: [],
-        finalisedForPayroll: false,
-      });
-    }
-
-    // Replace punches with new ones from manager
-    record.punches = input.newPunches.map((p) => ({
-      type: p.type,
-      time: new Date(`${input.date}T${p.time}:00`)
-    }));
-
-    // Recalculate total minutes + missed punches
-    this.recalculateAttendanceDerivedFields(record);
-
-    // Set finalisedForPayroll = false to prevent payroll issues
-    record.finalisedForPayroll = false;
-
-    await record.save();
-
-    // Create an Attendance Correction Request (audit record)
-    const audit = new this.correctionRequestModel({
-      employeeId: input.employeeId,
-      attendanceRecord: record._id,
-      reason: input.reason,
-      status: 'APPROVED', // Manager correction = auto approved
-    });
-
-    await audit.save();
-
-    // Add notification for employee
-    await this.notificationLogModel.create({
-      to: input.employeeId,
-      type: 'ATTENDANCE_CORRECTED',
-      message: `Your attendance for ${input.date} was corrected by your manager.`,
-    });
-
-    // Add audit record for manager
-    await this.notificationLogModel.create({
-      to: input.managerId,
-      type: 'ATTENDANCE_CORRECTION_LOG',
-      message: `You corrected attendance for employee ${input.employeeId} on ${input.date}.`,
-    });
-
-    return {
-      message: 'Attendance corrected successfully.',
-      attendanceRecord: record,
-      auditLog: audit,
-    };
+  if (!employee) {
+    throw new NotFoundException(`Employee not found for identifier: ${input.employee}`);
   }
+
+  // 2️⃣ Resolve manager
+  const manager = await this.employeeModel.findOne({
+    $or: [
+      { personalEmail: input.manager },
+      { email: input.manager },
+      { employeeNumber: input.manager }
+    ]
+  });
+
+  if (!manager) {
+    throw new NotFoundException(`Manager not found for identifier: ${input.manager}`);
+  }
+
+  const employeeId = employee._id;
+  const managerId = manager._id;
+
+  // 3️⃣ Convert date to day range
+  const dateStart = new Date(`${input.date}T00:00:00`);
+  const dateEnd   = new Date(`${input.date}T23:59:59`);
+
+  // 4️⃣ Find or create attendance record
+  let record = await this.attendanceRecordModel.findOne({
+    employeeId,
+    'punches.time': { $gte: dateStart, $lte: dateEnd },
+  });
+
+  if (!record) {
+    record = new this.attendanceRecordModel({
+      employeeId,
+      punches: [],
+      totalWorkMinutes: 0,
+      hasMissedPunch: false,
+      exceptionIds: [],
+      finalisedForPayroll: false,
+    });
+  }
+
+  // 5️⃣ Replace punches with new ones
+  record.punches = input.newPunches.map(p => ({
+    type: p.type,
+    time: new Date(`${input.date}T${p.time}:00`)
+  }));
+
+  this.recalculateAttendanceDerivedFields(record);
+  record.finalisedForPayroll = false;
+
+  await record.save();
+
+  // 6️⃣ Create audit correction log
+  const audit = await this.correctionRequestModel.create({
+    employeeId,
+    attendanceRecord: record._id,
+    reason: input.reason,
+    status: 'APPROVED',
+    reviewedBy: managerId,
+  });
+
+  // 7️⃣ Notify employee
+  await this.notificationLogModel.create({
+    to: employeeId,
+    type: 'ATTENDANCE_CORRECTED',
+    message: `Your attendance for ${input.date} was corrected by your manager (${manager.fullName}).`
+  });
+
+  // 8️⃣ Notify manager (record of action)
+  await this.notificationLogModel.create({
+    to: managerId,
+    type: 'ATTENDANCE_CORRECTION_LOG',
+    message: `You corrected attendance for ${employee.fullName} on ${input.date}.`
+  });
+
+  return {
+    message: 'Attendance corrected successfully.',
+    attendanceRecord: record,
+    auditLog: audit,
+  };
+}
 
 // ============================================================================
 // USER STORY 7 — FLEXIBLE PUNCH HANDLING (FINAL UPDATED VERSION)
