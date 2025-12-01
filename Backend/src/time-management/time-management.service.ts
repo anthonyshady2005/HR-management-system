@@ -641,7 +641,7 @@ if (!hrAdmins.length) {
     time: string;
     type: PunchType;
   }) {
-    const employee = await this.employeeModel.findOne({ email: input.employeeIdentifier });
+    const employee = await this.employeeModel.findOne({ personalEmail: input.employeeIdentifier });
 
     if (!employee) {
       throw new NotFoundException(
@@ -972,14 +972,14 @@ private recalculateAttendanceDerivedFields(record: AttendanceRecordDocument) {
   await this.notificationLogModel.create({
     to: employeeId,
     type: 'ATTENDANCE_CORRECTED',
-    message: `Your attendance for ${input.date} was corrected by your manager (${manager.fullName}).`
+    message: `Your attendance for ${input.date} was corrected by your manager (${manager.firstName} ${manager.lastName}).`,
   });
 
   // 8️⃣ Notify manager (record of action)
   await this.notificationLogModel.create({
     to: managerId,
     type: 'ATTENDANCE_CORRECTION_LOG',
-    message: `You corrected attendance for ${employee.fullName} on ${input.date}.`
+    message: `You corrected attendance for ${employee.firstName} ${employee.lastName} on ${input.date}.`,
   });
 
   return {
@@ -2357,7 +2357,7 @@ async autoEscalatePendingPermissions() {
       const emp = rec.employeeId as any; // FIX FOR TS ERROR
 
       return {
-        employeeName: emp?.fullName || 'Unknown',
+        employeeName: emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown',
         employeeEmail: emp?.email || '',
         totalWorkMinutes: rec.totalWorkMinutes,
         hasMissedPunch: rec.hasMissedPunch,
@@ -2387,8 +2387,8 @@ async autoEscalatePendingPermissions() {
       const emp = ex.employeeId as any; // FIX FOR TS ERROR
 
       return {
-        employeeName: emp?.fullName || '',
-        employeeEmail: emp?.email || '',
+        employeeName: `${emp?.firstName || ''} ${emp?.lastName || ''}`.trim(),
+        employeeEmail: emp?.personalEmail || '',
         type: ex.type,
         status: ex.status,
         reason: ex.reason || '',
