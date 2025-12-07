@@ -4,12 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Lock, Mail, ChevronRight, AlertCircle } from "lucide-react";
-import axios from "axios";
+import { api } from "@/lib/api";
+import { useAuth } from "@/providers/auth-provider";
 
 export default function LoginPage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const { hydrateFromLogin } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -21,8 +23,8 @@ export default function LoginPage() {
         const password = formData.get("password");
 
         try {
-            await axios.post(
-                "http://localhost:3000/auth/login",
+            const res = await api.post(
+                "/auth/login",
                 {
                     personalEmail,
                     password,
@@ -31,7 +33,19 @@ export default function LoginPage() {
                     withCredentials: true, // Important for cookies
                 }
             );
-            router.push("/dashboard");
+            const loginUser = res?.data?.user;
+            const loginRoles: string[] = (loginUser?.roles as string[]) || [];
+            if (loginUser?.id) {
+                hydrateFromLogin(
+                    {
+                        id: loginUser.id,
+                        fullName: loginUser.fullName,
+                        email: loginUser.email,
+                    },
+                    loginRoles
+                );
+            }
+            router.push("/home");
         } catch (err: any) {
             setError(err.response?.data?.message || "Login failed. Please check your credentials.");
         } finally {
