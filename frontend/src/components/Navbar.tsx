@@ -23,6 +23,8 @@ export function Navbar() {
     return null;
   }
 
+  const uniqueRoles = Array.from(new Set(roles));
+
   return (
     <header className="w-full backdrop-blur-xl bg-white/5 border-b border-white/10 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -56,9 +58,9 @@ export function Navbar() {
               <DropdownMenuLabel>Your roles</DropdownMenuLabel>
               <DropdownMenuSeparator />
               {roles.length === 0 && <DropdownMenuItem className="text-slate-400">No roles available</DropdownMenuItem>}
-              {roles.map((role) => (
+              {uniqueRoles.map((role, idx) => (
                 <DropdownMenuItem
-                  key={role}
+                  key={`${role}-${idx}`}
                   className="cursor-pointer focus:bg-white/10"
                   onSelect={(e) => {
                     e.preventDefault();

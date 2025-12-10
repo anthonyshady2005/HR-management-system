@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsMongoId } from 'class-validator';
 
 export class UpdateLeaveRequestDto {
   @ApiPropertyOptional({
@@ -26,8 +26,11 @@ export class UpdateLeaveRequestDto {
   @IsString()
   justification?: string;
 
-  @ApiPropertyOptional({ description: 'Updated attachment ID' })
+  @ApiPropertyOptional({
+    description: 'Updated attachment ID',
+    example: '507f1f77bcf86cd799439013'
+  })
   @IsOptional()
-  @IsString()
+  @IsMongoId()
   attachmentId?: string;
 }
