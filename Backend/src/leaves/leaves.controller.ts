@@ -14,7 +14,15 @@ import {
   Request,
   UnauthorizedException,
   ForbiddenException,
+  UseInterceptors,
+  UploadedFile,
+  UploadedFiles,
+  Res,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import {
   ApiTags,
   ApiOperation,
@@ -24,10 +32,13 @@ import {
   ApiBody,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { Types } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
 import { LeavesService } from './leaves.service';
+import { Attachment, AttachmentDocument } from './models/attachment.schema';
 import { JwtAuthGuard, RolesGuard } from '../common/guards';
 import { Roles } from '../common/decorators';
+import { NotificationLogCreateDTO } from '../time-management/dto/notification-log-create.dto';
 
 // Category DTOs
 import { CreateLeaveCategoryDto } from './dto/create-leave-category.dto';
@@ -78,16 +89,40 @@ import { EncashmentResponseDto } from './dto/encashment-response.dto';
 import { AuditTrailResponseDto } from './dto/audit-trail-response.dto';
 import { LeaveStatus } from './enums/leave-status.enum';
 import { AddHolidayDto } from './dto/add-holiday.dto';
+import { CreateHolidayDto } from './dto/create-holiday.dto';
+import { HolidayType } from '../time-management/models/enums';
 
 @ApiTags('Leaves Management')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('leaves')
+@Roles('department employee','HR Admin', 'HR Manager', 'System Admin','Department Head')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Controller('leaves')
 export class LeavesController {
   // In-memory delegation Map (REQ-023)
   private delegations = new Map<string, string>();
 
-  constructor(private readonly leavesService: LeavesService) {}
+  constructor(
+    private readonly leavesService: LeavesService,
+    @InjectModel(Attachment.name) private attachmentModel: Model<AttachmentDocument>,
+  ) {}
+
+  private getCurrentUserId(req: any): string {
+    const userId = req?.user?.id || req?.user?._id || req?.user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('User not authenticated');
+    }
+    return typeof userId === 'string' ? userId : userId.toString();
+  }
+
+  private getUserRoles(req: any): string[] {
+    if (Array.isArray(req?.user?.roles)) {
+      return req.user.roles.map((r: any) => String(r).toLowerCase());
+    }
+    if (req?.user?.role) {
+      return [String(req.user.role).toLowerCase()];
+    }
+    return [];
+  }
 
   // ==================== ATTACHMENTS ====================
 
@@ -108,6 +143,69 @@ export class LeavesController {
   @ApiResponse({ status: 404, description: 'Attachment not found' })
   async getAttachmentById(@Param('attachmentId') attachmentId: string) {
     return await this.leavesService.getAttachmentForHr(attachmentId);
+  }
+
+  @Post('attachments/upload')
+  @Roles('department employee')
+  @UseInterceptors(FilesInterceptor('files', 10, {
+    storage: diskStorage({
+      destination: './uploads',
+      filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+      }
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 }
+  }))
+  @ApiOperation({
+    summary: 'Upload attachment documents',
+    description: 'Upload one or more documents for leave request',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Files uploaded successfully',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid files' })
+  async uploadAttachment(@UploadedFiles() files: Express.Multer.File[], @Request() req) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('No files uploaded');
+    }
+    const attachments: Array<{ id: string; name: string }> = [];
+    for (const file of files) {
+      const attachment = await this.attachmentModel.create({
+        originalName: file.originalname,
+        filePath: file.path,
+        fileType: file.mimetype,
+        size: file.size,
+      });
+      attachments.push({
+        id: attachment._id.toString(),
+        name: file.originalname,
+      });
+    }
+    return { attachments };
+  }
+
+  @Get('attachments/:id/download')
+  @Roles('department employee', 'Department Head', 'HR Manager', 'HR Admin')
+  @ApiOperation({
+    summary: 'Download attachment file',
+    description: 'Download the actual file',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Attachment ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'File stream',
+  })
+  @ApiResponse({ status: 404, description: 'Attachment not found' })
+  async downloadAttachment(@Param('id') id: string, @Res() res) {
+    const attachment = await this.attachmentModel.findById(id);
+    if (!attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+    res.download(attachment.filePath, attachment.originalName);
   }
 
   // ==================== LEAVE CATEGORIES ====================
@@ -168,7 +266,7 @@ export class LeavesController {
     return await this.leavesService.getLeaveCategoryById(id);
   }
 
-  @Put('categories/:id')
+  @Patch('categories/:id')
   @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Update leave category',
@@ -195,6 +293,7 @@ export class LeavesController {
   }
 
   @Delete('categories/:id')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete leave category',
@@ -311,7 +410,7 @@ export class LeavesController {
     return await this.leavesService.getLeaveTypeByCode(code);
   }
 
-  @Put('types/:id')
+  @Patch('types/:id')
   @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Update leave type',
@@ -460,7 +559,7 @@ export class LeavesController {
     return await this.leavesService.getLeavePolicyByType(leaveTypeId);
   }
 
-  @Put('policies/:id')
+  @Patch('policies/:id')
   @Roles('HR Admin', 'System Admin')
   @ApiOperation({
     summary: 'Update leave policy',
@@ -516,6 +615,7 @@ export class LeavesController {
   // ==================== LEAVE REQUESTS ====================
 
   @Post('requests')
+  @Roles('department employee')
   @ApiOperation({
     summary: 'Submit a new leave request',
     description: 'Submits a new leave request for approval',
@@ -534,6 +634,7 @@ export class LeavesController {
   }
 
   @Get('requests')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
   @ApiOperation({
     summary: 'Get all leave requests',
     description:
@@ -590,7 +691,63 @@ export class LeavesController {
     return await this.leavesService.getAllLeaveRequests(query);
   }
 
+  @Get('requests/me')
+  @Roles('department employee')
+  @ApiOperation({
+    summary: 'Get leave requests for current employee',
+    description:
+      'Returns only the authenticated employee’s leave requests. Ignores any employeeId passed in the query.',
+  })
+  @ApiQuery({
+    name: 'leaveTypeId',
+    required: false,
+    description: 'Filter by leave type ID',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by status',
+  })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Filter by start date (YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'Filter by end date (YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    description: 'Sort by dates.from or createdAt',
+    enum: ['dates.from', 'createdAt'],
+  })
+  @ApiQuery({
+    name: 'sortOrder',
+    required: false,
+    description: 'Sort order asc|desc',
+    enum: ['asc', 'desc'],
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Employee leave requests retrieved successfully',
+    type: [LeaveRequestResponseDto],
+  })
+  async getMyLeaveRequests(
+    @Query() query: LeaveRequestQueryDto,
+    @Request() req,
+  ) {
+    const currentUserId = this.getCurrentUserId(req);
+    return await this.leavesService.getAllLeaveRequests({
+      ...query,
+      employeeId: currentUserId,
+    });
+  }
+
   @Get('requests/:id')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
   @ApiOperation({
     summary: 'Get leave request by ID',
     description: 'Retrieves a specific leave request with full details',
@@ -609,6 +766,51 @@ export class LeavesController {
   @ApiResponse({ status: 404, description: 'Leave request not found' })
   async getLeaveRequestById(@Param('id') id: string) {
     return await this.leavesService.getLeaveRequestById(id);
+  }
+
+  @Get('requests/me/:id')
+  @Roles('department employee')
+  @ApiOperation({
+    summary: 'Get a specific leave request for current employee',
+    description:
+      'Returns a leave request only if it belongs to the authenticated employee.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Leave request ID',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Leave request retrieved successfully',
+    type: LeaveRequestResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid ID format' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Request does not belong to current user',
+  })
+  @ApiResponse({ status: 404, description: 'Leave request not found' })
+  async getMyLeaveRequestById(@Param('id') id: string, @Request() req) {
+    const currentUserId = this.getCurrentUserId(req);
+    const request = await this.leavesService.getLeaveRequestById(id);
+    const employeeId =
+      (request as any)?.employeeId?._id ||
+      (request as any)?.employeeId?.id ||
+      (request as any)?.employeeId ||
+      undefined;
+    const belongsToCurrentUser =
+      typeof employeeId === 'string'
+        ? employeeId === currentUserId
+        : employeeId?.toString?.() === currentUserId;
+
+    if (!belongsToCurrentUser) {
+      throw new ForbiddenException(
+        'You are not authorized to view this leave request',
+      );
+    }
+
+    return request;
   }
 
   @Patch('requests/:id/status')
@@ -639,10 +841,7 @@ export class LeavesController {
     @Body() dto: UpdateLeaveRequestStatusDto,
     @Request() req, // Get JWT user
   ) {
-    const currentUserId = req.user?.id;
-    if (!currentUserId) {
-      throw new UnauthorizedException('User not authenticated');
-    }
+    const currentUserId = this.getCurrentUserId(req);
 
     // REQ-021/022: Check authorization
     const request = await this.leavesService.getLeaveRequestById(id);
@@ -705,6 +904,7 @@ export class LeavesController {
   }
 
   @Delete('requests/:id/cancel')
+  @Roles('department employee')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Cancel leave request',
@@ -735,8 +935,12 @@ export class LeavesController {
   async cancelLeaveRequest(
     @Param('id') id: string,
     @Query('employeeId') employeeId: string,
+    @Request() req,
   ) {
-    return await this.leavesService.cancelLeaveRequest(id, employeeId);
+    // Default to the authenticated user if employeeId is not provided
+    const currentUserId = this.getCurrentUserId(req);
+    const targetEmployeeId = employeeId || currentUserId;
+    return await this.leavesService.cancelLeaveRequest(id, targetEmployeeId);
   }
 
   // ==================== LEAVE ENTITLEMENTS ====================
@@ -916,6 +1120,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
   // ==================== LEAVE ADJUSTMENTS ====================
 
   @Post('adjustments')
+  @Roles('HR Admin')
   @ApiOperation({
     summary: 'Create leave adjustment',
     description: 'Creates a manual adjustment to employee leave balance',
@@ -952,6 +1157,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
   }
 
   @Get('adjustments')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Get all adjustments',
     description: 'Retrieves leave adjustments with optional filters',
@@ -1118,6 +1324,35 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     @Param('holidayId') holidayId: string,
   ) {
     return this.leavesService.removeHolidayFromCalendar(year, holidayId);
+  }
+
+  // ==================== HOLIDAYS (ADMIN) ====================
+
+  @Post('holidays')
+  @Roles('HR Admin', 'System Admin', 'HR Manager')
+  @ApiOperation({ summary: 'Create a holiday' })
+  @ApiBody({ type: CreateHolidayDto })
+  async createHoliday(@Body() dto: CreateHolidayDto) {
+    return this.leavesService.createHoliday({
+      name: dto.name,
+      type: dto.type as any,
+      startDate: new Date(dto.startDate),
+      endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+    });
+  }
+
+  @Get('holidays')
+  @Roles('HR Admin', 'System Admin', 'HR Manager')
+  @ApiOperation({ summary: 'Get all holidays' })
+  async getHolidays() {
+    return this.leavesService.getAllHolidays();
+  }
+
+  @Get('holidays/:id')
+  @Roles('HR Admin', 'System Admin', 'HR Manager')
+  @ApiOperation({ summary: 'Get holiday by ID' })
+  async getHolidayById(@Param('id') id: string) {
+    return this.leavesService.getHolidayById(id);
   }
 
   // ==================== LEAVE REQUEST ENHANCEMENTS (EXTENDED) ====================
@@ -1394,6 +1629,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * Get all flagged irregular patterns
    */
   @Get('reports/irregular-patterns')
+  @Roles('HR Admin', 'HR Manager', 'System Admin','Department Head')
   @ApiOperation({
     summary: 'Get all leave requests flagged for irregular patterns',
   })
@@ -1643,6 +1879,37 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     };
   }
 
+  // ==================== NOTIFICATIONS ====================
+
+  @Post('notifications')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @ApiOperation({ summary: 'Create a notification log entry' })
+  @ApiBody({ type: NotificationLogCreateDTO })
+  async createNotification(@Body() dto: NotificationLogCreateDTO) {
+    return this.leavesService.createNotificationLog(dto);
+  }
+
+  @Get('notifications')
+  @ApiOperation({
+    summary: 'Get notification logs',
+    description:
+      'Admins/HR/heads can view all or filter by recipient; employees are restricted to their own notifications.',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description:
+      'Recipient employee ID (ObjectId). Ignored for employees; defaults to current user for them.',
+  })
+  async getNotifications(@Query('to') to: string | undefined, @Request() req) {
+    const currentUserId = this.getCurrentUserId(req);
+    const roles = this.getUserRoles(req);
+    const isEmployee = roles.includes('department employee');
+
+    const target = isEmployee ? currentUserId : to;
+    return this.leavesService.getNotificationLogs(target);
+  }
+
   // ==================== VALIDATION ENDPOINTS (EXTENDED) ====================
 
   /**
@@ -1692,17 +1959,24 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     description: 'End date (YYYY-MM-DD)',
     required: true,
   })
+  @ApiQuery({
+    name: 'excludeRequestId',
+    description: 'Optional: exclude a specific request (e.g., when editing)',
+    required: false,
+  })
   @ApiResponse({ status: 200, description: 'No overlap found' })
   @ApiResponse({ status: 409, description: 'Overlap detected' })
   async checkOverlap(
     @Query('employeeId') employeeId: string,
     @Query('from') from: string,
     @Query('to') to: string,
+    @Query('excludeRequestId') excludeRequestId?: string,
   ) {
     await this.leavesService.checkOverlappingLeaves(
       employeeId,
       new Date(from),
       new Date(to),
+      excludeRequestId,
     );
     return { message: 'No overlapping leaves found', hasOverlap: false };
   }
@@ -1747,7 +2021,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
 
   // ==================== MANAGER PENDING TEAM REQUESTS ====================
   @Get('requests/manager/:managerId/pending-team')
-  @Roles('Manager', 'HR Admin', 'HR Manager')
+  @Roles('Manager', 'HR Admin', 'HR Manager','Department Head')
   @ApiOperation({
     summary: 'Get pending leave requests for a manager’s team',
     description:

@@ -77,7 +77,7 @@ export class SubmitLeaveRequestDto {
   justification?: string;
 
   @ApiPropertyOptional({
-    description: 'ID of the attachment document (if required)',
+    description: 'Single attachment ID',
     example: '507f1f77bcf86cd799439013',
   })
   @IsMongoId()

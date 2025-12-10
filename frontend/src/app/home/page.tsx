@@ -8,12 +8,13 @@ import { useAuth } from "@/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+// Expose Leaves entry points for supported roles.
 const LEAVE_ALLOWED_ROLES = [
+  "department employee",
   "department head",
   "HR Manager",
   "HR Admin",
   "System Admin",
-  "department employee",
 ];
 
 export default function HomePage() {
@@ -77,7 +78,16 @@ export default function HomePage() {
                 Payroll
               </Button>
               {currentRole && LEAVE_ALLOWED_ROLES.includes(currentRole) && (
-                <Button variant="secondary" onClick={() => router.push("/leaves")}>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    router.push(
+                      currentRole === "department employee"
+                        ? "/leaves/employee"
+                        : "/leaves/dashboard",
+                    )
+                  }
+                >
                   Leaves
                 </Button>
               )}

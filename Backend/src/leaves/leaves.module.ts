@@ -37,6 +37,7 @@ import {
   NotificationLog,
   NotificationLogSchema,
 } from '../time-management/models/notification-log.schema';
+import { Holiday, HolidaySchema } from '../time-management/models/holiday.schema';
 import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
 import { TimeManagementModule } from '../time-management/time-management.module';
 import { paySlip, paySlipSchema } from '../payroll-execution/models/payslip.schema';
@@ -58,6 +59,7 @@ import { employeePayrollDetails, employeePayrollDetailsSchema } from '../payroll
       { name: PositionAssignment.name, schema: PositionAssignmentSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
       { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: Holiday.name, schema: HolidaySchema },
       { name: 'paySlip', schema: paySlipSchema },
       { name: employeePayrollDetails.name, schema: employeePayrollDetailsSchema },
     ]),
