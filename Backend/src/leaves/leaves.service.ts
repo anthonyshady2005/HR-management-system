@@ -40,6 +40,10 @@ import {
   EmployeeProfileDocument,
 } from '../employee-profile/models/employee-profile.schema';
 import { HolidayType } from '../time-management/models/enums';
+import {
+  Holiday,
+  HolidayDocument,
+} from '../time-management/models/holiday.schema';
 import { LeaveStatus } from './enums/leave-status.enum';
 import { RoundingRule } from './enums/rounding-rule.enum';
 import { AccrualMethod } from './enums/accrual-method.enum';
@@ -47,6 +51,8 @@ import { SystemRole, EmployeeStatus } from '../employee-profile/enums/employee-p
 import { paySlip, PayslipDocument } from '../payroll-execution/models/payslip.schema';
 import { employeePayrollDetails, employeePayrollDetailsDocument } from '../payroll-execution/models/employeePayrollDetails.schema';
 import {AdjustmentType} from "./enums/adjustment-type.enum";
+import {NotificationLogCreateDTO} from "../time-management/dto/notification-log-create.dto";
+import {NotificationLogDetailsDTO} from "../time-management/dto/notification-log-details.dto";
 
 @Injectable()
 export class LeavesService {
@@ -89,6 +95,8 @@ export class LeavesService {
     @InjectModel('paySlip') private paySlipModel: Model<PayslipDocument>,
     @InjectModel(employeePayrollDetails.name)
     private employeePayrollDetailsModel: Model<employeePayrollDetailsDocument>,
+    @InjectModel(Holiday.name)
+    private holidayModel: Model<HolidayDocument>,
   ) {}
 
   /**
@@ -114,6 +122,37 @@ export class LeavesService {
         err instanceof Error ? err.stack : undefined,
       );
     }
+  }
+
+  /**
+   * Create a notification log entry (exposed via controller API).
+   */
+  async createNotificationLog(
+    dto: NotificationLogCreateDTO,
+  ): Promise<NotificationLogDetailsDTO> {
+    const created = await this.notificationLogModel.create(dto);
+    const populated = await created.populate(
+      'to',
+      'fullName workEmail personalEmail',
+    );
+    return populated.toObject() as NotificationLogDetailsDTO;
+  }
+
+  /**
+   * Get notification logs, optionally filtered by recipient.
+   */
+  async getNotificationLogs(to?: string): Promise<NotificationLogDetailsDTO[]> {
+    const query: any = {};
+    if (to) {
+      query.to = Types.ObjectId.isValid(to) ? new Types.ObjectId(to) : to;
+    }
+
+    return this.notificationLogModel
+      .find(query)
+      .populate('to', 'fullName workEmail personalEmail')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
   }
 
   // ==================== LEAVE CATEGORIES ====================
@@ -475,7 +514,7 @@ export class LeavesService {
     const fromDate = new Date(data.dates.from);
     const toDate = new Date(data.dates.to);
 
-    if (fromDate >= toDate) {
+    if (fromDate > toDate) {
       throw new BadRequestException('Start date must be before end date');
     }
 
@@ -535,13 +574,13 @@ export class LeavesService {
     }
 
     // Entitlement / balance check with auto-conversion support
-    const balanceCheck = await this.checkBalanceSufficiency(
+    await this.ensurePaidBalanceOrThrow(
       data.employeeId,
       data.leaveTypeId,
       netDays,
     );
 
-    // Document requirement check
+    // Document requirement check - simple single attachment ID
     await this.validateRequiredDocuments(
       data.leaveTypeId,
       netDays,
@@ -558,6 +597,9 @@ export class LeavesService {
       ...data,
       dates: { from: fromDate, to: toDate },
       durationDays: netDays, // override client input
+      attachmentId: data.attachmentId
+        ? new Types.ObjectId(data.attachmentId)
+        : undefined,
       approvalFlow: [
         {
           role: 'Manager',
@@ -618,10 +660,17 @@ export class LeavesService {
     const baseMatch: any = {};
 
     if (filters?.employeeId) {
-      if (!Types.ObjectId.isValid(filters.employeeId)) {
-        throw new BadRequestException('Invalid employee ID format');
+      const empId = filters.employeeId;
+      if (Types.ObjectId.isValid(empId)) {
+        // Match either as ObjectId or string (defensive in case documents store raw string)
+        baseMatch.$or = [
+          { employeeId: new Types.ObjectId(empId) },
+          { $expr: { $eq: [{ $toString: '$employeeId' }, empId] } },
+        ];
+      } else {
+        // Fallback: string comparison
+        baseMatch.$expr = { $eq: [{ $toString: '$employeeId' }, empId] };
       }
-      baseMatch.employeeId = new Types.ObjectId(filters.employeeId);
     }
 
     if (filters?.leaveTypeId) {
@@ -677,19 +726,55 @@ export class LeavesService {
           },
         },
         { $unwind: { path: '$leaveType', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'attachments',
+            localField: 'attachmentId',
+            foreignField: '_id',
+            as: 'attachment',
+          },
+        },
+        { $unwind: { path: '$attachment', preserveNullAndEmptyArrays: true } },
         { $sort: { [sortField]: sortOrder } },
       ];
 
       return await this.leaveRequestModel.aggregate(pipeline).exec();
     }
 
-    // Default path without department filter
-    return await this.leaveRequestModel
-      .find(baseMatch)
-      .populate('leaveTypeId')
-      .populate('employeeId')
-      .sort({ [sortField]: sortOrder })
-      .exec();
+    // Default path without department filter (aggregate to support $expr/$or matching)
+    const pipeline: any[] = [
+      { $match: baseMatch },
+      {
+        $lookup: {
+          from: 'leavetypes',
+          localField: 'leaveTypeId',
+          foreignField: '_id',
+          as: 'leaveType',
+        },
+      },
+      { $unwind: { path: '$leaveType', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'employee_profiles',
+          localField: 'employeeId',
+          foreignField: '_id',
+          as: 'employee',
+        },
+      },
+      { $unwind: { path: '$employee', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'attachments',
+          localField: 'attachmentId',
+          foreignField: '_id',
+          as: 'attachment',
+        },
+      },
+      { $unwind: { path: '$attachment', preserveNullAndEmptyArrays: true } },
+      { $sort: { [sortField]: sortOrder } },
+    ];
+
+    return await this.leaveRequestModel.aggregate(pipeline).exec();
   }
 
   async getLeaveRequestById(id: string) {
@@ -805,16 +890,33 @@ export class LeavesService {
   }
 
   async cancelLeaveRequest(id: string, employeeId: string) {
-    if (!Types.ObjectId.isValid(id) || !Types.ObjectId.isValid(employeeId)) {
-      throw new BadRequestException('Invalid ID format');
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid leave request ID format');
     }
 
-    const request = await this.leaveRequestModel.findOne({
-      _id: id,
-      employeeId: employeeId,
-    });
+    if (!employeeId) {
+      throw new BadRequestException('Employee ID is required to cancel a request');
+    }
+
+    const employeeObjectId = Types.ObjectId.isValid(employeeId)
+      ? new Types.ObjectId(employeeId)
+      : null;
+
+    // Fetch the request first
+    const request = await this.leaveRequestModel.findById(id);
 
     if (!request) {
+      throw new NotFoundException('Leave request not found');
+    }
+
+    // Enforce ownership: the provided employeeId must match the request owner (string or ObjectId)
+    const belongsToEmployee =
+      request.employeeId?.toString() === employeeId ||
+      (employeeObjectId &&
+        request.employeeId instanceof Types.ObjectId &&
+        request.employeeId.equals(employeeObjectId));
+
+    if (!belongsToEmployee) {
       throw new NotFoundException(
         'Leave request not found or you do not have permission to cancel it',
       );
@@ -829,14 +931,14 @@ export class LeavesService {
 
     // Release pending back to remaining for paid leave
     await this.releasePendingBalance(
-      employeeId,
+      request.employeeId.toString(),
       request.leaveTypeId.toString(),
       request.durationDays,
     );
 
     // Notify employee (self) and manager if available
     await this.logNotification(
-      employeeId,
+      request.employeeId.toString(),
       'LEAVE_CANCELLED',
       'Your leave request has been cancelled',
     );
@@ -847,7 +949,7 @@ export class LeavesService {
       await this.logNotification(
         managerId,
         'LEAVE_CANCELLED_NOTIFY',
-        `Employee ${employeeId} cancelled their leave request`,
+        `Employee ${request.employeeId} cancelled their leave request`,
       );
     }
 
@@ -1284,6 +1386,8 @@ export class LeavesService {
       throw new NotFoundException('Leave entitlement not found');
     }
 
+    // const originalDuration = request.durationDays;
+
     // Update fields
     Object.assign(entitlement, data);
 
@@ -1521,7 +1625,6 @@ export class LeavesService {
     if (!calendar) {
       return false;
     }
-    // TODO: check other years prev and next
     return calendar.blockedPeriods.some((period) => {
       const from = new Date(period.from);
       const to = new Date(period.to);
@@ -1533,23 +1636,27 @@ export class LeavesService {
    * Check if date range overlaps with blocked period
    */
   async checkBlockedPeriods(from: Date, to: Date): Promise<void> {
-    const year = from.getFullYear();
-    const calendar = await this.calendarModel.findOne({ year });
+    // Iterate across all years spanned by the request to ensure multi-year blocks are enforced
+    const startYear = from.getFullYear();
+    const endYear = to.getFullYear();
 
-    if (!calendar) {
-      return;
-    }
+    for (let year = startYear; year <= endYear; year++) {
+      const calendar = await this.calendarModel.findOne({ year });
+      if (!calendar) {
+        continue;
+      }
 
-    const hasBlockedDates = calendar.blockedPeriods.some((period) => {
-      const periodFrom = new Date(period.from);
-      const periodTo = new Date(period.to);
-      return from <= periodTo && to >= periodFrom;
-    });
+      const hasBlockedDates = calendar.blockedPeriods.some((period) => {
+        const periodFrom = new Date(period.from);
+        const periodTo = new Date(period.to);
+        return from <= periodTo && to >= periodFrom;
+      });
 
-    if (hasBlockedDates) {
-      throw new BadRequestException(
-        'Leave request overlaps with blocked period. Leave requests are not allowed during this time.',
-      );
+      if (hasBlockedDates) {
+        throw new BadRequestException(
+          'Leave request overlaps with a blocked period. Leave requests are not allowed during this time.',
+        );
+      }
     }
   }
   async addHolidayToCalendar(year: number, holidayId: string) {
@@ -1567,6 +1674,37 @@ export class LeavesService {
       await calendar.save();
     }
     return calendar;
+  }
+
+  // ==================== HOLIDAYS (ADMIN) ====================
+
+  async createHoliday(data: {
+    name?: string;
+    type: HolidayType;
+    startDate: Date;
+    endDate?: Date;
+  }) {
+    const holiday = new this.holidayModel({
+      ...data,
+      startDate: new Date(data.startDate),
+      endDate: data.endDate ? new Date(data.endDate) : undefined,
+    });
+    return await holiday.save();
+  }
+
+  async getAllHolidays() {
+    return await this.holidayModel.find().sort({ startDate: 1 }).exec();
+  }
+
+  async getHolidayById(id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid holiday ID format');
+    }
+    const holiday = await this.holidayModel.findById(id).exec();
+    if (!holiday) {
+      throw new NotFoundException('Holiday not found');
+    }
+    return holiday;
   }
 
   async removeHolidayFromCalendar(year: number, holidayId: string) {
@@ -1696,6 +1834,31 @@ export class LeavesService {
   }
 
   /**
+   * Helper: enforce paid balance sufficiency and throw with user-facing guidance
+   */
+  private async ensurePaidBalanceOrThrow(
+    employeeId: string,
+    leaveTypeId: string,
+    requestedDays: number,
+  ) {
+    const balanceCheck = await this.checkBalanceSufficiency(
+      employeeId,
+      leaveTypeId,
+      requestedDays,
+    );
+
+    if (balanceCheck.requiresConversion) {
+      throw new BadRequestException(
+        `Insufficient paid leave balance. Requested ${requestedDays} day(s) but only ` +
+          `${balanceCheck.paidDays} day(s) available. Convert ${balanceCheck.unpaidDays} ` +
+          'day(s) to unpaid leave to proceed.',
+      );
+    }
+
+    return balanceCheck;
+  }
+
+  /**
    * REQ-016: Validate required documents
    * BR-54: Medical certificate required for sick leave > 1 day
    */
@@ -1731,6 +1894,10 @@ export class LeavesService {
             ? 'Medical certificate required for sick leave exceeding 1 day'
             : `${leaveType.name} requires supporting documents`,
         );
+      }
+
+      if (!Types.ObjectId.isValid(attachmentId)) {
+        throw new BadRequestException('Invalid attachment ID format');
       }
 
       // Validate the attachment exists and meets requirements
@@ -2538,12 +2705,14 @@ export class LeavesService {
       throw new BadRequestException('Only pending requests can be modified');
     }
 
+    const originalDuration = request.durationDays;
+
     // Update fields
     if (data.fromDate || data.toDate) {
       const from = data.fromDate ? new Date(data.fromDate) : request.dates.from;
       const to = data.toDate ? new Date(data.toDate) : request.dates.to;
 
-      if (from >= to) {
+      if (from > to) {
         throw new BadRequestException('Start date must be before end date');
       }
 
@@ -2572,8 +2741,8 @@ export class LeavesService {
         request._id.toString(),
       );
 
-      // Entitlement / balance check
-      await this.checkBalanceSufficiency(
+      // Entitlement / balance check (block if paid balance insufficient)
+      await this.ensurePaidBalanceOrThrow(
         request.employeeId.toString(),
         request.leaveTypeId.toString(),
         netDays,
@@ -2602,13 +2771,18 @@ export class LeavesService {
     }
 
     if (data.attachmentId !== undefined) {
-      request.attachmentId = data.attachmentId
-        ? new Types.ObjectId(data.attachmentId)
-        : undefined;
+      if (data.attachmentId) {
+        if (!Types.ObjectId.isValid(data.attachmentId)) {
+          throw new BadRequestException('Invalid attachment ID format');
+        }
+        request.attachmentId = new Types.ObjectId(data.attachmentId);
+      } else {
+        request.attachmentId = undefined;
+      }
     }
 
     // Ensure balance sufficiency with current duration
-    await this.checkBalanceSufficiency(
+    await this.ensurePaidBalanceOrThrow(
       request.employeeId.toString(),
       request.leaveTypeId.toString(),
       request.durationDays,
@@ -2621,7 +2795,43 @@ export class LeavesService {
       request.attachmentId?.toString(),
     );
 
-    return await request.save();
+    // Sync pending balance change (only for paid leave types)
+    const pendingDelta = request.durationDays - originalDuration;
+    if (pendingDelta !== 0) {
+      if (pendingDelta < 0) {
+        await this.releasePendingBalance(
+          request.employeeId.toString(),
+          request.leaveTypeId.toString(),
+          Math.abs(pendingDelta),
+        );
+      } else {
+        await this.addToPendingBalance(
+          request.employeeId.toString(),
+          request.leaveTypeId.toString(),
+          pendingDelta,
+        );
+      }
+    }
+
+    const saved = await request.save();
+
+    // Notify employee and manager (if available)
+    await this.logNotification(
+      request.employeeId.toString(),
+      'LEAVE_UPDATED',
+      'Your leave request was updated.',
+    );
+    const managerStep = request.approvalFlow.find((s) => s.role === 'Manager');
+    const managerId = managerStep?.decidedBy?.toString();
+    if (managerId) {
+      await this.logNotification(
+        managerId,
+        'LEAVE_UPDATED_NOTIFY',
+        `Leave request for employee ${request.employeeId.toString()} was updated.`,
+      );
+    }
+
+    return saved;
   }
 
   // ==================== HELPER/UTILITY METHODS (EXTENDED) ====================
