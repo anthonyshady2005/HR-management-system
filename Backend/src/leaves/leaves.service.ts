@@ -53,6 +53,8 @@ import { employeePayrollDetails, employeePayrollDetailsDocument } from '../payro
 import {AdjustmentType} from "./enums/adjustment-type.enum";
 import {NotificationLogCreateDTO} from "../time-management/dto/notification-log-create.dto";
 import {NotificationLogDetailsDTO} from "../time-management/dto/notification-log-details.dto";
+import { Department, DepartmentDocument } from '../organization-structure/models/department.schema';
+import { Position, PositionDocument } from '../organization-structure/models/position.schema';
 
 @Injectable()
 export class LeavesService {
@@ -97,6 +99,10 @@ export class LeavesService {
     private employeePayrollDetailsModel: Model<employeePayrollDetailsDocument>,
     @InjectModel(Holiday.name)
     private holidayModel: Model<HolidayDocument>,
+    @InjectModel(Department.name)
+    private departmentModel: Model<DepartmentDocument>,
+    @InjectModel(Position.name)
+    private positionModel: Model<PositionDocument>,
   ) {}
 
   /**
@@ -122,6 +128,245 @@ export class LeavesService {
         err instanceof Error ? err.stack : undefined,
       );
     }
+  }
+
+  /**
+   * Shared org helpers (used for manager resolution and approvals).
+   * Priority: live position_assignments, then profile links, then department head.
+   */
+  private toObjectId(id?: string | Types.ObjectId): Types.ObjectId | null {
+    if (!id) return null;
+    if (id instanceof Types.ObjectId) return id;
+    return Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : null;
+  }
+
+  private async findActiveAssignmentByEmployee(
+    employeeId: string,
+    asOf: Date = new Date(),
+  ) {
+    const empId = this.toObjectId(employeeId);
+    if (!empId) return null;
+
+    return this.positionAssignmentModel
+      .findOne({
+        employeeProfileId: empId,
+        startDate: { $lte: asOf },
+        $or: [
+          { endDate: { $exists: false } },
+          { endDate: null },
+          { endDate: { $gte: asOf } },
+        ],
+      })
+      .populate('positionId')
+      .lean()
+      .exec();
+  }
+
+  private async findActiveOccupantByPosition(
+    positionId?: string | Types.ObjectId,
+    asOf: Date = new Date(),
+  ): Promise<string | null> {
+    const posId = this.toObjectId(positionId);
+    if (!posId) return null;
+
+    const assignment = await this.positionAssignmentModel
+      .findOne({
+        positionId: posId,
+        startDate: { $lte: asOf },
+        $or: [
+          { endDate: { $exists: false } },
+          { endDate: null },
+          { endDate: { $gte: asOf } },
+        ],
+      })
+      .lean()
+      .exec();
+
+    return assignment?.employeeProfileId
+      ? assignment.employeeProfileId.toString()
+      : null;
+  }
+
+  private async resolveDepartmentHeadOccupant(
+    departmentId?: string | Types.ObjectId,
+    asOf: Date = new Date(),
+  ): Promise<string | null> {
+    const depId = this.toObjectId(departmentId);
+    if (!depId) return null;
+
+    const department = await this.departmentModel
+      .findById(depId)
+      .select('headPositionId')
+      .lean()
+      .exec();
+
+    if (!department?.headPositionId) {
+      return null;
+    }
+
+    return this.findActiveOccupantByPosition(department.headPositionId, asOf);
+  }
+
+  private async getEmployeeProfileOrgLinks(employeeId: string) {
+    return this.employeeProfileModel
+      .findById(employeeId)
+      .select('primaryPositionId primaryDepartmentId supervisorPositionId')
+      .lean()
+      .exec();
+  }
+
+  private async getPositionById(positionId?: string | Types.ObjectId) {
+    const posId = this.toObjectId(positionId);
+    if (!posId) return null;
+    return this.positionModel.findById(posId).lean().exec();
+  }
+
+  private async getEmployeeCurrentPositionId(
+    employeeId: string,
+    asOf: Date = new Date(),
+  ): Promise<string | null> {
+    const assignment = await this.findActiveAssignmentByEmployee(employeeId, asOf);
+    if (assignment?.positionId) {
+      const populated = assignment.positionId as any;
+      if (populated?._id) {
+        return populated._id.toString();
+      }
+      if (assignment.positionId) {
+        return assignment.positionId.toString();
+      }
+    }
+
+    const profile = await this.getEmployeeProfileOrgLinks(employeeId);
+    return profile?.primaryPositionId
+      ? profile.primaryPositionId.toString()
+      : null;
+  }
+
+  private async isDeptHeadForEmployee(
+    headId: string,
+    employeeId: string,
+  ): Promise<boolean> {
+    console.log('[isDeptHeadForEmployee] Checking:', { headId, employeeId });
+
+    const headDepartments = await this.getDepartmentsForHead(headId);
+    console.log('[isDeptHeadForEmployee] Head departments:', headDepartments);
+
+    if (!headDepartments.length) {
+      console.log('[isDeptHeadForEmployee] No departments found for head');
+      return false;
+    }
+
+    const deptSet = new Set(headDepartments.map((d) => d.id));
+
+    const profile = await this.employeeProfileModel
+      .findById(employeeId)
+      .select('primaryDepartmentId')
+      .lean()
+      .exec();
+
+    console.log('[isDeptHeadForEmployee] Employee profile department:', profile?.primaryDepartmentId?.toString());
+
+    if (profile?.primaryDepartmentId) {
+      if (deptSet.has(profile.primaryDepartmentId.toString())) {
+        console.log('[isDeptHeadForEmployee] Match found via profile department!');
+        return true;
+      }
+    }
+
+    const assignment = await this.findActiveAssignmentByEmployee(employeeId);
+    console.log('[isDeptHeadForEmployee] Employee assignment department:', assignment?.departmentId?.toString());
+
+    if (assignment?.departmentId) {
+      if (deptSet.has(assignment.departmentId.toString())) {
+        console.log('[isDeptHeadForEmployee] Match found via assignment department!');
+        return true;
+      }
+    }
+
+    // Fallback: any historical assignment (ignoring dates) to capture edge cases
+    const anyAssignment = await this.positionAssignmentModel
+      .findOne({ employeeProfileId: new Types.ObjectId(employeeId) })
+      .select('departmentId')
+      .lean()
+      .exec();
+    if (anyAssignment?.departmentId) {
+      if (deptSet.has(anyAssignment.departmentId.toString())) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Departments managed by a user (as head) using active assignments -> headPositionId match.
+   * Fallback: primaryDepartmentId on profile.
+   */
+  async getDepartmentsForHead(
+    employeeId: string,
+  ): Promise<{ id: string; name?: string; code?: string }[]> {
+    const now = new Date();
+    const empId = this.toObjectId(employeeId);
+    if (!empId) return [];
+
+    const assignments = await this.positionAssignmentModel
+      .find({
+        employeeProfileId: empId,
+        startDate: { $lte: now },
+        $or: [
+          { endDate: { $exists: false } },
+          { endDate: null },
+          { endDate: { $gte: now } },
+        ],
+      })
+      .select('positionId')
+      .lean()
+      .exec();
+
+    const positionIds = Array.from(
+      new Set(
+        assignments
+          .map((a) => this.toObjectId(a.positionId))
+          .filter((id): id is Types.ObjectId => Boolean(id)),
+      ),
+    );
+
+    const departments = positionIds.length
+      ? await this.departmentModel
+          .find({ headPositionId: { $in: positionIds } })
+          .select('_id name code')
+          .lean()
+          .exec()
+      : [];
+
+    const deptMap = new Map<string, { id: string; name?: string; code?: string }>();
+    departments.forEach((d) => {
+      if (d?._id) deptMap.set(d._id.toString(), {
+        id: d._id.toString(),
+        name: (d as any).name,
+        code: (d as any).code,
+      });
+    });
+
+    if (!deptMap.size) {
+      const profile = await this.getEmployeeProfileOrgLinks(employeeId);
+      if (profile?.primaryDepartmentId) {
+        const dept = await this.departmentModel
+          .findById(profile.primaryDepartmentId)
+          .select('_id name code')
+          .lean()
+          .exec();
+        if (dept?._id) {
+          deptMap.set(dept._id.toString(), {
+            id: dept._id.toString(),
+            name: (dept as any).name,
+            code: (dept as any).code,
+          });
+        }
+      }
+    }
+
+    return Array.from(deptMap.values());
   }
 
   /**
@@ -411,7 +656,14 @@ export class LeavesService {
   }
 
   async getAllPolicies() {
-    return await this.leavePolicyModel.find().populate('leaveTypeId').exec();
+    const policies = await this.leavePolicyModel.find().exec();
+
+    // Skip policies with invalid or missing leaveTypeId to avoid ObjectId cast errors
+    const validPolicies = policies.filter((pol) =>
+      Types.ObjectId.isValid((pol as any).leaveTypeId),
+    );
+
+    return this.leavePolicyModel.populate(validPolicies, 'leaveTypeId');
   }
 
   async getLeavePolicyById(id: string) {
@@ -569,7 +821,7 @@ export class LeavesService {
     if (!limitCheck.withinLimit) {
       throw new BadRequestException(
         `Cumulative leave limit exceeded. Used ${limitCheck.used}/${limitCheck.limit} days in past 12 months. ` +
-          `Requesting ${netDays} more would exceed limit.`,
+        `Requesting ${netDays} more would exceed limit.`,
       );
     }
 
@@ -653,11 +905,66 @@ export class LeavesService {
     status?: string;
     startDate?: string;
     endDate?: string;
-    departmentId?: string;
+    departmentId?: string | string[];
     sortBy?: 'dates.from' | 'createdAt';
     sortOrder?: 'asc' | 'desc';
   }) {
     const baseMatch: any = {};
+
+    // Department scoping first: resolve employee IDs in given departments (profile primaryDepartmentId or active assignment snapshot)
+    if (filters?.departmentId) {
+      const deptIdsRaw = Array.isArray(filters.departmentId)
+        ? filters.departmentId
+        : [filters.departmentId];
+      const deptIds = deptIdsRaw
+        .filter((id) => Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
+
+      if (deptIdsRaw.length > 0 && deptIds.length === 0) {
+        return [];
+      }
+
+      const now = new Date();
+      const [profileEmployees, assignmentEmployees] = await Promise.all([
+        this.employeeProfileModel
+          .find({ primaryDepartmentId: { $in: deptIds } })
+          .select('_id')
+          .lean()
+          .exec(),
+        this.positionAssignmentModel
+          .find({
+            departmentId: { $in: deptIds },
+            startDate: { $lte: now },
+            $or: [
+              { endDate: { $exists: false } },
+              { endDate: null },
+              { endDate: { $gte: now } },
+            ],
+          })
+          .select('employeeProfileId')
+          .lean()
+          .exec(),
+      ]);
+
+      const employeeIds = new Set<string>();
+      profileEmployees.forEach((e) => {
+        if (e?._id) employeeIds.add(e._id.toString());
+      });
+      assignmentEmployees.forEach((e) => {
+        const id = (e as any)?.employeeProfileId;
+        if (id) employeeIds.add(id.toString());
+      });
+
+      if (!employeeIds.size) {
+        return [];
+      }
+
+      const employeeObjectIds = Array.from(employeeIds).map((id) => new Types.ObjectId(id));
+      baseMatch.$or = [
+        { employeeId: { $in: employeeObjectIds } },
+        { $expr: { $in: [{ $toString: '$employeeId' }, Array.from(employeeIds)] } },
+      ];
+    }
 
     if (filters?.employeeId) {
       const empId = filters.employeeId;
@@ -684,6 +991,12 @@ export class LeavesService {
       baseMatch.status = filters.status;
     }
 
+    // Utility to validate and normalize employee id for downstream checks
+    const employeeIdForChecks =
+      (filters?.employeeId && Types.ObjectId.isValid(filters.employeeId))
+        ? filters.employeeId
+        : undefined;
+
     // Date range filter on request dates
     if (filters?.startDate || filters?.endDate) {
       const range: any = {};
@@ -698,48 +1011,6 @@ export class LeavesService {
 
     const sortField = filters?.sortBy || 'createdAt';
     const sortOrder = filters?.sortOrder === 'asc' ? 1 : -1;
-
-    // If department filter is provided, use aggregation with lookup to employee_profiles
-    if (filters?.departmentId) {
-      if (!Types.ObjectId.isValid(filters.departmentId)) {
-        throw new BadRequestException('Invalid department ID format');
-      }
-      const deptId = new Types.ObjectId(filters.departmentId);
-      const pipeline: any[] = [
-        { $match: baseMatch },
-        {
-          $lookup: {
-            from: 'employee_profiles',
-            localField: 'employeeId',
-            foreignField: '_id',
-            as: 'employeeDoc',
-          },
-        },
-        { $unwind: '$employeeDoc' },
-        { $match: { 'employeeDoc.primaryDepartmentId': deptId } },
-        {
-          $lookup: {
-            from: 'leavetypes',
-            localField: 'leaveTypeId',
-            foreignField: '_id',
-            as: 'leaveType',
-          },
-        },
-        { $unwind: { path: '$leaveType', preserveNullAndEmptyArrays: true } },
-        {
-          $lookup: {
-            from: 'attachments',
-            localField: 'attachmentId',
-            foreignField: '_id',
-            as: 'attachment',
-          },
-        },
-        { $unwind: { path: '$attachment', preserveNullAndEmptyArrays: true } },
-        { $sort: { [sortField]: sortOrder } },
-      ];
-
-      return await this.leaveRequestModel.aggregate(pipeline).exec();
-    }
 
     // Default path without department filter (aggregate to support $expr/$or matching)
     const pipeline: any[] = [
@@ -807,17 +1078,19 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave request ID format');
     }
 
-    const request = await this.leaveRequestModel.findById(id);
+    const request = await this.leaveRequestModel.findById(id).populate('leaveTypeId');
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
 
+    // Cancelled requests cannot be approved or rejected
+    if (request.status === LeaveStatus.CANCELLED) {
+      throw new BadRequestException('Cannot approve or reject a cancelled request');
+    }
+
     const wasStatus = request.status;
 
-    // Update overall status
-    request.status = data.status;
-
-    // Update approval flow if role is provided
+    // Update individual approval step if role is provided
     if (data.role && data.decidedBy) {
       const flowIndex = request.approvalFlow.findIndex(
         (f) => f.role === data.role,
@@ -828,65 +1101,147 @@ export class LeavesService {
           data.decidedBy,
         );
         request.approvalFlow[flowIndex].decidedAt = new Date();
+      } else {
+        throw new BadRequestException(`Approval step with role '${data.role}' not found`);
       }
+    }
+
+    // Recalculate overall status from approval flow
+    // Final status logic: any rejection = rejected, all approved = approved, otherwise pending
+    const hasRejected = request.approvalFlow.some((s) => s.status === 'rejected');
+    const allApproved = request.approvalFlow.every((s) => s.status === 'approved');
+
+    if (hasRejected) {
+      request.status = LeaveStatus.REJECTED; // Final - any rejection finalizes as rejected
+    } else if (allApproved) {
+      request.status = LeaveStatus.APPROVED; // Final - both Manager and HR must approve
+    } else {
+      request.status = LeaveStatus.PENDING; // Still waiting for remaining approvals
     }
 
     const saved = await request.save();
 
-    // Balance updates based on final status changes
-    if (data.status === LeaveStatus.APPROVED) {
+    // Balance updates based on OVERALL status changes (not individual step decisions)
+    // Only deduct when overall status changes from non-approved to approved
+    // Extract IDs properly (handle populated fields)
+    const employeeIdStr = (request.employeeId as any)?._id?.toString() || (request.employeeId as any)?.toString();
+    const leaveTypeIdStr = (request.leaveTypeId as any)?._id?.toString() || (request.leaveTypeId as any)?.toString();
+
+    if (wasStatus !== LeaveStatus.APPROVED && saved.status === LeaveStatus.APPROVED) {
+      // Final approval achieved - deduct balance
       await this.deductFromBalance(
-        request.employeeId.toString(),
-        request.leaveTypeId.toString(),
+        employeeIdStr,
+        leaveTypeIdStr,
         request.durationDays,
       );
 
       // Sync with payroll: Handle paid/unpaid leave deductions/encashments
       await this.syncLeaveApprovalWithPayroll(
-        request.employeeId.toString(),
-        request.leaveTypeId.toString(),
+        employeeIdStr,
+        leaveTypeIdStr,
         request.durationDays,
         request.dates.from,
         request.dates.to,
       );
     } else if (
-      data.status === LeaveStatus.REJECTED ||
-      data.status === LeaveStatus.CANCELLED
+      wasStatus === LeaveStatus.PENDING &&
+      (saved.status === LeaveStatus.REJECTED || saved.status === LeaveStatus.CANCELLED)
     ) {
-      // Release pending back to remaining on rejection/cancellation
+      // Rejection or cancellation - release pending balance
       await this.releasePendingBalance(
-        request.employeeId.toString(),
-        request.leaveTypeId.toString(),
+        employeeIdStr,
+        leaveTypeIdStr,
         request.durationDays,
       );
     }
 
-    const employeeId = request.employeeId.toString();
+    const employeeId = employeeIdStr;
     const managerStep = request.approvalFlow.find((f) => f.role === 'Manager');
     const managerId = managerStep?.decidedBy?.toString();
 
-    // Notify employee on status change
-    await this.logNotification(
-      employeeId,
-      `LEAVE_${data.status.toUpperCase()}`,
-      `Your leave request was ${data.status}`,
-    );
+    // Notify employee only on overall status change
+    if (wasStatus !== saved.status) {
+      await this.logNotification(
+        employeeId,
+        `LEAVE_${saved.status.toUpperCase()}`,
+        `Your leave request status changed to ${saved.status}`,
+      );
+    } else {
+      // Notify about step approval even if overall status unchanged
+      await this.logNotification(
+        employeeId,
+        'LEAVE_STEP_UPDATE',
+        `Your leave request was updated by ${data.role || 'approver'}`,
+      );
+    }
 
-    // Notify manager when finalized (approved/rejected/cancelled)
+    // Notify manager when overall status becomes finalized (approved/rejected/cancelled)
     if (
+      wasStatus !== saved.status &&
       [LeaveStatus.APPROVED, LeaveStatus.REJECTED, LeaveStatus.CANCELLED].includes(
-        data.status,
+        saved.status,
       ) &&
       managerId
     ) {
       await this.logNotification(
         managerId,
-        `LEAVE_${data.status.toUpperCase()}_NOTIFY`,
-        `Leave request for employee ${employeeId} is now ${data.status}`,
+        `LEAVE_${saved.status.toUpperCase()}_NOTIFY`,
+        `Leave request for employee ${employeeId} is now ${saved.status}`,
       );
     }
 
     return saved;
+  }
+
+  /**
+   * Bulk update multiple leave requests at once
+   * Allows HR managers to approve/reject multiple requests efficiently
+   */
+  async bulkUpdateLeaveRequests(
+    requestIds: string[],
+    status: LeaveStatus,
+    decidedBy: string,
+    role?: string,
+  ): Promise<{
+    successCount: number;
+    failedCount: number;
+    successfulIds: string[];
+    failures: Array<{ requestId: string; error: string }>;
+  }> {
+    const results = {
+      successCount: 0,
+      failedCount: 0,
+      successfulIds: [] as string[],
+      failures: [] as Array<{ requestId: string; error: string }>,
+    };
+
+    // Process each request individually to ensure proper error handling and balance tracking
+    for (const requestId of requestIds) {
+      try {
+        // Validate ID format
+        if (!Types.ObjectId.isValid(requestId)) {
+          throw new BadRequestException('Invalid request ID format');
+        }
+
+        // Use the existing updateLeaveRequestStatus method to ensure consistency
+        await this.updateLeaveRequestStatus(requestId, {
+          status,
+          decidedBy,
+          role,
+        });
+
+        results.successCount++;
+        results.successfulIds.push(requestId);
+      } catch (error) {
+        results.failedCount++;
+        results.failures.push({
+          requestId,
+          error: error.message || 'Unknown error occurred',
+        });
+      }
+    }
+
+    return results;
   }
 
   async cancelLeaveRequest(id: string, employeeId: string) {
@@ -1019,12 +1374,12 @@ export class LeavesService {
       const tenureMonths =
         hireDate && !isNaN(hireDate.getTime())
           ? Math.max(
-              0,
-              Math.floor(
-                (now.getTime() - hireDate.getTime()) /
-                  (1000 * 60 * 60 * 24 * 30),
-              ),
-            )
+            0,
+            Math.floor(
+              (now.getTime() - hireDate.getTime()) /
+              (1000 * 60 * 60 * 24 * 30),
+            ),
+          )
           : 0;
 
       const grade = (employee as any)?.payGradeId?.grade;
@@ -1116,7 +1471,7 @@ export class LeavesService {
         eligible = false;
         reasons.push(
           `Insufficient tenure: requires ${policy.eligibility.minTenureMonths} months, ` +
-            `employee has ${employeeData.tenureMonths || 0} months`,
+          `employee has ${employeeData.tenureMonths || 0} months`,
         );
       }
     }
@@ -1134,7 +1489,7 @@ export class LeavesService {
           eligible = false;
           reasons.push(
             `Position not eligible: allowed positions are [${policy.eligibility.positionsAllowed.join(', ')}], ` +
-              `employee position is '${employeeData.position || 'unknown'}'`,
+            `employee position is '${employeeData.position || 'unknown'}'`,
           );
         }
       }
@@ -1155,7 +1510,7 @@ export class LeavesService {
           eligible = false;
           reasons.push(
             `Contract type not eligible: allowed types are [${policy.eligibility.contractTypesAllowed.join(', ')}], ` +
-              `employee contract type is '${employeeData.contractType || 'unknown'}'`,
+            `employee contract type is '${employeeData.contractType || 'unknown'}'`,
           );
         }
       }
@@ -1306,6 +1661,216 @@ export class LeavesService {
     return await entitlement.save();
   }
 
+  /**
+   * Create entitlements for multiple employees in batch
+   * REQ-007: Batch entitlement creation for efficiency
+   *
+   * @param data Batch entitlement creation payload
+   * @returns Summary of created, skipped, and failed entitlements
+   * @access HR Admin only
+   */
+  async createBatchEntitlement(data: {
+    employeeIds: string[];
+    leaveTypeId: string;
+    yearlyEntitlement?: number;
+    accruedActual?: number;
+    accruedRounded?: number;
+    carryForward?: number;
+    personalized?: boolean;
+  }) {
+    // Validate leave type ID
+    if (!Types.ObjectId.isValid(data.leaveTypeId)) {
+      throw new BadRequestException('Invalid leave type ID format');
+    }
+
+    // Validate all employee IDs
+    const invalidEmployeeIds = data.employeeIds.filter(
+      (id) => !Types.ObjectId.isValid(id),
+    );
+    if (invalidEmployeeIds.length > 0) {
+      throw new BadRequestException(
+        `Invalid employee ID format: ${invalidEmployeeIds.join(', ')}`,
+      );
+    }
+
+    // Fetch leave policy for default values
+    const policy = await this.leavePolicyModel.findOne({
+      leaveTypeId: data.leaveTypeId,
+    });
+
+    const yearlyEntitlement =
+      data.yearlyEntitlement !== undefined
+        ? data.yearlyEntitlement
+        : policy?.yearlyRate || 0;
+
+    const result = {
+      created: 0,
+      skipped: 0,
+      failed: 0,
+      createdEmployeeIds: [] as string[],
+      skippedEmployeeIds: [] as string[],
+      errors: [] as { employeeId: string; error: string }[],
+    };
+
+    for (const employeeId of data.employeeIds) {
+      try {
+        // Check if entitlement already exists
+        const existing = await this.leaveEntitlementModel.findOne({
+          employeeId,
+          leaveTypeId: data.leaveTypeId,
+        });
+
+        if (existing) {
+          result.skipped++;
+          result.skippedEmployeeIds.push(employeeId);
+          continue;
+        }
+
+        // Validate employee exists
+        const employee = await this.employeeProfileModel.findById(employeeId);
+        if (!employee) {
+          result.failed++;
+          result.errors.push({
+            employeeId,
+            error: 'Employee not found',
+          });
+          continue;
+        }
+
+        // Skip if not personalized - validate eligibility
+        if (!data.personalized) {
+          const validation = await this.validateEmployeeEligibility(
+            employeeId,
+            data.leaveTypeId,
+          );
+
+          if (!validation.eligible) {
+            result.failed++;
+            result.errors.push({
+              employeeId,
+              error: `Not eligible: ${validation.reasons.join('; ')}`,
+            });
+            continue;
+          }
+        }
+
+        // Create entitlement
+        const entitlement = new this.leaveEntitlementModel({
+          employeeId,
+          leaveTypeId: data.leaveTypeId,
+          yearlyEntitlement,
+          accruedActual: data.accruedActual || 0,
+          accruedRounded: data.accruedRounded || 0,
+          carryForward: data.carryForward || 0,
+          taken: 0,
+          pending: 0,
+          remaining: yearlyEntitlement + (data.carryForward || 0),
+        });
+
+        await entitlement.save();
+        result.created++;
+        result.createdEmployeeIds.push(employeeId);
+      } catch (error) {
+        result.failed++;
+        result.errors.push({
+          employeeId,
+          error: error.message || 'Unknown error',
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Create entitlements for a group of employees based on filters
+   * REQ-007: Group entitlement creation based on department, position, etc.
+   *
+   * @param data Group entitlement creation payload with filters
+   * @returns Summary of created, skipped, and failed entitlements
+   * @access HR Admin only
+   */
+  async createGroupEntitlement(data: {
+    filters: {
+      departmentId?: string;
+      positionId?: string;
+      contractType?: string;
+      minTenure?: number;
+    };
+    leaveTypeId: string;
+    yearlyEntitlement?: number;
+    accruedActual?: number;
+    accruedRounded?: number;
+    carryForward?: number;
+    personalized?: boolean;
+  }) {
+    // Validate leave type ID
+    if (!Types.ObjectId.isValid(data.leaveTypeId)) {
+      throw new BadRequestException('Invalid leave type ID format');
+    }
+
+    // Build employee query based on filters
+    const employeeQuery: any = { status: EmployeeStatus.ACTIVE };
+
+    if (data.filters.departmentId) {
+      if (!Types.ObjectId.isValid(data.filters.departmentId)) {
+        throw new BadRequestException('Invalid department ID format');
+      }
+      employeeQuery.departmentId = data.filters.departmentId;
+    }
+
+    if (data.filters.positionId) {
+      if (!Types.ObjectId.isValid(data.filters.positionId)) {
+        throw new BadRequestException('Invalid position ID format');
+      }
+      employeeQuery.positionId = data.filters.positionId;
+    }
+
+    if (data.filters.contractType) {
+      employeeQuery.contractType = data.filters.contractType;
+    }
+
+    // Fetch employees matching the filters
+    const employees = await this.employeeProfileModel.find(employeeQuery).exec();
+
+    if (employees.length === 0) {
+      throw new NotFoundException('No employees found matching the filters');
+    }
+
+    // Filter by tenure if specified
+    let filteredEmployees = employees;
+    if (data.filters.minTenure !== undefined && data.filters.minTenure > 0) {
+      filteredEmployees = employees.filter((employee) => {
+        const hireDate = employee.dateOfHire
+          ? new Date(employee.dateOfHire)
+          : new Date();
+        const tenureMonths =
+          (new Date().getTime() - hireDate.getTime()) /
+          (1000 * 60 * 60 * 24 * 30);
+        return tenureMonths >= (data.filters.minTenure ?? 0);
+      });
+    }
+
+    if (filteredEmployees.length === 0) {
+      throw new NotFoundException(
+        'No employees found matching the filters with minimum tenure',
+      );
+    }
+
+    // Use batch creation for the filtered employees
+    const employeeIds = filteredEmployees.map((emp) => emp._id.toString());
+
+    return await this.createBatchEntitlement({
+      employeeIds,
+      leaveTypeId: data.leaveTypeId,
+      yearlyEntitlement: data.yearlyEntitlement,
+      accruedActual: data.accruedActual,
+      accruedRounded: data.accruedRounded,
+      carryForward: data.carryForward,
+      personalized: data.personalized,
+    });
+  }
+
   async getEmployeeEntitlements(employeeId: string) {
     if (!Types.ObjectId.isValid(employeeId)) {
       throw new BadRequestException('Invalid employee ID format');
@@ -1366,6 +1931,40 @@ export class LeavesService {
     };
   }
 
+  /**
+   * Helper method to calculate remaining balance consistently
+   * Handles both upfront allocation (YEARLY) and incremental accrual (MONTHLY/QUARTERLY)
+   * @param entitlement The entitlement document
+   * @param policy The leave policy (optional, will be fetched if not provided)
+   * @returns The calculated remaining balance
+   */
+  private async calculateRemainingBalance(
+    entitlement: any,
+    policy?: any,
+  ): Promise<number> {
+    // Fetch policy if not provided
+    if (!policy) {
+      policy = await this.leavePolicyModel
+        .findOne({ leaveTypeId: entitlement.leaveTypeId })
+        .exec();
+    }
+
+    // Calculate base allowance based on accrual method
+    // For YEARLY accrual: use yearlyEntitlement (upfront allocation at year start)
+    // For MONTHLY/QUARTERLY: use accruedRounded (incremental accrual over time)
+    const baseAllowance =
+      policy?.accrualMethod === AccrualMethod.YEARLY
+        ? entitlement.yearlyEntitlement || 0
+        : entitlement.accruedRounded || 0;
+
+    return (
+      (entitlement.carryForward || 0) +
+      baseAllowance -
+      (entitlement.taken || 0) -
+      (entitlement.pending || 0)
+    );
+  }
+
   async updateBalance(
     id: string,
     data: {
@@ -1386,16 +1985,12 @@ export class LeavesService {
       throw new NotFoundException('Leave entitlement not found');
     }
 
-    // const originalDuration = request.durationDays;
-
     // Update fields
     Object.assign(entitlement, data);
 
-    // Recalculate remaining
-    const total =
-      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
-    entitlement.remaining =
-      total - (entitlement.taken || 0) - (entitlement.pending || 0);
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
+
 
     return await entitlement.save();
   }
@@ -1474,9 +2069,8 @@ export class LeavesService {
         throw new BadRequestException('Unsupported adjustment type');
     }
 
-    const total =
-      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
-    entitlement.remaining = total - (entitlement.taken || 0) - (entitlement.pending || 0);
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
 
     await entitlement.save();
 
@@ -1850,8 +2444,8 @@ export class LeavesService {
     if (balanceCheck.requiresConversion) {
       throw new BadRequestException(
         `Insufficient paid leave balance. Requested ${requestedDays} day(s) but only ` +
-          `${balanceCheck.paidDays} day(s) available. Convert ${balanceCheck.unpaidDays} ` +
-          'day(s) to unpaid leave to proceed.',
+        `${balanceCheck.paidDays} day(s) available. Convert ${balanceCheck.unpaidDays} ` +
+        'day(s) to unpaid leave to proceed.',
       );
     }
 
@@ -1948,12 +2542,12 @@ export class LeavesService {
   }
 
   /**
-     * REQ-005, REQ-023: Calculate net leave days excluding weekends and holidays
-     * BR-23: Leave duration calculated net of non-working days
-     * BR-33: Public holidays excluded from leave count
-     *
+   * REQ-005, REQ-023: Calculate net leave days excluding weekends and holidays
+   * BR-23: Leave duration calculated net of non-working days
+   * BR-33: Public holidays excluded from leave count
+   *
 
-     */
+   */
   async calculateNetLeaveDays(
     employeeId: string,
     from: Date,
@@ -2092,10 +2686,8 @@ export class LeavesService {
     entitlement.pending = Math.max(0, entitlement.pending - days);
     entitlement.taken += days;
 
-    // Recalculate remaining
-    const total =
-      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
-    entitlement.remaining = total - entitlement.taken - entitlement.pending;
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
 
     // BR-48: Prevent negative balance
     if (entitlement.remaining < 0) {
@@ -2144,10 +2736,52 @@ export class LeavesService {
 
     entitlement.pending = Math.max(0, entitlement.pending - days);
 
-    // Recalculate remaining
-    const total =
-      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
-    entitlement.remaining = total - entitlement.taken - entitlement.pending;
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
+
+    await entitlement.save();
+  }
+
+  /**
+   * Return deducted balance when overriding APPROVED -> REJECTED
+   * Moves days from 'taken' back to 'remaining'
+   */
+  private async returnDeductedBalance(
+    employeeId: string,
+    leaveTypeId: string,
+    days: number,
+  ): Promise<void> {
+    if (
+      !Types.ObjectId.isValid(employeeId) ||
+      !Types.ObjectId.isValid(leaveTypeId)
+    ) {
+      throw new BadRequestException('Invalid ID format');
+    }
+
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    if (!leaveType) {
+      throw new NotFoundException('Leave type not found');
+    }
+
+    // Skip for unpaid leave types
+    if (!leaveType.paid) {
+      return;
+    }
+
+    const entitlement = await this.leaveEntitlementModel.findOne({
+      employeeId,
+      leaveTypeId,
+    });
+
+    if (!entitlement) {
+      throw new NotFoundException('Leave entitlement not found');
+    }
+
+    // Return days from 'taken' to available balance
+    entitlement.taken = Math.max(0, entitlement.taken - days);
+
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
 
     await entitlement.save();
   }
@@ -2238,10 +2872,8 @@ export class LeavesService {
 
     entitlement.pending += days;
 
-    // Recalculate remaining
-    const total =
-      (entitlement.yearlyEntitlement || 0) + (entitlement.carryForward || 0);
-    entitlement.remaining = total - entitlement.taken - entitlement.pending;
+    // Recalculate remaining using helper method
+    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
 
     await entitlement.save();
   }
@@ -2313,11 +2945,11 @@ export class LeavesService {
     const deptFilter = departmentId
       ? new Types.ObjectId(departmentId)
       : managerProfile.primaryDepartmentId;
-    // If departmentId parameter is provided → convert it to Types.ObjectId and use that.
-    // Otherwise use managerProfile.primaryDepartmentId.  
+    // If departmentId parameter is provided - convert it to Types.ObjectId and use that.
+    // Otherwise use managerProfile.primaryDepartmentId.
 
     const query: any = { _id: { $ne: new Types.ObjectId(managerId) } };
-    // Find all employees whose _id is NOT equal to the manager’s ID.
+    // Find all employees whose _id is NOT equal to the managerâs ID.
     const or: any[] = [];
 
     if (managerProfile.primaryPositionId) {
@@ -2407,6 +3039,7 @@ export class LeavesService {
     options?: { overlappingOnly?: boolean },
   ): Promise<{
     requests: LeaveRequest[];
+    allRequests: LeaveRequest[];
     overlaps: { requestA: string; requestB: string }[];
   }> {
     if (!Types.ObjectId.isValid(managerId)) {
@@ -2435,6 +3068,10 @@ export class LeavesService {
 
     const managerPositionId = (managerAssignment.positionId as any)?._id;
 
+    console.log(
+      `[Overlap Debug] Manager ID: ${managerId}, Manager Position ID: ${managerPositionId}`,
+    );
+
     const teamAssignments = await this.positionAssignmentModel
       .find({
         startDate: { $lte: now },
@@ -2448,19 +3085,81 @@ export class LeavesService {
       .lean()
       .exec();
 
+    console.log(
+      `[Overlap Debug] Total active assignments found: ${teamAssignments.length}`,
+    );
+
     const teamMemberIds = teamAssignments
-      .filter((a) =>
-        (a.positionId as any)?.reportsToPositionId?.equals(managerPositionId),
-      )
+      .filter((a) => {
+        const positionReportsTo = (a.positionId as any)?.reportsToPositionId;
+        if (!positionReportsTo) return false;
+
+        // Compare ObjectIds as strings since we're using .lean()
+        const reportsToId = positionReportsTo.toString();
+        const managerId = managerPositionId.toString();
+        const matches = reportsToId === managerId;
+
+        if (matches) {
+          console.log(
+            `[Overlap Debug] Found team member: ${(a.employeeProfileId as Types.ObjectId).toString()}`,
+          );
+        }
+
+        return matches;
+      })
       .map((a) => (a.employeeProfileId as Types.ObjectId).toString());
 
+    console.log(
+      `[Overlap Debug] Team member IDs found: ${teamMemberIds.length}`,
+      teamMemberIds,
+    );
+
     if (!teamMemberIds.length) {
-      return { requests: [], overlaps: [] };
+      console.log('[Overlap Debug] No team members found - returning empty');
+      return { requests: [], allRequests: [], overlaps: [] };
     }
 
+    // Fetch both pending and approved requests
+    // First, let's check what pending requests exist for debugging
+    const allPendingInDB = await this.leaveRequestModel
+      .find({ status: LeaveStatus.PENDING })
+      .select('employeeId status dates')
+      .lean()
+      .exec();
+
+    console.log(
+      `[Overlap Debug] Total pending requests in DB: ${allPendingInDB.length}`,
+    );
+    allPendingInDB.forEach((req) => {
+      console.log(
+        `[Overlap Debug]   - Request employeeId: ${req.employeeId}, Status: ${req.status}`,
+      );
+    });
+
+    // Try querying without ObjectId conversion first
+    const testQuery = await this.leaveRequestModel
+      .find({
+        status: LeaveStatus.PENDING,
+      })
+      .lean()
+      .exec();
+
+    console.log('[Overlap Debug] All pending (no filter):', testQuery.length);
+
+    // Now try with string IDs directly
     const pendingRequests = await this.leaveRequestModel
       .find({
         status: LeaveStatus.PENDING,
+        employeeId: { $in: teamMemberIds },
+      })
+      .populate('employeeId')
+      .populate('leaveTypeId')
+      .lean()
+      .exec();
+
+    const approvedRequests = await this.leaveRequestModel
+      .find({
+        status: LeaveStatus.APPROVED,
         employeeId: { $in: teamMemberIds.map((id) => new Types.ObjectId(id)) },
       })
       .populate('employeeId')
@@ -2468,24 +3167,82 @@ export class LeavesService {
       .lean()
       .exec();
 
+    console.log(
+      `[Overlap Debug] Pending requests found: ${pendingRequests.length}`,
+    );
+    console.log(
+      `[Overlap Debug] Approved requests found: ${approvedRequests.length}`,
+    );
+
     const overlaps: { requestA: string; requestB: string }[] = [];
     const overlappingIds = new Set<string>();
 
+    // Check overlaps between pending requests
     for (let i = 0; i < pendingRequests.length; i++) {
       for (let j = i + 1; j < pendingRequests.length; j++) {
         const a = pendingRequests[i];
         const b = pendingRequests[j];
-        if (
-          a.dates.from <= b.dates.to &&
-          a.dates.to >= b.dates.from &&
-          a.employeeId.toString() !== b.employeeId.toString()
-        ) {
+
+        // Convert dates to Date objects for comparison
+        const aFrom = new Date(a.dates.from);
+        const aTo = new Date(a.dates.to);
+        const bFrom = new Date(b.dates.from);
+        const bTo = new Date(b.dates.to);
+
+        // Log for debugging
+        console.log(
+          `Comparing: ${(a.employeeId as any)?.firstName || a.employeeId} (${aFrom.toISOString()} - ${aTo.toISOString()}) ` +
+            `vs ${(b.employeeId as any)?.firstName || b.employeeId} (${bFrom.toISOString()} - ${bTo.toISOString()})`,
+        );
+
+        // Check if dates overlap
+        const datesOverlap = aFrom <= bTo && aTo >= bFrom;
+
+        // When employeeId is populated, it's an object with _id field
+        const aEmployeeId = (a.employeeId as any)?._id?.toString() || a.employeeId.toString();
+        const bEmployeeId = (b.employeeId as any)?._id?.toString() || b.employeeId.toString();
+        const differentEmployees = aEmployeeId !== bEmployeeId;
+
+        console.log(
+          `  Employee IDs: ${aEmployeeId} vs ${bEmployeeId}`,
+        );
+        console.log(
+          `  Dates overlap: ${datesOverlap}, Different employees: ${differentEmployees}`,
+        );
+
+        if (datesOverlap && differentEmployees) {
           overlaps.push({
             requestA: a._id.toString(),
             requestB: b._id.toString(),
           });
           overlappingIds.add(a._id.toString());
           overlappingIds.add(b._id.toString());
+          console.log(`  ✓ OVERLAP DETECTED`);
+        }
+      }
+    }
+
+    // Check overlaps between pending and approved requests
+    for (const pending of pendingRequests) {
+      for (const approved of approvedRequests) {
+        const pendingFrom = new Date(pending.dates.from);
+        const pendingTo = new Date(pending.dates.to);
+        const approvedFrom = new Date(approved.dates.from);
+        const approvedTo = new Date(approved.dates.to);
+
+        const datesOverlap = pendingFrom <= approvedTo && pendingTo >= approvedFrom;
+
+        // When employeeId is populated, it's an object with _id field
+        const pendingEmployeeId = (pending.employeeId as any)?._id?.toString() || pending.employeeId.toString();
+        const approvedEmployeeId = (approved.employeeId as any)?._id?.toString() || approved.employeeId.toString();
+        const differentEmployees = pendingEmployeeId !== approvedEmployeeId;
+
+        if (datesOverlap && differentEmployees) {
+          overlaps.push({
+            requestA: pending._id.toString(),
+            requestB: approved._id.toString(),
+          });
+          overlappingIds.add(pending._id.toString());
         }
       }
     }
@@ -2494,7 +3251,14 @@ export class LeavesService {
       ? pendingRequests.filter((r) => overlappingIds.has(r._id.toString()))
       : pendingRequests;
 
-    return { requests: filteredRequests as any, overlaps };
+    // Include all requests (pending + approved) in the response for full context
+    const allRequests = [...pendingRequests, ...approvedRequests];
+
+    return {
+      requests: filteredRequests as any,
+      allRequests: allRequests as any,
+      overlaps,
+    };
   }
 
   /**
@@ -2629,7 +3393,7 @@ export class LeavesService {
       unusedDays,
       dailySalaryRate,
       encashmentAmount,
-      formula: `Daily Salary Rate × Unused Days (capped at 30) = ${dailySalaryRate} × ${unusedDays} = ${encashmentAmount}`,
+      formula: `Daily Salary Rate Ã Unused Days (capped at 30) = ${dailySalaryRate} Ã ${unusedDays} = ${encashmentAmount}`,
     };
   }
 
@@ -2954,7 +3718,7 @@ export class LeavesService {
           const days =
             Math.ceil(
               (overlapEnd.getTime() - overlapStart.getTime()) /
-                (1000 * 60 * 60 * 24),
+              (1000 * 60 * 60 * 24),
             ) + 1;
           suspensionDays += days;
         }
@@ -2985,7 +3749,7 @@ export class LeavesService {
           const days =
             Math.ceil(
               (leaveEnd.getTime() - leaveStart.getTime()) /
-                (1000 * 60 * 60 * 24),
+              (1000 * 60 * 60 * 24),
             ) + 1;
           unpaidDays += days;
         }
@@ -3075,12 +3839,12 @@ export class LeavesService {
     // Calculate based on accrual method
     switch (policy.accrualMethod) {
       case AccrualMethod.MONTHLY:
-        // Monthly accrual = eligible months × monthly rate
+        // Monthly accrual = eligible months Ã monthly rate
         accruedActual = eligibleMonths * (policy.monthlyRate || 0);
         break;
 
-      case 'per-term': // Treat as QUARTERLY
-        // Quarterly accrual = eligible quarters × (monthly rate × 3)
+      case AccrualMethod.PER_TERM: // Treat as QUARTERLY
+        // Quarterly accrual = eligible quarters Ã (monthly rate Ã 3)
         const eligibleQuarters = Math.floor(eligibleMonths / 3);
         accruedActual = eligibleQuarters * (policy.monthlyRate || 0) * 3;
         break;
@@ -3163,11 +3927,49 @@ export class LeavesService {
           (accrualType === 'monthly' &&
             policy.accrualMethod === AccrualMethod.MONTHLY) ||
           (accrualType === 'quarterly' &&
-            policy.accrualMethod === 'per-term') ||
+            policy.accrualMethod === AccrualMethod.PER_TERM) ||
           (accrualType === 'yearly' &&
             policy.accrualMethod === AccrualMethod.YEARLY);
 
         if (!shouldProcess) continue;
+
+        // Validate employee status - skip if not active
+        const employee = await this.employeeProfileModel
+          .findById(employeeId)
+          .select('status')
+          .lean()
+          .exec();
+
+        if (!employee) {
+          this.logger.warn(
+            `Employee ${employeeId} not found during accrual processing`,
+          );
+          failed.push({
+            employeeId,
+            error: 'Employee not found',
+          });
+          continue;
+        }
+
+        if (employee.status !== EmployeeStatus.ACTIVE) {
+          this.logger.log(
+            `Skipping accrual for employee ${employeeId}: status is ${employee.status}`,
+          );
+          continue;
+        }
+
+        // Re-validate eligibility before processing
+        const validation = await this.validateEmployeeEligibility(
+          employeeId,
+          leaveTypeId,
+        );
+        if (!validation.eligible) {
+          this.logger.warn(
+            `Skipping accrual for employee ${employeeId}, leave type ${leaveTypeId}: ` +
+              `no longer eligible. Reasons: ${validation.reasons.join('; ')}`,
+          );
+          continue;
+        }
 
         // Calculate accrual
         const accrual = await this.calculateAccrualForEmployee(
@@ -3182,10 +3984,18 @@ export class LeavesService {
           (entitlement.accruedActual || 0) + accrual.actual;
         entitlement.accruedRounded =
           (entitlement.accruedRounded || 0) + accrual.rounded;
+
+        // Calculate remaining based on accrual method
+        // For YEARLY accrual: use yearlyEntitlement (upfront allocation)
+        // For MONTHLY/QUARTERLY: use accruedRounded (incremental accrual)
+        const baseAllowance =
+          policy.accrualMethod === AccrualMethod.YEARLY
+            ? entitlement.yearlyEntitlement || 0
+            : entitlement.accruedRounded || 0;
+
         entitlement.remaining =
-          (entitlement.yearlyEntitlement || 0) +
           (entitlement.carryForward || 0) +
-          entitlement.accruedRounded -
+          baseAllowance -
           (entitlement.taken || 0) -
           (entitlement.pending || 0);
         entitlement.lastAccrualDate = now;
@@ -3421,51 +4231,63 @@ export class LeavesService {
 
   /**
    * REQ-020: Get employee's manager from Organization Structure
-   * Employee → PositionAssignment → Position → reportsToPositionId → find employee in that position
+   * Employee - PositionAssignment - Position - reportsToPositionId - find employee in that position
    */
   private async getEmployeeManagerId(
     employeeId: string,
   ): Promise<string | null> {
-    // Step 1: Get employee's current position assignment
-    const assignment = await this.positionAssignmentModel
-      .findOne({
-        employeeProfileId: new Types.ObjectId(employeeId),
-        startDate: { $lte: new Date() },
-        $or: [
-          { endDate: { $exists: false } },
-          { endDate: { $gte: new Date() } },
-        ],
-      })
-      .populate('positionId');
+    const now = new Date();
+    let departmentId: Types.ObjectId | string | undefined;
 
-    if (!assignment || !assignment.positionId) {
-      this.logger.warn(`No active position found for employee ${employeeId}`);
-      return null;
-    }
+    // Step 1: Active assignment (preferred source of truth)
+    const assignment = await this.findActiveAssignmentByEmployee(employeeId, now);
+    let position: any = assignment?.positionId;
+    departmentId = assignment?.departmentId;
 
-    const position = assignment.positionId as any;
-
-    // Step 2: Get the reportsToPositionId (manager's position)
-    if (!position.reportsToPositionId) {
-      this.logger.warn(`Position ${position._id} has no reportsToPositionId`);
-      return null;
-    }
-
-    // Step 3: Find who is currently in the manager position
-    const managerAssignment = await this.positionAssignmentModel.findOne({
-      positionId: position.reportsToPositionId,
-      startDate: { $lte: new Date() },
-      $or: [{ endDate: { $exists: false } }, { endDate: { $gte: new Date() } }],
-    });
-
-    if (!managerAssignment) {
-      this.logger.warn(
-        `No one assigned to manager position ${position.reportsToPositionId}`,
+    if (position?.reportsToPositionId) {
+      const manager = await this.findActiveOccupantByPosition(
+        position.reportsToPositionId,
+        now,
       );
-      return null;
+      if (manager) return manager;
     }
 
-    return managerAssignment.employeeProfileId.toString();
+    // Step 2: Supervisor explicitly set on profile
+    const profileOrg = await this.getEmployeeProfileOrgLinks(employeeId);
+    if (profileOrg?.supervisorPositionId) {
+      const manager = await this.findActiveOccupantByPosition(
+        profileOrg.supervisorPositionId,
+        now,
+      );
+      if (manager) return manager;
+    }
+
+    // Step 3: Primary position -> reportsTo chain
+    if (!position && profileOrg?.primaryPositionId) {
+      position = await this.getPositionById(profileOrg.primaryPositionId);
+    }
+    if (position?.reportsToPositionId) {
+      const manager = await this.findActiveOccupantByPosition(
+        position.reportsToPositionId,
+        now,
+      );
+      if (manager) return manager;
+    }
+
+    // Step 4: Department head as last resort
+    if (!departmentId) {
+      departmentId =
+        profileOrg?.primaryDepartmentId ||
+        (position as any)?.departmentId ||
+        undefined;
+    }
+    const deptHead = await this.resolveDepartmentHeadOccupant(departmentId, now);
+    if (deptHead) return deptHead;
+
+    this.logger.warn(
+      `No manager found for employee ${employeeId} via assignment, profile, or department head`,
+    );
+    return null;
   }
 
   /**
@@ -3495,92 +4317,101 @@ export class LeavesService {
   async isUserAuthorizedToApprove(
     request: LeaveRequest,
     userId: string,
+    targetRole?: string, // The specific role the user is trying to approve
   ): Promise<boolean> {
+    console.log('[Authorization Debug] Starting authorization check:', {
+      userId,
+      targetRole,
+      approvalFlow: request.approvalFlow,
+    });
+
     if (!Types.ObjectId.isValid(userId)) {
+      console.log('[Authorization Debug] Invalid userId');
       return false;
     }
 
-    // Find first pending step
-    const currentStep = request.approvalFlow.find(
-      (s) => s.status === 'pending',
-    );
+    // If targetRole is provided, check authorization for that specific step
+    // Otherwise, check the first pending step (backward compatibility)
+    const currentStep = targetRole
+      ? request.approvalFlow.find((s) => s.role === targetRole && s.status === 'pending')
+      : request.approvalFlow.find((s) => s.status === 'pending');
+
+    console.log('[Authorization Debug] Found step:', currentStep);
+
     if (!currentStep) {
+      console.log('[Authorization Debug] No pending step found for role:', targetRole);
       return false;
     }
 
     const now = new Date();
 
-    // Quick HR role check (access profile -> roles array)
+    // Extract employeeId once for reuse
+    // Handle both populated (object with _id) and non-populated (ObjectId or string) cases
+    const employeeId =
+      (request.employeeId as any)?._id?.toString?.() ||  // Populated: extract _id
+      (request.employeeId as any)?.toString?.() ||       // ObjectId: convert to string
+      (request.employeeId as any);                       // Already a string
+
+    console.log('[Authorization Debug] employeeId:', employeeId);
+
+    if (!Types.ObjectId.isValid(employeeId)) {
+      console.log('[Authorization Debug] Invalid employeeId');
+      return false;
+    }
+
+    // Quick HR role check - query EmployeeSystemRole collection
     const hasHrRole = async (): Promise<boolean> => {
-      const profile = await this.employeeProfileModel
-        .findById(userId)
-        .populate('accessProfileId')
-        .lean()
-        .exec();
+      // Query the employee_system_roles collection instead of accessProfileId
+      const systemRoleDoc = await this.employeeProfileModel.db
+        .collection('employee_system_roles')
+        .findOne({ employeeProfileId: new Types.ObjectId(userId) });
 
-      const roles =
-        ((profile as any)?.accessProfileId?.roles as SystemRole[]) || [];
+      console.log('[hasHrRole Debug] System role document:', {
+        userId,
+        systemRoleDoc,
+      });
 
-      return roles.some((role) =>
+      const roles = (systemRoleDoc?.roles as SystemRole[]) || [];
+
+      console.log('[hasHrRole Debug] Roles found:', roles);
+
+      const hasRole = roles.some((role) =>
         [
           SystemRole.HR_ADMIN,
           SystemRole.HR_MANAGER,
           SystemRole.HR_EMPLOYEE,
         ].includes(role),
       );
+
+      console.log('[hasHrRole Debug] Has HR role:', hasRole);
+
+      return hasRole;
     };
 
     // Check if user sits anywhere in the employee's manager chain via reportsToPositionId
     const isInReportingChain = async (): Promise<boolean> => {
-      const employeeId =
-        (request.employeeId as any)?.toString?.() || (request.employeeId as any);
-
-      if (!Types.ObjectId.isValid(employeeId)) {
-        return false;
-      }
-
-      // Get the employee's active position assignment and follow its manager chain
-      const employeeAssignment = await this.positionAssignmentModel
-        .findOne({
-          employeeProfileId: new Types.ObjectId(employeeId),
-          startDate: { $lte: now },
-          $or: [
-            { endDate: { $exists: false } },
-            { endDate: null },
-            { endDate: { $gte: now } },
-          ],
-        })
-        .populate('positionId')
-        .lean()
-        .exec();
-
       const managerPositionIds: string[] = [];
-      let currentPosition = employeeAssignment?.positionId as any;
+      // Start from employee's current position (assignment preferred, profile fallback)
+      let currentPositionId =
+        (await this.getEmployeeCurrentPositionId(employeeId, now)) || null;
 
       // Walk up the reports-to chain collecting manager positions
-      while (currentPosition?.reportsToPositionId) {
-        const managerPositionId = currentPosition.reportsToPositionId.toString();
+      while (currentPositionId) {
+        const position = await this.getPositionById(currentPositionId);
+        if (!position?.reportsToPositionId) break;
+        const managerPositionId = position.reportsToPositionId.toString();
         managerPositionIds.push(managerPositionId);
-
-        const managerAssignment = await this.positionAssignmentModel
-          .findOne({
-            positionId: new Types.ObjectId(managerPositionId),
-            startDate: { $lte: now },
-            $or: [
-              { endDate: { $exists: false } },
-              { endDate: null },
-              { endDate: { $gte: now } },
-            ],
-          })
-          .populate('positionId')
-          .lean()
-          .exec();
-
-        currentPosition = managerAssignment?.positionId as any;
+        currentPositionId = managerPositionId;
       }
 
+      // Fallback: department head if no positional chain
       if (!managerPositionIds.length) {
-        return false;
+        const profileOrg = await this.getEmployeeProfileOrgLinks(employeeId);
+        const deptHead = await this.resolveDepartmentHeadOccupant(
+          profileOrg?.primaryDepartmentId,
+          now,
+        );
+        return deptHead === userId;
       }
 
       // Does the user hold any of those manager positions (at any level)?
@@ -3600,30 +4431,63 @@ export class LeavesService {
         .lean()
         .exec();
 
-      return Boolean(userAssignment);
+      if (userAssignment) return true;
+
+      // Or user holds the manager position via primaryPositionId (profile fallback)
+      const userProfileOrg = await this.getEmployeeProfileOrgLinks(userId);
+      if (
+        userProfileOrg?.primaryPositionId &&
+        managerPositionIds.includes(userProfileOrg.primaryPositionId.toString())
+      ) {
+        return true;
+      }
+
+      // Lastly, user is the department head of employee's department
+      const profileOrg = await this.getEmployeeProfileOrgLinks(employeeId);
+      const deptHead = await this.resolveDepartmentHeadOccupant(
+        profileOrg?.primaryDepartmentId,
+        now,
+      );
+      return deptHead === userId;
     };
 
-    const [hrRole, managerInChain] = await Promise.all([
+    const [hrRole, managerInChain, isDeptHead] = await Promise.all([
       hasHrRole(),
       isInReportingChain(),
+      this.isDeptHeadForEmployee(userId, employeeId),
     ]);
+
+    // DEBUG: Log authorization checks
+    console.log('[Authorization Debug]', {
+      userId,
+      employeeId,
+      targetRole,
+      currentStepRole: currentStep.role,
+      hrRole,
+      managerInChain,
+      isDeptHead,
+    });
 
     // Manager step: user must be in reporting chain or HR override
     if (currentStep.role === 'Manager') {
-      return managerInChain || hrRole;
+      const authorized = managerInChain || hrRole || isDeptHead;
+      console.log('[Authorization Debug] Manager step authorization:', authorized);
+      return authorized;
     }
 
     // HR step: check if user has HR role
     if (currentStep.role === 'HR') {
+      console.log('[Authorization Debug] HR step authorization:', hrRole);
       return hrRole;
     }
 
+    console.log('[Authorization Debug] No matching step role');
     return false;
   }
 
   /**
    * BR-28: Escalate to next level using Organization Structure
-   * currentManagerId → Position → reportsToPositionId → employee in that position
+   * currentManagerId - Position - reportsToPositionId - employee in that position
    */
   private async escalateToNextLevel(
     currentManagerId: string,
@@ -3770,22 +4634,26 @@ export class LeavesService {
   ): Promise<LeaveRequest> {
     const request = await this.leaveRequestModel
       .findById(requestId)
-      .populate('leaveTypeId');
+      .populate('leaveTypeId')
+      .populate('employeeId');
 
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
 
-    // if (request.status !== LeaveStatus.PENDING) {
-    //   throw new BadRequestException('Can only override pending requests');
-    // }
+    // Extract IDs properly (handle populated fields)
+    const employeeIdStr = (request.employeeId as any)?._id?.toString() || (request.employeeId as any)?.toString();
+    const leaveTypeIdStr = (request.leaveTypeId as any)?._id?.toString() || (request.leaveTypeId as any)?.toString();
+
+    // Store previous status for balance tracking
+    const wasStatus = request.status;
 
     const now = new Date();
 
     if (decision === 'approve') {
       // Approve all pending steps
       for (const step of request.approvalFlow) {
-        if (step.status !== decision) {
+        if (step.status !== 'approved') {
           step.status = 'approved';
           step.decidedBy = new Types.ObjectId(hrAdminId);
           step.decidedAt = now;
@@ -3793,25 +4661,14 @@ export class LeavesService {
       }
 
       request.status = LeaveStatus.APPROVED;
-
-      // Deduct balance (only for paid leave)
-      const leaveType = request.leaveTypeId as any;
-      if (leaveType.paid) {
-        await this.deductFromBalance(
-          request.employeeId.toString(),
-          request.leaveTypeId.toString(),
-          request.durationDays,
-        );
-      }
     } else {
-      // Reject
-      const currentStep = request.approvalFlow.find(
-        (s) => s.status === 'pending',
-      );
-      if (currentStep) {
-        currentStep.status = 'rejected';
-        currentStep.decidedBy = new Types.ObjectId(hrAdminId);
-        currentStep.decidedAt = now;
+      // Reject - update all pending steps to rejected
+      for (const step of request.approvalFlow) {
+        if (step.status === 'pending') {
+          step.status = 'rejected';
+          step.decidedBy = new Types.ObjectId(hrAdminId);
+          step.decidedAt = now;
+        }
       }
 
       request.status = LeaveStatus.REJECTED;
@@ -3819,10 +4676,49 @@ export class LeavesService {
 
     const saved = await request.save();
 
+    // Balance handling based on status transitions
+    if (wasStatus !== LeaveStatus.APPROVED && saved.status === LeaveStatus.APPROVED) {
+      // Transitioning to APPROVED - deduct balance
+      await this.deductFromBalance(
+        employeeIdStr,
+        leaveTypeIdStr,
+        request.durationDays,
+      );
+
+      // Sync with payroll
+      await this.syncLeaveApprovalWithPayroll(
+        employeeIdStr,
+        leaveTypeIdStr,
+        request.durationDays,
+        request.dates.from,
+        request.dates.to,
+      );
+    } else if (
+      wasStatus === LeaveStatus.PENDING &&
+      saved.status === LeaveStatus.REJECTED
+    ) {
+      // Transitioning from PENDING to REJECTED - release pending balance
+      await this.releasePendingBalance(
+        employeeIdStr,
+        leaveTypeIdStr,
+        request.durationDays,
+      );
+    } else if (
+      wasStatus === LeaveStatus.APPROVED &&
+      saved.status === LeaveStatus.REJECTED
+    ) {
+      // Transitioning from APPROVED to REJECTED - return deducted balance to available
+      await this.returnDeductedBalance(
+        employeeIdStr,
+        leaveTypeIdStr,
+        request.durationDays,
+      );
+    }
+
     await this.logNotification(
-      request.employeeId.toString(),
-      `LEAVE_${request.status.toUpperCase()}`,
-      `Your leave request was ${request.status} by HR override`,
+      employeeIdStr,
+      `LEAVE_${saved.status.toUpperCase()}`,
+      `Your leave request was ${saved.status} by HR override: ${justification}`,
     );
 
     const managerStep = request.approvalFlow.find((f) => f.role === 'Manager');
@@ -3830,10 +4726,144 @@ export class LeavesService {
     if (managerId) {
       await this.logNotification(
         managerId,
-        `LEAVE_${request.status.toUpperCase()}_NOTIFY`,
-        `Leave request for employee ${request.employeeId.toString()} ${request.status} by HR override`,
+        `LEAVE_${saved.status.toUpperCase()}_NOTIFY`,
+        `Leave request for employee ${employeeIdStr} ${saved.status} by HR override`,
       );
     }
+
+    return saved;
+  }
+
+  /**
+   * Update approval workflow for a leave request
+   * Allows HR Admin to modify the approval flow steps, roles, and decisions
+   *
+   * @param requestId ID of the leave request
+   * @param approvalFlow Updated approval flow steps
+   * @param hrAdminId ID of the HR Admin making the change
+   * @returns Updated leave request
+   * @access HR Admin only
+   */
+  async updateApprovalFlow(
+    requestId: string,
+    approvalFlow: {
+      role: string;
+      status: string;
+      decidedBy?: string;
+      decidedAt?: Date;
+    }[],
+    hrAdminId: string,
+  ): Promise<LeaveRequest> {
+    // Validate request ID
+    if (!Types.ObjectId.isValid(requestId)) {
+      throw new BadRequestException('Invalid request ID format');
+    }
+
+    // Fetch the leave request
+    const request = await this.leaveRequestModel
+      .findById(requestId)
+      .populate('leaveTypeId')
+      .exec();
+
+    if (!request) {
+      throw new NotFoundException('Leave request not found');
+    }
+
+    // Validate approval flow steps
+    if (!approvalFlow || approvalFlow.length === 0) {
+      throw new BadRequestException(
+        'Approval flow must contain at least one step',
+      );
+    }
+
+    // Validate decidedBy IDs
+    for (const step of approvalFlow) {
+      if (step.decidedBy && !Types.ObjectId.isValid(step.decidedBy)) {
+        throw new BadRequestException(
+          `Invalid decidedBy ID format: ${step.decidedBy}`,
+        );
+      }
+    }
+
+    // Store old approval flow for audit logging
+    const oldApprovalFlow = JSON.parse(JSON.stringify(request.approvalFlow));
+
+    // Update approval flow
+    request.approvalFlow = approvalFlow.map((step) => ({
+      role: step.role,
+      status: step.status,
+      decidedBy: step.decidedBy
+        ? new Types.ObjectId(step.decidedBy)
+        : undefined,
+      decidedAt: step.decidedAt ? new Date(step.decidedAt) : undefined,
+    }));
+
+    // Recalculate overall status based on updated approval flow
+    const hasRejected = request.approvalFlow.some((s) => s.status === 'rejected');
+    const allApproved = request.approvalFlow.every((s) => s.status === 'approved');
+
+    const oldStatus = request.status;
+
+    if (hasRejected) {
+      request.status = LeaveStatus.REJECTED;
+
+      // If status changed from approved to rejected, release the balance
+      if (oldStatus === LeaveStatus.APPROVED) {
+        const leaveType = request.leaveTypeId as any;
+        if (leaveType.paid) {
+          await this.releasePendingBalance(
+            request.employeeId.toString(),
+            request.leaveTypeId.toString(),
+            request.durationDays,
+          );
+        }
+      }
+    } else if (allApproved) {
+      request.status = LeaveStatus.APPROVED;
+
+      // If status changed from pending/rejected to approved, deduct balance
+      if (oldStatus !== LeaveStatus.APPROVED) {
+        const leaveType = request.leaveTypeId as any;
+        if (leaveType.paid) {
+          await this.deductFromBalance(
+            request.employeeId.toString(),
+            request.leaveTypeId.toString(),
+            request.durationDays,
+          );
+        }
+      }
+    } else {
+      request.status = LeaveStatus.PENDING;
+
+      // If status changed from approved to pending, release the balance
+      if (oldStatus === LeaveStatus.APPROVED) {
+        const leaveType = request.leaveTypeId as any;
+        if (leaveType.paid) {
+          await this.releasePendingBalance(
+            request.employeeId.toString(),
+            request.leaveTypeId.toString(),
+            request.durationDays,
+          );
+        }
+      }
+    }
+
+    const saved = await request.save();
+
+    // Log notification to employee if status changed
+    if (oldStatus !== saved.status) {
+      await this.logNotification(
+        request.employeeId.toString(),
+        `LEAVE_${saved.status.toUpperCase()}`,
+        `Your leave request status changed to ${saved.status} due to approval flow update by HR Admin`,
+      );
+    }
+
+    // Log audit trail
+    this.logger.log(
+      `HR Admin ${hrAdminId} updated approval flow for request ${requestId}. ` +
+        `Status changed from ${oldStatus} to ${saved.status}`,
+    );
 
     return saved;
   }
@@ -3964,7 +4994,7 @@ export class LeavesService {
 
   /**
    * Add unpaid leave deduction to payroll
-   * Formula: (Base Salary / Work Days in Month) × Unpaid Leave Days
+   * Formula: (Base Salary / Work Days in Month) Ã Unpaid Leave Days
    * @param employeeId Employee ID
    * @param unpaidDays Number of unpaid leave days
    * @param fromDate Leave start date
@@ -3989,7 +5019,7 @@ export class LeavesService {
       // Calculate work days in the month (typically 22-23 working days)
       const workDaysInMonth = this.getWorkDaysInMonth(fromDate);
 
-      // Calculate deduction: (Base Salary / Work Days in Month) × Unpaid Leave Days
+      // Calculate deduction: (Base Salary / Work Days in Month) Ã Unpaid Leave Days
       const deductionAmount = (baseSalary / workDaysInMonth) * unpaidDays;
 
       // Find or create payslip for the current payroll period
@@ -4033,8 +5063,8 @@ export class LeavesService {
           );
           const previousPenaltyTotal = payslip.deductionsDetails.penalties.penalties.length > 1
             ? payslip.deductionsDetails.penalties.penalties[
-                payslip.deductionsDetails.penalties.penalties.length - 2
-              ]?.amount || 0
+          payslip.deductionsDetails.penalties.penalties.length - 2
+            ]?.amount || 0
             : 0;
           const totalDeductions =
             (payslip.totaDeductions || 0) +

@@ -34,6 +34,14 @@ import {
   EmployeeProfileSchema,
 } from '../employee-profile/models/employee-profile.schema';
 import {
+  Department,
+  DepartmentSchema,
+} from '../organization-structure/models/department.schema';
+import {
+  Position,
+  PositionSchema,
+} from '../organization-structure/models/position.schema';
+import {
   NotificationLog,
   NotificationLogSchema,
 } from '../time-management/models/notification-log.schema';
@@ -57,6 +65,8 @@ import { employeePayrollDetails, employeePayrollDetailsSchema } from '../payroll
       { name: Calendar.name, schema: CalendarSchema },
       { name: Attachment.name, schema: AttachmentSchema },
       { name: PositionAssignment.name, schema: PositionAssignmentSchema },
+      { name: Department.name, schema: DepartmentSchema },
+      { name: Position.name, schema: PositionSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
       { name: NotificationLog.name, schema: NotificationLogSchema },
       { name: Holiday.name, schema: HolidaySchema },

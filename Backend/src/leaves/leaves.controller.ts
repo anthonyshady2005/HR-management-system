@@ -61,12 +61,16 @@ import { UpdateLeaveRequestStatusDto } from './dto/update-leave-request-status.d
 import { LeaveRequestQueryDto } from './dto/leave-request-query.dto';
 import { LeaveRequestResponseDto } from './dto/leave-request-response.dto';
 import { HROverrideDto } from './dto/hr-override.dto';
+import { UpdateApprovalFlowDto } from './dto/update-approval-flow.dto';
 
 // Leave Entitlement DTOs
 import { CreateEntitlementDto } from './dto/create-entitlement.dto';
 import { UpdateBalanceDto } from './dto/update-balance.dto';
 import { LeaveEntitlementResponseDto } from './dto/leave-entitlement-response.dto';
 import { BalanceSummaryResponseDto } from './dto/balance-summary-response.dto';
+import { CreateBatchEntitlementDto } from './dto/create-batch-entitlement.dto';
+import { CreateGroupEntitlementDto } from './dto/create-group-entitlement.dto';
+import { BatchEntitlementResponseDto } from './dto/batch-entitlement-response.dto';
 
 // Leave Adjustment DTOs
 import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
@@ -94,9 +98,9 @@ import { HolidayType } from '../time-management/models/enums';
 
 @ApiTags('Leaves Management')
 @ApiBearerAuth()
-@Roles('department employee','HR Admin', 'HR Manager', 'System Admin','Department Head')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Controller('leaves')
+@Roles('department employee','HR Admin', 'HR Manager', 'System Admin','department head')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('leaves')
 export class LeavesController {
   // In-memory delegation Map (REQ-023)
   private delegations = new Map<string, string>();
@@ -186,7 +190,7 @@ export class LeavesController {
   }
 
   @Get('attachments/:id/download')
-  @Roles('department employee', 'Department Head', 'HR Manager', 'HR Admin')
+  @Roles('department employee', 'department head', 'HR Manager', 'HR Admin')
   @ApiOperation({
     summary: 'Download attachment file',
     description: 'Download the actual file',
@@ -634,7 +638,7 @@ export class LeavesController {
   }
 
   @Get('requests')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({
     summary: 'Get all leave requests',
     description:
@@ -687,8 +691,91 @@ export class LeavesController {
     description: 'Leave requests retrieved successfully',
     type: [LeaveRequestResponseDto],
   })
-  async getAllLeaveRequests(@Query() query: LeaveRequestQueryDto) {
-    return await this.leavesService.getAllLeaveRequests(query);
+  async getAllLeaveRequests(
+    @Query() query: LeaveRequestQueryDto,
+    @Request() req,
+  ) {
+    const roles = this.getUserRoles(req);
+    const isDeptHead = roles.includes('department head');
+    const isHrOrAdmin = roles.some((r) =>
+      ['hr admin', 'hr manager', 'system admin'].includes(r),
+    );
+
+    // department head visibility: restrict to their departments unless elevated role
+    let departmentFilter: string | string[] | undefined = query.departmentId;
+    if (isDeptHead && !isHrOrAdmin) {
+      const currentUserId = this.getCurrentUserId(req);
+      const headDepartments = await this.leavesService.getDepartmentsForHead(
+        currentUserId,
+      );
+      const headDepartmentIds = headDepartments.map((d) => d.id);
+      if (!headDepartmentIds.length) {
+        // No mapped departments; return empty result instead of 403 to avoid blocking dashboard
+        return [];
+      }
+
+      if (query.departmentId) {
+        if (!headDepartmentIds.includes(query.departmentId)) {
+          throw new ForbiddenException(
+            'Not authorized to view leave requests for this department',
+          );
+        }
+        departmentFilter = query.departmentId;
+      } else {
+        departmentFilter = headDepartmentIds;
+      }
+    }
+
+    return await this.leavesService.getAllLeaveRequests({
+      ...query,
+      departmentId: departmentFilter,
+    });
+  }
+
+  @Get('requests/head')
+  @Roles('department head')
+  @ApiOperation({
+    summary: 'Get leave requests for departments managed by current head',
+    description:
+      'Scopes results strictly to the departments this head manages. Additional filters are optional.',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by status',
+  })
+  @ApiQuery({
+    name: 'leaveTypeId',
+    required: false,
+    description: 'Filter by leave type ID',
+  })
+  async getHeadLeaveRequests(
+    @Query() query: LeaveRequestQueryDto,
+    @Request() req,
+  ) {
+    const currentUserId = this.getCurrentUserId(req);
+    const headDepartments = await this.leavesService.getDepartmentsForHead(
+      currentUserId,
+    );
+    const headDepartmentIds = headDepartments.map((d) => d.id);
+
+    if (!headDepartmentIds.length) {
+      return [];
+    }
+
+    return await this.leavesService.getAllLeaveRequests({
+      ...query,
+      departmentId: headDepartmentIds,
+    });
+  }
+
+  @Get('departments/head')
+  @Roles('department head', 'HR Admin', 'HR Manager', 'System Admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get departments managed by current head' })
+  async getDepartmentsForHead(@Request() req) {
+    const currentUserId = this.getCurrentUserId(req);
+    return await this.leavesService.getDepartmentsForHead(currentUserId);
   }
 
   @Get('requests/me')
@@ -696,7 +783,7 @@ export class LeavesController {
   @ApiOperation({
     summary: 'Get leave requests for current employee',
     description:
-      'Returns only the authenticated employee’s leave requests. Ignores any employeeId passed in the query.',
+      'Returns only the authenticated employee-s leave requests. Ignores any employeeId passed in the query.',
   })
   @ApiQuery({
     name: 'leaveTypeId',
@@ -747,7 +834,7 @@ export class LeavesController {
   }
 
   @Get('requests/:id')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({
     summary: 'Get leave request by ID',
     description: 'Retrieves a specific leave request with full details',
@@ -814,10 +901,35 @@ export class LeavesController {
   }
 
   @Patch('requests/:id/status')
-  @Roles('Manager', 'HR Admin', 'HR Manager')
+  @Roles('Manager', 'department head', 'HR Admin', 'HR Manager')
   @ApiOperation({
-    summary: 'Update leave request status',
-    description: 'Approves, rejects, or updates the status of a leave request',
+    summary: 'Approve or reject a leave request step',
+    description: `Approve or reject an individual approval step (Manager or HR) in the leave request workflow.
+
+**Workflow:**
+1. **Manager approval step:**
+   - Authorized users: Direct manager in reporting chain, department head, or HR roles
+   - If manager approves: Manager step → approved, Request status stays PENDING until HR also approves
+   - If manager rejects: Manager step → rejected, Request status → REJECTED (final)
+
+2. **HR approval step:**
+   - Authorized users: HR Admin, HR Manager, HR Employee
+   - If HR approves: HR step → approved, Request status becomes APPROVED if Manager already approved, otherwise stays PENDING
+   - If HR rejects: HR step → rejected, Request status → REJECTED (final)
+
+**Final Status Logic:**
+- Any rejection (Manager OR HR) → Request status = REJECTED (final)
+- Both steps approved → Request status = APPROVED (final)
+- Otherwise → Request status = PENDING (waiting for remaining approvals)
+
+**Authorization:**
+- System automatically checks if the current user is authorized for the pending approval step
+- Managers can act on Manager step, HR roles can act on HR step (or override Manager step)
+- Department heads can approve for employees in their managed departments
+
+**Balance Deduction:**
+- Balance is ONLY deducted when BOTH Manager and HR approve (overall status becomes APPROVED)
+- Rejections release pending balance back to available balance`,
   })
   @ApiParam({
     name: 'id',
@@ -827,13 +939,13 @@ export class LeavesController {
   @ApiBody({ type: UpdateLeaveRequestStatusDto })
   @ApiResponse({
     status: 200,
-    description: 'Leave request status updated successfully',
+    description: 'Leave request step updated successfully. Overall status calculated from approval flow.',
     type: LeaveRequestResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @ApiResponse({ status: 400, description: 'Invalid input data or approval step not found' })
   @ApiResponse({
     status: 403,
-    description: 'Not authorized to approve/reject this request',
+    description: 'Not authorized to approve/reject this request or step',
   })
   @ApiResponse({ status: 404, description: 'Leave request not found' })
   async updateLeaveRequestStatus(
@@ -843,13 +955,22 @@ export class LeavesController {
   ) {
     const currentUserId = this.getCurrentUserId(req);
 
-    // REQ-021/022: Check authorization
+    console.log('[Controller Debug] updateLeaveRequestStatus called:', {
+      requestId: id,
+      userId: currentUserId,
+      dto,
+    });
+
+    // REQ-021/022: Check authorization for the specific role being approved
     const request = await this.leavesService.getLeaveRequestById(id);
 
     const authorized = await this.leavesService.isUserAuthorizedToApprove(
       request,
       currentUserId,
+      dto.role, // Pass the role the user is trying to approve
     );
+
+    console.log('[Controller Debug] Authorization result:', authorized);
 
     if (!authorized) {
       throw new ForbiddenException(
@@ -861,6 +982,109 @@ export class LeavesController {
       ...dto,
       decidedBy: currentUserId,
     });
+  }
+
+  /**
+   * Bulk approve/reject multiple leave requests
+   */
+  @Post('requests/bulk-update')
+  @Roles('HR Manager', 'HR Admin', 'System Admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk approve or reject multiple leave requests (HR step only)',
+    description: `Process multiple leave requests at once for the HR approval step.
+
+**Important:**
+- This endpoint ONLY processes the HR approval step in the workflow
+- Does NOT override the approval workflow (unlike the override endpoint)
+- Follows the same rules as individual approval/rejection buttons
+- Cancelled requests cannot be approved or rejected
+
+**Features:**
+- Approve/reject multiple requests in a single operation
+- Each request is processed individually with proper error handling
+- Balance tracking is maintained for each request
+- Failed requests don't block successful ones
+- Detailed success/failure reporting
+
+**Use Cases:**
+- HR managers can efficiently process pending requests waiting for HR approval
+- Clear HR approval backlog after a holiday period`,
+  })
+  @ApiBody({
+    type: 'BulkUpdateRequestsDto',
+    description: 'Bulk update request data',
+    schema: {
+      type: 'object',
+      required: ['requestIds', 'status'],
+      properties: {
+        requestIds: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012'],
+          description: 'Array of leave request IDs to update',
+        },
+        status: {
+          type: 'string',
+          enum: ['approved', 'rejected'],
+          example: 'approved',
+          description: 'Decision to apply to all requests',
+        },
+        role: {
+          type: 'string',
+          example: 'HR',
+          description: 'Role of the approval step (automatically set to "HR" for bulk operations)',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Bulk update completed with detailed results',
+    schema: {
+      type: 'object',
+      properties: {
+        successCount: { type: 'number', example: 5 },
+        failedCount: { type: 'number', example: 2 },
+        successfulIds: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012'],
+        },
+        failures: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              requestId: { type: 'string' },
+              error: { type: 'string' },
+            },
+          },
+          example: [
+            {
+              requestId: '507f1f77bcf86cd799439013',
+              error: 'Request already approved',
+            },
+          ],
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @ApiResponse({ status: 403, description: 'Not authorized for bulk operations' })
+  async bulkUpdateRequests(
+    @Body() dto: any,
+    @Request() req,
+  ) {
+    const currentUserId = this.getCurrentUserId(req);
+
+    // Bulk operations ALWAYS apply to the HR step only
+    return await this.leavesService.bulkUpdateLeaveRequests(
+      dto.requestIds,
+      dto.status,
+      currentUserId,
+      'HR', // Force HR role for bulk operations
+    );
   }
 
   /**
@@ -899,6 +1123,62 @@ export class LeavesController {
       id,
       dto.decision,
       dto.justification,
+      req.user.id,
+    );
+  }
+
+  @Patch('requests/:id/approval-flow')
+  @Roles('HR Admin', 'System Admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update approval workflow for a leave request',
+    description: `Allows HR Admin to modify the approval flow steps for a leave request.
+
+This powerful endpoint enables HR Admin to:
+- Add, remove, or reorder approval steps
+- Change the status of any approval step (pending, approved, rejected)
+- Assign or change who approved/rejected each step
+- Update approval dates
+- Fix workflow errors or make corrections
+
+The system will automatically:
+- Recalculate the overall request status based on the approval flow
+- Adjust leave balances if status changes (approve/reject)
+- Notify the employee if the status changes
+- Log the change for audit purposes
+
+**Important Notes:**
+- The overall request status is derived from the approval flow:
+  - If any step is rejected → Request is REJECTED
+  - If all steps are approved → Request is APPROVED
+  - Otherwise → Request is PENDING
+- Balance adjustments happen automatically when status changes
+- All changes are logged for audit trail`,
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Leave request ID',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiBody({ type: UpdateApprovalFlowDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Approval flow updated successfully',
+    type: LeaveRequestResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid input data or approval flow',
+  })
+  @ApiResponse({ status: 404, description: 'Leave request not found' })
+  async updateApprovalFlow(
+    @Param('id') id: string,
+    @Body() dto: UpdateApprovalFlowDto,
+    @Request() req,
+  ) {
+    return await this.leavesService.updateApprovalFlow(
+      id,
+      dto.approvalFlow,
       req.user.id,
     );
   }
@@ -1028,6 +1308,92 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     return await this.leavesService.createPersonalizedEntitlement(dto);
   }
 
+  @Post('entitlements/batch')
+  @Roles('HR Admin', 'System Admin')
+  @ApiOperation({
+    summary: 'Create entitlements for multiple employees in batch',
+    description: `Creates entitlements for multiple employees at once.
+
+REQ-007: Batch entitlement creation for efficiency
+
+This endpoint allows HR Admin to:
+- Assign the same leave entitlement to multiple employees simultaneously
+- Choose between standard (with eligibility validation) or personalized (without validation)
+- Receive detailed results about created, skipped, and failed entitlements
+
+The operation processes all employees and returns a summary showing:
+- Created: Successfully created entitlements
+- Skipped: Employees who already have this entitlement
+- Failed: Employees who failed validation or encountered errors`,
+  })
+  @ApiBody({ type: CreateBatchEntitlementDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch entitlement creation completed',
+    type: BatchEntitlementResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Authentication required',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - HR Admin or System Admin role required',
+  })
+  async createBatchEntitlement(@Body() dto: CreateBatchEntitlementDto) {
+    return await this.leavesService.createBatchEntitlement(dto);
+  }
+
+  @Post('entitlements/group')
+  @Roles('HR Admin', 'System Admin')
+  @ApiOperation({
+    summary: 'Create entitlements for a group of employees based on filters',
+    description: `Creates entitlements for employees matching specific filters.
+
+REQ-007: Group entitlement creation based on organizational structure
+
+This endpoint allows HR Admin to:
+- Assign leave entitlements to all employees in a department
+- Target specific positions or contract types
+- Filter by minimum tenure
+- Combine multiple filters for precise targeting
+
+The operation:
+1. Queries employees matching all specified filters (AND logic)
+2. Filters by tenure if specified
+3. Creates entitlements for eligible employees
+4. Returns detailed results
+
+Supported filters:
+- departmentId: Target specific department
+- positionId: Target specific position
+- contractType: Target contract type (e.g., "Permanent", "Contract")
+- minTenure: Minimum tenure in months`,
+  })
+  @ApiBody({ type: CreateGroupEntitlementDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Group entitlement creation completed',
+    type: BatchEntitlementResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Authentication required',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - HR Admin or System Admin role required',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'No employees found matching the filters',
+  })
+  async createGroupEntitlement(@Body() dto: CreateGroupEntitlementDto) {
+    return await this.leavesService.createGroupEntitlement(dto);
+  }
+
   @Get('entitlements/employee/:employeeId')
   @ApiOperation({
     summary: 'Get employee entitlements',
@@ -1093,28 +1459,6 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
     @Query('leaveTypeId') leaveTypeId: string,
   ) {
     return await this.leavesService.getBalanceSummary(employeeId, leaveTypeId);
-  }
-
-  @Patch('entitlements/:id/balance')
-  @ApiOperation({
-    summary: 'Update leave balance',
-    description: 'Manually updates leave balance for an entitlement',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'Entitlement ID',
-    example: '507f1f77bcf86cd799439011',
-  })
-  @ApiBody({ type: UpdateBalanceDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Balance updated successfully',
-    type: LeaveEntitlementResponseDto,
-  })
-  @ApiResponse({ status: 400, description: 'Invalid input data' })
-  @ApiResponse({ status: 404, description: 'Entitlement not found' })
-  async updateBalance(@Param('id') id: string, @Body() dto: UpdateBalanceDto) {
-    return await this.leavesService.updateBalance(id, dto);
   }
 
   // ==================== LEAVE ADJUSTMENTS ====================
@@ -1405,7 +1749,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * REQ-039: Flag irregular leave pattern
    */
   @Patch('requests/:id/flag-irregular')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({ summary: 'Flag irregular leave pattern' })
   @ApiParam({ name: 'id', description: 'Leave request ID' })
   @ApiResponse({ status: 200, description: 'Request flagged successfully' })
@@ -1460,7 +1804,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * BR-46: Manager access to team reports
    */
   @Get('manager/team-balances')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({ summary: 'Get leave balances for all team members' })
   @ApiQuery({
     name: 'managerId',
@@ -1497,7 +1841,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * REQ-034: View team upcoming leaves
    */
   @Get('manager/team-upcoming-leaves')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({ summary: 'Get upcoming approved leaves for team members' })
   @ApiQuery({
     name: 'managerId',
@@ -1612,6 +1956,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * BR-12, BR-17: Track all manual adjustments
    */
   @Get('audit-trail/:employeeId')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
     summary: 'Get audit trail of leave adjustments for employee',
   })
@@ -1629,7 +1974,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
    * Get all flagged irregular patterns
    */
   @Get('reports/irregular-patterns')
-  @Roles('HR Admin', 'HR Manager', 'System Admin','Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin','department head')
   @ApiOperation({
     summary: 'Get all leave requests flagged for irregular patterns',
   })
@@ -1770,9 +2115,9 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
       await this.leavesService.getEmployeeEntitlements(employeeId);
     type AccrualResult =
       | {
-          leaveTypeId: Types.ObjectId;
-          accrued: { actual: number; rounded: number };
-        }
+      leaveTypeId: Types.ObjectId;
+      accrued: { actual: number; rounded: number };
+    }
       | { leaveTypeId: Types.ObjectId; error: string };
     const results: AccrualResult[] = [];
 
@@ -1882,7 +2227,7 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
   // ==================== NOTIFICATIONS ====================
 
   @Post('notifications')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'Department Head')
+  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
   @ApiOperation({ summary: 'Create a notification log entry' })
   @ApiBody({ type: NotificationLogCreateDTO })
   async createNotification(@Body() dto: NotificationLogCreateDTO) {
@@ -2021,11 +2366,11 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
 
   // ==================== MANAGER PENDING TEAM REQUESTS ====================
   @Get('requests/manager/:managerId/pending-team')
-  @Roles('Manager', 'HR Admin', 'HR Manager','Department Head')
+  @Roles('department head')
   @ApiOperation({
-    summary: 'Get pending leave requests for a manager’s team',
+    summary: 'Get pending leave requests for a manager-s team',
     description:
-      'Returns pending leave requests for team members reporting to this manager. Optional filter to only include overlapping pending leaves.',
+      'Returns pending leave requests for team members reporting to this manager. Checks for overlaps with both other pending requests AND approved requests. Optional filter to only include overlapping pending leaves.',
   })
   @ApiParam({
     name: 'managerId',
@@ -2034,7 +2379,8 @@ Note: This endpoint requires higher privileges (HR Admin or System Admin only) a
   @ApiQuery({
     name: 'overlappingOnly',
     required: false,
-    description: 'If true, only return requests that overlap with another team member',
+    description:
+      'If true, only return pending requests that overlap with other team members (either pending or approved requests)',
   })
   async getManagerPendingTeamRequests(
     @Param('managerId') managerId: string,
