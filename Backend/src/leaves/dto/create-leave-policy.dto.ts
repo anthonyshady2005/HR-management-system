@@ -7,10 +7,48 @@ import {
   Min,
   IsBoolean,
   IsObject,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AccrualMethod } from '../enums/accrual-method.enum';
 import { RoundingRule } from '../enums/rounding-rule.enum';
+import { ContractType, JobPosition } from '../../employee-profile/enums/employee-profile.enums';
+import { Type } from 'class-transformer';
+
+class EligibilityDto {
+  @ApiPropertyOptional({
+    description: 'Minimum tenure in months required to be eligible',
+    example: 6,
+    minimum: 0,
+  })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  minTenureMonths?: number;
+
+  @ApiPropertyOptional({
+    description: 'Allowed job positions',
+    isArray: true,
+    enum: JobPosition,
+    example: [JobPosition.MANAGER, JobPosition.SENIOR],
+  })
+  @IsArray()
+  @IsEnum(JobPosition, { each: true })
+  @IsOptional()
+  positionsAllowed?: JobPosition[];
+
+  @ApiPropertyOptional({
+    description: 'Allowed contract types',
+    isArray: true,
+    enum: ContractType,
+    example: [ContractType.FULL_TIME_CONTRACT],
+  })
+  @IsArray()
+  @IsEnum(ContractType, { each: true })
+  @IsOptional()
+  contractTypesAllowed?: ContractType[];
+}
 
 export class CreateLeavePolicyDto {
   @ApiProperty({
@@ -116,13 +154,10 @@ export class CreateLeavePolicyDto {
 
   @ApiPropertyOptional({
     description: 'Eligibility criteria for this leave type',
-    example: {
-      minTenureMonths: 6,
-      positionsAllowed: ['Manager', 'Senior Developer'],
-      contractTypesAllowed: ['Full-time', 'Part-time'],
-    },
+    type: () => EligibilityDto,
   })
-  @IsObject()
+  @ValidateNested()
+  @Type(() => EligibilityDto)
   @IsOptional()
-  eligibility?: Record<string, any>;
+  eligibility?: EligibilityDto;
 }
