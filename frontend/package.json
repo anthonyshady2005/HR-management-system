@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "powershell -Command \"$port=$env:PORT; if (-not $port) { $port=5000 }; npx next dev -p $port\"",
+    "dev": "node -e \"const { spawnSync } = require('child_process'); const port = process.env.PORT || '5000'; const res = spawnSync('npx', ['next', 'dev', '-p', port], { stdio: 'inherit', shell: true, env: { ...process.env, PORT: port } }); process.exit(res.status ?? 0);\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
