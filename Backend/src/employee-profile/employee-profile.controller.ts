@@ -29,7 +29,7 @@ import express from 'express';
 
 @Controller('employee-profile')
 export class EmployeeProfileController {
-  constructor(private readonly profileService: EmployeeProfileService) {}
+  constructor(private readonly profileService: EmployeeProfileService) { }
 
   // ========== SELF-SERVICE ENDPOINTS ==========
 
@@ -94,7 +94,7 @@ export class EmployeeProfileController {
    * Only accessible by HR Admin, HR Manager, HR Employee roles.
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.HR_EMPLOYEE)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.HR_EMPLOYEE, SystemRole.SYSTEM_ADMIN)
   @Get('search')
   searchEmployees(@Query() dto: SearchEmployeeDto) {
     return this.profileService.searchEmployees(dto);
@@ -178,7 +178,7 @@ export class EmployeeProfileController {
    * BR 3j: Employee status for system access control.
    */
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(SystemRole.HR_ADMIN)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
   @Post(':employeeId/deactivate')
   deactivateEmployee(
     @Param('employeeId') employeeId: string,
