@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, Min } from 'class-validator';
+import { IsOptional, IsNumber, Min, IsDateString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateBalanceDto {
@@ -61,4 +61,20 @@ export class UpdateBalanceDto {
   @Min(0)
   @IsOptional()
   pending?: number;
+
+  @ApiPropertyOptional({
+    description: 'Last accrual date',
+    example: '2025-01-01T00:00:00Z',
+  })
+  @IsDateString()
+  @IsOptional()
+  lastAccrualDate?: Date;
+
+  @ApiPropertyOptional({
+    description: 'Next reset date',
+    example: '2025-12-31T00:00:00Z',
+  })
+  @IsDateString()
+  @IsOptional()
+  nextResetDate?: Date;
 }

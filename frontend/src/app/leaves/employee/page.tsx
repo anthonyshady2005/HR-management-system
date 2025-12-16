@@ -49,6 +49,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   LeaveEntitlement,
   LeaveRequest,
   LeaveType,
@@ -112,6 +122,8 @@ export default function EmployeeLeavesPage() {
   const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null);
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [editingRequest, setEditingRequest] = useState<LeaveRequest | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [requestToCancel, setRequestToCancel] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     from: "",
     to: "",
@@ -544,12 +556,22 @@ export default function EmployeeLeavesPage() {
     }
   };
 
-  const handleCancel = async (requestId: string) => {
+  const handleCancelClick = (requestId: string) => {
+    setRequestToCancel(requestId);
+    setCancelDialogOpen(true);
+  };
+
+  const handleCancelConfirm = async () => {
+    if (!requestToCancel) return;
     try {
-      await cancelLeaveRequest(requestId);
+      await cancelLeaveRequest(requestToCancel);
+      setCancelDialogOpen(false);
+      setRequestToCancel(null);
       await loadData();
     } catch (err: any) {
       setError(err?.response?.data?.message || "Failed to cancel request.");
+      setCancelDialogOpen(false);
+      setRequestToCancel(null);
     }
   };
 
@@ -870,7 +892,7 @@ export default function EmployeeLeavesPage() {
                                       className="text-amber-200 hover:text-amber-100"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        void handleCancel(requestId);
+                                        handleCancelClick(requestId);
                                       }}
                                     >
                                       Cancel
@@ -1175,6 +1197,39 @@ export default function EmployeeLeavesPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Cancel Confirmation Dialog */}
+            <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+              <AlertDialogContent className="bg-slate-900 border-white/10 text-white">
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="text-white flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                    Cancel Leave Request
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="text-slate-300">
+                    Are you sure you want to cancel this leave request? This action cannot be undone.
+                    The leave days will be returned to your balance if the request was already approved.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel
+                    onClick={() => {
+                      setCancelDialogOpen(false);
+                      setRequestToCancel(null);
+                    }}
+                    className="bg-white/10 border-white/20 text-white hover:bg-white/20"
+                  >
+                    Keep Request
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleCancelConfirm}
+                    className="bg-amber-600 hover:bg-amber-500 text-white"
+                  >
+                    Yes, Cancel Request
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
             {/* Edit Request Modal */}
             <Dialog open={editing} onOpenChange={(open) => {
