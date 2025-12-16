@@ -5,6 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EmployeeProfile } from '../employee-profile/models/employee-profile.schema';
 import { EmployeeSystemRole } from '../employee-profile/models/employee-system-role.schema';
+import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -14,7 +15,7 @@ export class AuthService {
         @InjectModel(EmployeeProfile.name) private userModel: Model<EmployeeProfile>,
         @InjectModel(EmployeeSystemRole.name) private roleModel: Model<EmployeeSystemRole>,
         private jwtService: JwtService,
-    ) {}
+    ) { }
 
     async register(dto: RegisterDto) {
         const existing = await this.userModel.findOne({ personalEmail: dto.personalEmail });
@@ -39,7 +40,7 @@ export class AuthService {
         // Initialize a role record for the user if none exists
         await this.roleModel.create({
             employeeProfileId: user._id as Types.ObjectId,
-            roles: dto.roles || [],
+            roles: dto.roles && dto.roles.length > 0 ? dto.roles : [SystemRole.DEPARTMENT_EMPLOYEE],
             permissions: [],
             isActive: true,
         } as Partial<EmployeeSystemRole>);

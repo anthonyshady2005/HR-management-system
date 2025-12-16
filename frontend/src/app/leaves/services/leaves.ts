@@ -59,6 +59,11 @@ export type LeaveEntitlement = {
     nextResetDate?: string;
 };
 
+export async function fetchPositionOptions(): Promise<string[]> {
+    const res = await api.get("/leaves/positions");
+    return (res.data?.positions || []) as string[];
+}
+
 export type CalendarResponse = {
     year: number;
     holidays: Array<string | Holiday>;
@@ -246,6 +251,23 @@ export async function fetchEntitlementById(id: string): Promise<LeaveEntitlement
     return res.data as LeaveEntitlement;
 }
 
+export async function updateEntitlement(
+    id: string,
+    payload: Partial<{
+        yearlyEntitlement: number;
+        accruedActual: number;
+        accruedRounded: number;
+        carryForward: number;
+        taken: number;
+        pending: number;
+        lastAccrualDate: string;
+        nextResetDate: string;
+    }>,
+): Promise<LeaveEntitlement> {
+    const res = await api.patch(`/leaves/entitlements/${id}`, payload);
+    return res.data as LeaveEntitlement;
+}
+
 export async function createEntitlement(payload: {
     employeeId: string;
     leaveTypeId: string;
@@ -289,24 +311,6 @@ export async function createBatchEntitlement(payload: {
     personalized?: boolean;
 }) {
     const res = await api.post("/leaves/entitlements/batch", payload);
-    return res.data as BatchEntitlementResponse;
-}
-
-export async function createGroupEntitlement(payload: {
-    filters: {
-        departmentId?: string;
-        positionId?: string;
-        contractType?: string;
-        minTenure?: number;
-    };
-    leaveTypeId: string;
-    yearlyEntitlement?: number;
-    accruedActual?: number;
-    accruedRounded?: number;
-    carryForward?: number;
-    personalized?: boolean;
-}) {
-    const res = await api.post("/leaves/entitlements/group", payload);
     return res.data as BatchEntitlementResponse;
 }
 
@@ -494,20 +498,13 @@ export async function checkIfDateBlocked(date: string) {
     return res.data as { date: string; isBlocked: boolean };
 }
 
-export async function runAccrual(period: "monthly" | "quarterly" | "yearly") {
-    await api.post(`/leaves/accrual/run-${period}`);
+export async function runAccrual(period?: "monthly" | "quarterly" | "yearly") {
+    const payload = period ? { type: period } : undefined;
+    await api.post(`/leaves/accrual/run`, payload);
 }
 
 export async function runEmployeeAccrual(employeeId: string) {
     await api.post(`/leaves/accrual/employee/${employeeId}`);
-}
-
-export async function runCarryForward() {
-    await api.post("/leaves/carry-forward/run");
-}
-
-export async function calculateResetDates() {
-    await api.post("/leaves/reset-dates/calculate");
 }
 
 export async function validateBalance(employeeId: string, leaveTypeId: string, days: number) {

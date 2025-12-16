@@ -2,13 +2,13 @@ import {
   IsMongoId,
   IsNotEmpty,
   IsOptional,
-  IsEnum,
   IsNumber,
   Min,
   IsBoolean,
   IsObject,
   IsArray,
   ValidateNested,
+  IsString, IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AccrualMethod } from '../enums/accrual-method.enum';
@@ -28,15 +28,16 @@ class EligibilityDto {
   minTenureMonths?: number;
 
   @ApiPropertyOptional({
-    description: 'Allowed job positions',
+    description:
+      'Allowed job positions (supports enum JobPosition values and custom Position titles from org structure)',
     isArray: true,
     enum: JobPosition,
-    example: [JobPosition.MANAGER, JobPosition.SENIOR],
+    example: [JobPosition.MANAGER, JobPosition.SENIOR, 'Custom Title'],
   })
   @IsArray()
-  @IsEnum(JobPosition, { each: true })
+  @IsString({ each: true })
   @IsOptional()
-  positionsAllowed?: JobPosition[];
+  positionsAllowed?: Array<JobPosition | string>;
 
   @ApiPropertyOptional({
     description: 'Allowed contract types',

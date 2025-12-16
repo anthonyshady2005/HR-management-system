@@ -2,165 +2,37 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { LeavesService } from './leaves.service';
 
-/**
- * LeavesScheduler
- *
- * Automated cron jobs for leave accrual and carry-forward processing.
- *
- * Schedule:
- * - Monthly accrual: 1st of each month at midnight
- * - Quarterly accrual: 1st of Jan/Apr/Jul/Oct at midnight
- * - Yearly accrual: January 1st at midnight
- * - Year-end carry-forward: December 31st at 11:50 PM
- */
+
 @Injectable()
 export class LeavesScheduler {
   private readonly logger = new Logger(LeavesScheduler.name);
 
   constructor(private readonly leavesService: LeavesService) {}
 
-  /**
-   * Monthly Accrual Job
-   *
-   * Runs on the 1st of each month at 00:00 (midnight).
-   * Processes accrual for all employees with MONTHLY accrual method.
-   *
-   * @cron '0 0 1 * *' - minute hour day-of-month month day-of-week
-   */
-  @Cron('0 0 1 * *', {
-    name: 'monthly-accrual',
-    timeZone: 'UTC',
-  })
-  async handleMonthlyAccrual() {
-    this.logger.log('Starting monthly accrual process...');
 
-    try {
-      const result = await this.leavesService.runAccrualProcess('monthly');
-
-      this.logger.log(
-        `Monthly accrual completed: ${result.processed} employees processed, ${result.failed.length} failed`,
-      );
-
-      if (result.failed.length > 0) {
-        this.logger.warn(
-          `Failed accruals: ${JSON.stringify(result.failed, null, 2)}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        `Monthly accrual process failed: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
 
   /**
-   * Quarterly Accrual Job
+   * Daily maintenance job
    *
-   * Runs on the 1st of January, April, July, and October at 00:00 (midnight).
-   * Processes accrual for all employees with PER_TERM (quarterly) accrual method.
+   * Runs daily to:
+   * - Reset entitlements whose nextResetDate has passed and reapply policy accrual
+   * - Trigger the appropriate accrual process on period boundaries (month/quarter/year)
    *
-   * @cron '0 0 1 1,4,7,10 *' - minute hour day-of-month month day-of-week
+   * @cron '0 2 * * *' - daily at 02:00 UTC
    */
-  @Cron('0 0 1 1,4,7,10 *', {
-    name: 'quarterly-accrual',
+  @Cron('0 2 * * *', {
+    name: 'daily-maintenance',
     timeZone: 'UTC',
   })
-  async handleQuarterlyAccrual() {
-    this.logger.log('Starting quarterly accrual process...');
+  async handleDailyMaintenance() {
+    this.logger.log('Running daily maintenance for leaves...');
 
     try {
-      const result = await this.leavesService.runAccrualProcess('quarterly');
-
-      this.logger.log(
-        `Quarterly accrual completed: ${result.processed} employees processed, ${result.failed.length} failed`,
-      );
-
-      if (result.failed.length > 0) {
-        this.logger.warn(
-          `Failed accruals: ${JSON.stringify(result.failed, null, 2)}`,
-        );
-      }
+      await this.leavesService.runDailyResetAndAccrual();
+      await this.leavesService.runAccrualProcess(); // process all accrual methods daily based on lastAccrualDate
     } catch (error) {
       this.logger.error(
-        `Quarterly accrual process failed: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
-
-  /**
-   * Yearly Accrual Job
-   *
-   * Runs on January 1st at 00:00 (midnight).
-   * Processes accrual for all employees with YEARLY accrual method.
-   *
-   * @cron '0 0 1 1 *' - minute hour day-of-month month day-of-week
-   */
-  @Cron('0 0 1 1 *', {
-    name: 'yearly-accrual',
-    timeZone: 'UTC',
-  })
-  async handleYearlyAccrual() {
-    this.logger.log('Starting yearly accrual process...');
-
-    try {
-      const result = await this.leavesService.runAccrualProcess('yearly');
-
-      this.logger.log(
-        `Yearly accrual completed: ${result.processed} employees processed, ${result.failed.length} failed`,
-      );
-
-      if (result.failed.length > 0) {
-        this.logger.warn(
-          `Failed accruals: ${JSON.stringify(result.failed, null, 2)}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        `Yearly accrual process failed: ${error.message}`,
-        error.stack,
-      );
-    }
-  }
-
-  /**
-   * Year-End Carry-Forward Job
-   *
-   * Runs on December 31st at 23:50 (11:50 PM).
-   * Processes carry-forward for all employees, applying caps and expiry rules.
-   *
-   * @cron '50 23 31 12 *' - minute hour day-of-month month day-of-week
-   */
-  @Cron('50 23 31 12 *', {
-    name: 'year-end-carry-forward',
-    timeZone: 'UTC',
-  })
-  async handleYearEndCarryForward() {
-    this.logger.log('Starting year-end carry-forward process...');
-
-    try {
-      const result = await this.leavesService.runYearEndCarryForward();
-
-      this.logger.log(
-        `Year-end carry-forward completed: ${result.processed} employees processed, ` +
-          `${result.capped.length} capped at max limit, ${result.failed.length} failed`,
-      );
-
-      if (result.capped.length > 0) {
-        this.logger.log(
-          `Capped carry-forwards: ${JSON.stringify(result.capped, null, 2)}`,
-        );
-      }
-
-      if (result.failed.length > 0) {
-        this.logger.warn(
-          `Failed carry-forwards: ${JSON.stringify(result.failed, null, 2)}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        `Year-end carry-forward process failed: ${error.message}`,
+        `Daily maintenance process failed: ${error.message}`,
         error.stack,
       );
     }

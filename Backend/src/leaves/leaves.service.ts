@@ -47,7 +47,7 @@ import {
 import { LeaveStatus } from './enums/leave-status.enum';
 import { RoundingRule } from './enums/rounding-rule.enum';
 import { AccrualMethod } from './enums/accrual-method.enum';
-import { SystemRole, EmployeeStatus } from '../employee-profile/enums/employee-profile.enums';
+import { SystemRole, EmployeeStatus, JobPosition } from '../employee-profile/enums/employee-profile.enums';
 import { paySlip, PayslipDocument } from '../payroll-execution/models/payslip.schema';
 import { employeePayrollDetails, employeePayrollDetailsDocument } from '../payroll-execution/models/employeePayrollDetails.schema';
 import {AdjustmentType} from "./enums/adjustment-type.enum";
@@ -113,15 +113,14 @@ export class LeavesService {
     type: string,
     message?: string,
   ): Promise<void> {
-    if (!Types.ObjectId.isValid(to)) {
-      return;
-    }
     try {
-      await this.notificationLogModel.create({
-        to: new Types.ObjectId(to),
-        type,
-        message,
-      });
+      const payload: any = { type, message };
+      if (Types.ObjectId.isValid(to)) {
+        payload.to = new Types.ObjectId(to);
+      } else {
+        payload.to = to; // fallback for non-ObjectId identifiers
+      }
+      await this.notificationLogModel.create(payload);
     } catch (err) {
       this.logger.error(
         `Failed to log notification to ${to} [${type}]`,
@@ -130,10 +129,87 @@ export class LeavesService {
     }
   }
 
+  private async hasRecentNotificationByType(
+    to: string,
+    type: string,
+    since: Date,
+  ): Promise<boolean> {
+    try {
+      const toId = Types.ObjectId.isValid(to) ? new Types.ObjectId(to) : to;
+      const existing = await this.notificationLogModel.findOne({
+        to: toId,
+        type,
+        createdAt: { $gte: since },
+      });
+      return Boolean(existing);
+    } catch (err) {
+      this.logger.warn(
+        `Notification type dedupe failed for ${type}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return false;
+    }
+  }
+
   /**
-   * Shared org helpers (used for manager resolution and approvals).
-   * Priority: live position_assignments, then profile links, then department head.
+   * Prevent duplicate notifications for the same request/type within the threshold window.
    */
+  private async hasRecentNotification(
+    to: string,
+    type: string,
+    requestId: string,
+    since?: Date,
+  ): Promise<boolean> {
+    try {
+      const toId = Types.ObjectId.isValid(to) ? new Types.ObjectId(to) : to;
+      const query: any = {
+        to: toId,
+        type,
+        message: { $regex: requestId, $options: 'i' },
+      };
+      if (since) {
+        query.createdAt = { $gte: since };
+      }
+      const existing = await this.notificationLogModel.findOne(query);
+      return Boolean(existing);
+    } catch (err) {
+      this.logger.warn(
+        `Notification dedupe check failed for ${type} / ${requestId}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return false;
+    }
+  }
+
+  private async getHrManagerProfileIds(): Promise<string[]> {
+    try {
+      const roleDocs = await this.employeeProfileModel.db
+        .collection('employee_system_roles')
+        .find({
+          roles: { $in: [SystemRole.HR_MANAGER] },
+        })
+        .toArray();
+
+      const ids = roleDocs
+        .map((doc: any) => {
+          const raw = doc?.employeeProfileId;
+          if (!raw) return null;
+          if (raw instanceof Types.ObjectId) return raw.toString();
+          return raw?.toString?.() || null;
+        })
+        .filter(Boolean) as string[];
+
+      return Array.from(new Set(ids));
+    } catch (err) {
+      this.logger.error(
+        'Failed to fetch HR managers for escalation notifications',
+        err instanceof Error ? err.stack : undefined,
+      );
+      return [];
+    }
+  }
+
+
   private toObjectId(id?: string | Types.ObjectId): Types.ObjectId | null {
     if (!id) return null;
     if (id instanceof Types.ObjectId) return id;
@@ -304,7 +380,24 @@ export class LeavesService {
    */
   async getDepartmentsForHead(
     employeeId: string,
+    includeAllForHr: boolean = false,
   ): Promise<{ id: string; name?: string; code?: string }[]> {
+    // HR/Admin shortcut: return all departments when requested
+    if (includeAllForHr) {
+      const all = await this.departmentModel
+        .find({})
+        .select('_id name code')
+        .lean()
+        .exec();
+      return (all || [])
+        .map((d) => ({
+          id: d?._id?.toString?.() || '',
+          name: (d as any).name,
+          code: (d as any).code,
+        }))
+        .filter((d) => d.id);
+    }
+
     const now = new Date();
     const empId = this.toObjectId(employeeId);
     if (!empId) return [];
@@ -808,6 +901,17 @@ export class LeavesService {
       );
     }
 
+    // Enforce duration limits: policy.maxConsecutiveDays, fallback to leaveType.maxDurationDays
+    const maxAllowed =
+      policy?.maxConsecutiveDays !== undefined && policy?.maxConsecutiveDays !== null
+        ? policy.maxConsecutiveDays
+        : leaveType.maxDurationDays;
+    if (maxAllowed !== undefined && maxAllowed !== null && netDays > maxAllowed) {
+      throw new BadRequestException(
+        `Requested duration exceeds allowed limit of ${maxAllowed} day(s)`,
+      );
+    }
+
     // Overlap check
     await this.checkOverlappingLeaves(data.employeeId, fromDate, toDate);
 
@@ -826,11 +930,13 @@ export class LeavesService {
     }
 
     // Entitlement / balance check with auto-conversion support
-    await this.ensurePaidBalanceOrThrow(
-      data.employeeId,
-      data.leaveTypeId,
-      netDays,
-    );
+    if (leaveType.deductible !== false) {
+      await this.ensurePaidBalanceOrThrow(
+        data.employeeId,
+        data.leaveTypeId,
+        netDays,
+      );
+    }
 
     // Document requirement check - simple single attachment ID
     await this.validateRequiredDocuments(
@@ -873,7 +979,7 @@ export class LeavesService {
 
     const saved = await request.save();
 
-    // Track pending balance for paid leave types
+    // Track pending balance for paid/deductible leave types
     await this.addToPendingBalance(
       data.employeeId,
       data.leaveTypeId,
@@ -906,10 +1012,23 @@ export class LeavesService {
     startDate?: string;
     endDate?: string;
     departmentId?: string | string[];
+    includeDecidedByIds?: string | string[];
     sortBy?: 'dates.from' | 'createdAt';
     sortOrder?: 'asc' | 'desc';
   }) {
-    const baseMatch: any = {};
+    const scopeOr: any[] = [];
+    const matchClauses: any[] = [];
+
+    const decidedByRaw = filters?.includeDecidedByIds
+      ? Array.isArray(filters.includeDecidedByIds)
+        ? filters.includeDecidedByIds
+        : [filters.includeDecidedByIds]
+      : [];
+    const decidedByObjectIds = decidedByRaw
+      .map((id) => (Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : null))
+      .filter((id): id is Types.ObjectId => Boolean(id));
+    const decidedByStrings = decidedByRaw.filter((id): id is string => Boolean(id));
+    const hasDecidedByScope = decidedByObjectIds.length || decidedByStrings.length;
 
     // Department scoping first: resolve employee IDs in given departments (profile primaryDepartmentId or active assignment snapshot)
     if (filters?.departmentId) {
@@ -955,28 +1074,61 @@ export class LeavesService {
         if (id) employeeIds.add(id.toString());
       });
 
-      if (!employeeIds.size) {
+      if (employeeIds.size) {
+        const employeeObjectIds = Array.from(employeeIds).map((id) => new Types.ObjectId(id));
+        scopeOr.push({
+          $or: [
+            { employeeId: { $in: employeeObjectIds } },
+            { $expr: { $in: [{ $toString: '$employeeId' }, Array.from(employeeIds)] } },
+          ],
+        });
+      } else if (!hasDecidedByScope) {
         return [];
       }
+    }
 
-      const employeeObjectIds = Array.from(employeeIds).map((id) => new Types.ObjectId(id));
-      baseMatch.$or = [
-        { employeeId: { $in: employeeObjectIds } },
-        { $expr: { $in: [{ $toString: '$employeeId' }, Array.from(employeeIds)] } },
-      ];
+    // Visibility via approvalFlow.decidedBy (e.g., department head as approver)
+    if (hasDecidedByScope) {
+      scopeOr.push({
+        $or: [
+          { approvalFlow: { $elemMatch: { decidedBy: { $in: decidedByObjectIds } } } },
+          {
+            $expr: {
+              $gt: [
+                {
+                  $size: {
+                    $filter: {
+                      input: '$approvalFlow',
+                      as: 'step',
+                      cond: { $in: [{ $toString: '$$step.decidedBy' }, decidedByStrings] },
+                    },
+                  },
+                },
+                0,
+              ],
+            },
+          },
+        ],
+      });
+    }
+
+    if (scopeOr.length) {
+      matchClauses.push({ $or: scopeOr });
     }
 
     if (filters?.employeeId) {
       const empId = filters.employeeId;
       if (Types.ObjectId.isValid(empId)) {
         // Match either as ObjectId or string (defensive in case documents store raw string)
-        baseMatch.$or = [
-          { employeeId: new Types.ObjectId(empId) },
-          { $expr: { $eq: [{ $toString: '$employeeId' }, empId] } },
-        ];
+        matchClauses.push({
+          $or: [
+            { employeeId: new Types.ObjectId(empId) },
+            { $expr: { $eq: [{ $toString: '$employeeId' }, empId] } },
+          ],
+        });
       } else {
         // Fallback: string comparison
-        baseMatch.$expr = { $eq: [{ $toString: '$employeeId' }, empId] };
+        matchClauses.push({ $expr: { $eq: [{ $toString: '$employeeId' }, empId] } });
       }
     }
 
@@ -984,18 +1136,12 @@ export class LeavesService {
       if (!Types.ObjectId.isValid(filters.leaveTypeId)) {
         throw new BadRequestException('Invalid leave type ID format');
       }
-      baseMatch.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
+      matchClauses.push({ leaveTypeId: new Types.ObjectId(filters.leaveTypeId) });
     }
 
     if (filters?.status) {
-      baseMatch.status = filters.status;
+      matchClauses.push({ status: filters.status });
     }
-
-    // Utility to validate and normalize employee id for downstream checks
-    const employeeIdForChecks =
-      (filters?.employeeId && Types.ObjectId.isValid(filters.employeeId))
-        ? filters.employeeId
-        : undefined;
 
     // Date range filter on request dates
     if (filters?.startDate || filters?.endDate) {
@@ -1006,7 +1152,14 @@ export class LeavesService {
       if (filters.endDate) {
         range.$lte = new Date(filters.endDate);
       }
-      baseMatch['dates.from'] = range;
+      matchClauses.push({ 'dates.from': range });
+    }
+
+    let finalMatch: any = {};
+    if (matchClauses.length === 1) {
+      finalMatch = matchClauses[0];
+    } else if (matchClauses.length > 1) {
+      finalMatch = { $and: matchClauses };
     }
 
     const sortField = filters?.sortBy || 'createdAt';
@@ -1014,7 +1167,7 @@ export class LeavesService {
 
     // Default path without department filter (aggregate to support $expr/$or matching)
     const pipeline: any[] = [
-      { $match: baseMatch },
+      { $match: finalMatch },
       {
         $lookup: {
           from: 'leavetypes',
@@ -1126,14 +1279,27 @@ export class LeavesService {
     // Extract IDs properly (handle populated fields)
     const employeeIdStr = (request.employeeId as any)?._id?.toString() || (request.employeeId as any)?.toString();
     const leaveTypeIdStr = (request.leaveTypeId as any)?._id?.toString() || (request.leaveTypeId as any)?.toString();
+    const leaveTypeDoc = leaveTypeIdStr
+      ? await this.leaveTypeModel.findById(leaveTypeIdStr).lean()
+      : null;
+    const isDeductible = leaveTypeDoc?.deductible !== false;
 
     if (wasStatus !== LeaveStatus.APPROVED && saved.status === LeaveStatus.APPROVED) {
       // Final approval achieved - deduct balance
-      await this.deductFromBalance(
-        employeeIdStr,
-        leaveTypeIdStr,
-        request.durationDays,
-      );
+      if (isDeductible) {
+        await this.deductFromBalance(
+          employeeIdStr,
+          leaveTypeIdStr,
+          request.durationDays,
+        );
+      } else {
+        // Non-deductible: move pending -> taken without touching remaining
+        await this.deductFromBalance(
+          employeeIdStr,
+          leaveTypeIdStr,
+          request.durationDays,
+        );
+      }
 
       // Sync with payroll: Handle paid/unpaid leave deductions/encashments
       await this.syncLeaveApprovalWithPayroll(
@@ -1405,6 +1571,27 @@ export class LeavesService {
   }
 
   /**
+   * Combined list of position labels: JobPosition enum + Position titles/codes from Org Structure
+   */
+  async getPositionOptions(): Promise<string[]> {
+    const enumPositions = Object.values(JobPosition).map((p) => p.toString());
+    const positions = await this.positionModel
+      .find()
+      .select('title code name')
+      .lean()
+      .exec();
+
+    const titles = positions
+      .map((p) => p.title || (p as any).name || (p as any).code)
+      .filter((p): p is string => Boolean(p));
+
+    const unique = new Set<string>();
+    [...enumPositions, ...titles].forEach((p) => unique.add(p));
+
+    return Array.from(unique);
+  }
+
+  /**
    * Validate employee eligibility against leave policy rules
    * REQ-007: Eligibility rules validation (automatic and internal)
    * @param employeeId Employee ID
@@ -1448,6 +1635,42 @@ export class LeavesService {
       };
     }
 
+    const { eligibility } = policy;
+
+    // Treat empty/neutral criteria as open eligibility:
+    // - minTenureMonths is 0 or null => allow all
+    // - positionsAllowed is null/undefined or covers all known values => allow all
+    // - contractTypesAllowed is null/undefined or covers all known values => allow all
+    const tenureOpen =
+      eligibility.minTenureMonths === null || eligibility.minTenureMonths === 0;
+
+    // Build dynamic position universe (enum + org titles)
+    const allPositions = await this.getPositionOptions();
+    const positionsOpen =
+      !eligibility.positionsAllowed ||
+      (Array.isArray(eligibility.positionsAllowed) &&
+        eligibility.positionsAllowed.length === 0) ||
+      (Array.isArray(eligibility.positionsAllowed) &&
+        allPositions.length > 0 &&
+        allPositions.every((p) =>
+          eligibility.positionsAllowed
+            .map((x) => String(x).toLowerCase())
+            .includes(String(p).toLowerCase()),
+        ));
+
+    const contractsOpen =
+      !eligibility.contractTypesAllowed ||
+      (Array.isArray(eligibility.contractTypesAllowed) &&
+        eligibility.contractTypesAllowed.length === 0);
+
+    if (tenureOpen && positionsOpen && contractsOpen) {
+      return {
+        eligible: true,
+        reasons: ['No eligibility restrictions'],
+        policy,
+      };
+    }
+
     // Fetch employee data from Employee Profile module
     const employeeData = await this.getEmployeeDataForEligibility(employeeId);
 
@@ -1463,7 +1686,7 @@ export class LeavesService {
     }
 
     // Check minimum tenure requirement
-    if (policy.eligibility.minTenureMonths !== undefined) {
+    if (policy.eligibility.minTenureMonths !== undefined && policy.eligibility.minTenureMonths !== null) {
       if (
         !employeeData.tenureMonths ||
         employeeData.tenureMonths < policy.eligibility.minTenureMonths
@@ -1479,19 +1702,24 @@ export class LeavesService {
     // Check position eligibility
     if (
       policy.eligibility.positionsAllowed &&
-      Array.isArray(policy.eligibility.positionsAllowed)
+      Array.isArray(policy.eligibility.positionsAllowed) &&
+      policy.eligibility.positionsAllowed.length > 0
     ) {
-      if (policy.eligibility.positionsAllowed.length > 0) {
-        if (
-          !employeeData.position ||
-          !policy.eligibility.positionsAllowed.includes(employeeData.position)
-        ) {
+      const allowed = policy.eligibility.positionsAllowed.map((p) =>
+        String(p).toLowerCase(),
+      );
+      const employeePosition = (employeeData.position || '').toLowerCase();
+      if (employeePosition) {
+        if (!allowed.includes(employeePosition)) {
           eligible = false;
           reasons.push(
             `Position not eligible: allowed positions are [${policy.eligibility.positionsAllowed.join(', ')}], ` +
             `employee position is '${employeeData.position || 'unknown'}'`,
           );
         }
+      } else {
+        eligible = false;
+        reasons.push('Employee position is unavailable for eligibility check');
       }
     }
 
@@ -1782,94 +2010,6 @@ export class LeavesService {
     return result;
   }
 
-  /**
-   * Create entitlements for a group of employees based on filters
-   * REQ-007: Group entitlement creation based on department, position, etc.
-   *
-   * @param data Group entitlement creation payload with filters
-   * @returns Summary of created, skipped, and failed entitlements
-   * @access HR Admin only
-   */
-  async createGroupEntitlement(data: {
-    filters: {
-      departmentId?: string;
-      positionId?: string;
-      contractType?: string;
-      minTenure?: number;
-    };
-    leaveTypeId: string;
-    yearlyEntitlement?: number;
-    accruedActual?: number;
-    accruedRounded?: number;
-    carryForward?: number;
-    personalized?: boolean;
-  }) {
-    // Validate leave type ID
-    if (!Types.ObjectId.isValid(data.leaveTypeId)) {
-      throw new BadRequestException('Invalid leave type ID format');
-    }
-
-    // Build employee query based on filters
-    const employeeQuery: any = { status: EmployeeStatus.ACTIVE };
-
-    if (data.filters.departmentId) {
-      if (!Types.ObjectId.isValid(data.filters.departmentId)) {
-        throw new BadRequestException('Invalid department ID format');
-      }
-      employeeQuery.departmentId = data.filters.departmentId;
-    }
-
-    if (data.filters.positionId) {
-      if (!Types.ObjectId.isValid(data.filters.positionId)) {
-        throw new BadRequestException('Invalid position ID format');
-      }
-      employeeQuery.positionId = data.filters.positionId;
-    }
-
-    if (data.filters.contractType) {
-      employeeQuery.contractType = data.filters.contractType;
-    }
-
-    // Fetch employees matching the filters
-    const employees = await this.employeeProfileModel.find(employeeQuery).exec();
-
-    if (employees.length === 0) {
-      throw new NotFoundException('No employees found matching the filters');
-    }
-
-    // Filter by tenure if specified
-    let filteredEmployees = employees;
-    if (data.filters.minTenure !== undefined && data.filters.minTenure > 0) {
-      filteredEmployees = employees.filter((employee) => {
-        const hireDate = employee.dateOfHire
-          ? new Date(employee.dateOfHire)
-          : new Date();
-        const tenureMonths =
-          (new Date().getTime() - hireDate.getTime()) /
-          (1000 * 60 * 60 * 24 * 30);
-        return tenureMonths >= (data.filters.minTenure ?? 0);
-      });
-    }
-
-    if (filteredEmployees.length === 0) {
-      throw new NotFoundException(
-        'No employees found matching the filters with minimum tenure',
-      );
-    }
-
-    // Use batch creation for the filtered employees
-    const employeeIds = filteredEmployees.map((emp) => emp._id.toString());
-
-    return await this.createBatchEntitlement({
-      employeeIds,
-      leaveTypeId: data.leaveTypeId,
-      yearlyEntitlement: data.yearlyEntitlement,
-      accruedActual: data.accruedActual,
-      accruedRounded: data.accruedRounded,
-      carryForward: data.carryForward,
-      personalized: data.personalized,
-    });
-  }
 
   async getEmployeeEntitlements(employeeId: string) {
     if (!Types.ObjectId.isValid(employeeId)) {
@@ -1974,6 +2114,8 @@ export class LeavesService {
       carryForward?: number;
       taken?: number;
       pending?: number;
+      lastAccrualDate?: Date | string;
+      nextResetDate?: Date | string;
     },
   ) {
     if (!Types.ObjectId.isValid(id)) {
@@ -1985,8 +2127,24 @@ export class LeavesService {
       throw new NotFoundException('Leave entitlement not found');
     }
 
+    const { lastAccrualDate, nextResetDate, ...rest } = data;
+
     // Update fields
-    Object.assign(entitlement, data);
+    Object.assign(entitlement, rest);
+
+    if (lastAccrualDate) {
+      const d = new Date(lastAccrualDate);
+      if (!Number.isNaN(d.getTime())) {
+        entitlement.lastAccrualDate = d;
+      }
+    }
+
+    if (nextResetDate) {
+      const d = new Date(nextResetDate);
+      if (!Number.isNaN(d.getTime())) {
+        entitlement.nextResetDate = d;
+      }
+    }
 
     // Recalculate remaining using helper method
     entitlement.remaining = await this.calculateRemainingBalance(entitlement);
@@ -2014,8 +2172,8 @@ export class LeavesService {
     }
 
     const amount = Math.abs(data.amount);
-    if (amount <= 0) {
-      throw new BadRequestException('Adjustment amount must be greater than zero');
+    if (!Number.isFinite(amount)) {
+      throw new BadRequestException('Adjustment amount must be a valid number');
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
@@ -2027,50 +2185,111 @@ export class LeavesService {
       throw new NotFoundException('Leave entitlement not found');
     }
 
-    // Apply adjustment to entitlement in real-time
-    const applyDeduction = (days: number) => {
-      const available =
-        (entitlement.yearlyEntitlement || 0) +
-        (entitlement.carryForward || 0) -
-        (entitlement.taken || 0) -
-        (entitlement.pending || 0);
+    // Allow zero-amount adjustments (used for justification-only flows) without mutating balances
+    if (amount === 0) {
+      const adjustment = new this.leaveAdjustmentModel({
+        ...data,
+        amount: 0,
+      });
+      return await adjustment.save();
+    }
 
-      if (available < days) {
-        throw new BadRequestException(
-          'Adjustment would make balance negative; increase grant before deducting',
-        );
-      }
+    const policy = await this.leavePolicyModel
+      .findOne({ leaveTypeId: data.leaveTypeId })
+      .lean();
+    const usesYearlyAccrual =
+      (policy?.accrualMethod || AccrualMethod.YEARLY) ===
+      AccrualMethod.YEARLY;
 
-      // Prefer to deduct from carryForward first, then yearlyEntitlement
-      const fromCarry = Math.min(entitlement.carryForward || 0, days);
-      entitlement.carryForward = Math.max(
-        0,
-        (entitlement.carryForward || 0) - fromCarry,
-      );
+    const currentAnnual = entitlement.yearlyEntitlement || 0;
+    const currentAccruedRounded = entitlement.accruedRounded || 0;
+    const currentAccruedActual = entitlement.accruedActual || 0;
+    const currentCarry = entitlement.carryForward || 0;
+    const taken = entitlement.taken || 0;
+    const pending = entitlement.pending || 0;
 
-      const remaining = days - fromCarry;
-      if (remaining > 0) {
-        entitlement.yearlyEntitlement = Math.max(
-          0,
-          (entitlement.yearlyEntitlement || 0) - remaining,
-        );
-      }
-    };
+    const currentRemaining = await this.calculateRemainingBalance(
+      entitlement,
+      policy,
+    );
 
     switch (data.adjustmentType) {
-      case AdjustmentType.ADD:
-        entitlement.carryForward = (entitlement.carryForward || 0) + amount;
+      case AdjustmentType.ADD: {
+        // Add to annual grant; mirror to accrual for non-yearly policies
+        entitlement.yearlyEntitlement = currentAnnual + amount;
+
+        if (!usesYearlyAccrual) {
+          entitlement.accruedRounded = currentAccruedRounded + amount;
+          entitlement.accruedActual = currentAccruedActual + amount;
+        }
         break;
+      }
       case AdjustmentType.DEDUCT:
-      case AdjustmentType.ENCASHMENT:
-        applyDeduction(amount);
+      case AdjustmentType.ENCASHMENT: {
+        const maxByGrant = currentCarry + currentAnnual;
+        if (amount > maxByGrant) {
+          throw new BadRequestException(
+            'Adjustment exceeds carry forward + annual balance',
+          );
+        }
+
+        if (currentRemaining < amount) {
+          throw new BadRequestException(
+            'Adjustment exceeds available remaining balance',
+          );
+        }
+
+        // Deduct from carry first, then annual (and accrual for monthly policies)
+        let deductionLeft = amount;
+        const fromCarry = Math.min(currentCarry, deductionLeft);
+        entitlement.carryForward = currentCarry - fromCarry;
+        deductionLeft -= fromCarry;
+
+        if (deductionLeft > 0) {
+          const annualAfter = currentAnnual - deductionLeft;
+          if (annualAfter < 0) {
+            throw new BadRequestException(
+              'Adjustment would make annual entitlement negative',
+            );
+          }
+          entitlement.yearlyEntitlement = annualAfter;
+        }
+
+        if (!usesYearlyAccrual) {
+          const accrualAfter = currentAccruedRounded - deductionLeft;
+          if (accrualAfter < 0) {
+            throw new BadRequestException(
+              'Adjustment exceeds accrued balance',
+            );
+          }
+          entitlement.accruedRounded = accrualAfter;
+          entitlement.accruedActual = Math.max(
+            0,
+            currentAccruedActual - deductionLeft,
+          );
+        }
         break;
+      }
       default:
         throw new BadRequestException('Unsupported adjustment type');
     }
 
-    // Recalculate remaining using helper method
-    entitlement.remaining = await this.calculateRemainingBalance(entitlement);
+    // Recalculate remaining using helper method to enforce integrity
+    entitlement.remaining = await this.calculateRemainingBalance(
+      entitlement,
+      policy,
+    );
+
+    // Only enforce non-negative remaining for deduction/encashment flows
+    if (
+      (data.adjustmentType === AdjustmentType.DEDUCT ||
+        data.adjustmentType === AdjustmentType.ENCASHMENT) &&
+      entitlement.remaining < 0
+    ) {
+      throw new BadRequestException(
+        'Adjustment would make remaining balance negative',
+      );
+    }
 
     await entitlement.save();
 
@@ -2372,10 +2591,20 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
-    // STEP 1: Check if leave type is paid or unpaid
+    // STEP 1: Check if leave type is paid or unpaid (and whether it is deductible)
     const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
+    }
+
+    // Non-deductible leave does not consume balance
+    if (leaveType.deductible === false) {
+      return {
+        sufficient: true,
+        paidDays: requestedDays,
+        unpaidDays: 0,
+        requiresConversion: false,
+      };
     }
 
     // STEP 2: If unpaid leave, skip balance check entirely
@@ -2673,6 +2902,22 @@ export class LeavesService {
       return; // Unpaid leave does not affect balance
     }
 
+    // Non-deductible leave should not adjust remaining; only move pending -> taken
+    if (leaveType.deductible === false) {
+      const entitlement = await this.leaveEntitlementModel.findOne({
+        employeeId,
+        leaveTypeId,
+      });
+      if (!entitlement) {
+        throw new NotFoundException('Leave entitlement not found');
+      }
+
+      entitlement.pending = Math.max(0, entitlement.pending - days);
+      entitlement.taken += days;
+      await entitlement.save();
+      return;
+    }
+
     const entitlement = await this.leaveEntitlementModel.findOne({
       employeeId,
       leaveTypeId,
@@ -2725,6 +2970,20 @@ export class LeavesService {
       return;
     }
 
+    // Non-deductible leave should not alter remaining; only reduce pending
+    if (leaveType.deductible === false) {
+      const entitlement = await this.leaveEntitlementModel.findOne({
+        employeeId,
+        leaveTypeId,
+      });
+      if (!entitlement) {
+        throw new NotFoundException('Leave entitlement not found');
+      }
+      entitlement.pending = Math.max(0, entitlement.pending - days);
+      await entitlement.save();
+      return;
+    }
+
     const entitlement = await this.leaveEntitlementModel.findOne({
       employeeId,
       leaveTypeId,
@@ -2765,6 +3024,21 @@ export class LeavesService {
 
     // Skip for unpaid leave types
     if (!leaveType.paid) {
+      return;
+    }
+
+    // Non-deductible leave should not return balance; only adjust taken
+    if (leaveType.deductible === false) {
+      const entitlement = await this.leaveEntitlementModel.findOne({
+        employeeId,
+        leaveTypeId,
+      });
+      if (!entitlement) {
+        throw new NotFoundException('Leave entitlement not found');
+      }
+
+      entitlement.taken = Math.max(0, entitlement.taken - days);
+      await entitlement.save();
       return;
     }
 
@@ -2859,6 +3133,22 @@ export class LeavesService {
     // Skip pending tracking for unpaid leave types
     if (!leaveType.paid) {
       return; // Unpaid leave does not affect balance
+    }
+
+    // Non-deductible leave: track pending but do not touch remaining
+    if (leaveType.deductible === false) {
+      const entitlement = await this.leaveEntitlementModel.findOne({
+        employeeId,
+        leaveTypeId,
+      });
+
+      if (!entitlement) {
+        throw new NotFoundException('Leave entitlement not found');
+      }
+
+      entitlement.pending += days;
+      await entitlement.save();
+      return;
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
@@ -3469,66 +3759,107 @@ export class LeavesService {
       throw new BadRequestException('Only pending requests can be modified');
     }
 
+    const leaveType = await this.leaveTypeModel.findById(request.leaveTypeId);
+    if (!leaveType) {
+      throw new NotFoundException('Leave type not found');
+    }
+
+    const policy = await this.leavePolicyModel
+      .findOne({ leaveTypeId: request.leaveTypeId })
+      .exec();
+
     const originalDuration = request.durationDays;
+    let recalculatedDuration = request.durationDays;
+    let nextFrom = request.dates.from;
+    let nextTo = request.dates.to;
 
     // Update fields
     if (data.fromDate || data.toDate) {
-      const from = data.fromDate ? new Date(data.fromDate) : request.dates.from;
-      const to = data.toDate ? new Date(data.toDate) : request.dates.to;
+      nextFrom = data.fromDate ? new Date(data.fromDate) : new Date(request.dates.from);
+      nextTo = data.toDate ? new Date(data.toDate) : new Date(request.dates.to);
 
-      if (from > to) {
+      if (nextFrom > nextTo) {
         throw new BadRequestException('Start date must be before end date');
       }
 
-      request.dates.from = from;
-      request.dates.to = to;
+      // Enforce late submission window (same as submit flow)
+      if (policy?.minNoticeDays !== undefined) {
+        const now = new Date();
+        if (nextFrom < now) {
+          const daysLate = Math.floor(
+            (now.getTime() - nextFrom.getTime()) / (1000 * 60 * 60 * 24),
+          );
+          if (daysLate > policy.minNoticeDays) {
+            throw new BadRequestException(
+              `Late submission exceeds allowed window: ${daysLate} days late, policy permits ${policy.minNoticeDays} day(s)`,
+            );
+          }
+        }
+      }
 
       // Enforce blocked periods
-      await this.checkBlockedPeriods(from, to);
+      await this.checkBlockedPeriods(nextFrom, nextTo);
 
       // Always recompute net working days
-      const netDays = await this.calculateNetLeaveDays(
+      recalculatedDuration = await this.calculateNetLeaveDays(
         request.employeeId.toString(),
-        from,
-        to,
+        nextFrom,
+        nextTo,
       );
-      if (netDays <= 0) {
+      if (recalculatedDuration <= 0) {
         throw new BadRequestException(
           'Requested period has no working days available',
         );
       }
+
+      // Enforce duration limits: policy.maxConsecutiveDays, fallback to leaveType.maxDurationDays
+      const maxAllowed =
+        policy?.maxConsecutiveDays !== undefined && policy?.maxConsecutiveDays !== null
+          ? policy.maxConsecutiveDays
+          : leaveType.maxDurationDays;
+      if (
+        maxAllowed !== undefined &&
+        maxAllowed !== null &&
+        recalculatedDuration > maxAllowed
+      ) {
+        throw new BadRequestException(
+          `Requested duration exceeds allowed limit of ${maxAllowed} day(s)`,
+        );
+      }
+
       // Overlap check (exclude current request)
       await this.checkOverlappingLeaves(
         request.employeeId.toString(),
-        from,
-        to,
+        nextFrom,
+        nextTo,
         request._id.toString(),
       );
 
-      // Entitlement / balance check (block if paid balance insufficient)
-      await this.ensurePaidBalanceOrThrow(
+      // BR-41: Cumulative limits (mirrors submit flow)
+      const limitCheck = await this.checkCumulativeLimits(
         request.employeeId.toString(),
         request.leaveTypeId.toString(),
-        netDays,
+        recalculatedDuration,
       );
+      if (!limitCheck.withinLimit) {
+        throw new BadRequestException(
+          `Cumulative leave limit exceeded. Used ${limitCheck.used}/${limitCheck.limit} days in past 12 months. ` +
+            `Requesting ${recalculatedDuration} day(s) would exceed limit.`,
+        );
+      }
 
-      // Document requirement check
-      await this.validateRequiredDocuments(
-        request.leaveTypeId.toString(),
-        netDays,
-        data.attachmentId ?? request.attachmentId?.toString(),
-      );
-
-      request.durationDays = netDays;
+      request.dates.from = nextFrom;
+      request.dates.to = nextTo;
     } else if (data.durationDays) {
       // Ignore client-supplied duration; keep existing duration or recompute if needed
-      const netDays = await this.calculateNetLeaveDays(
+      recalculatedDuration = await this.calculateNetLeaveDays(
         request.employeeId.toString(),
         request.dates.from,
         request.dates.to,
       );
-      request.durationDays = netDays;
     }
+
+    request.durationDays = recalculatedDuration;
 
     if (data.justification !== undefined) {
       request.justification = data.justification;
@@ -3545,19 +3876,22 @@ export class LeavesService {
       }
     }
 
-    // Ensure balance sufficiency with current duration
-    await this.ensurePaidBalanceOrThrow(
-      request.employeeId.toString(),
-      request.leaveTypeId.toString(),
-      request.durationDays,
-    );
-
     // Re-validate document requirement with current duration/attachment
     await this.validateRequiredDocuments(
       request.leaveTypeId.toString(),
       request.durationDays,
       request.attachmentId?.toString(),
     );
+
+    // Only check balance delta for additional deductible days (matches submit logic)
+    const additionalDays = Math.max(request.durationDays - originalDuration, 0);
+    if (leaveType.deductible !== false && additionalDays > 0) {
+      await this.ensurePaidBalanceOrThrow(
+        request.employeeId.toString(),
+        request.leaveTypeId.toString(),
+        additionalDays,
+      );
+    }
 
     // Sync pending balance change (only for paid leave types)
     const pendingDelta = request.durationDays - originalDuration;
@@ -3879,34 +4213,91 @@ export class LeavesService {
    * @returns Processing result
    */
   async runAccrualProcess(
-    accrualType: 'monthly' | 'quarterly' | 'yearly',
+    _accrualType?: 'monthly' | 'quarterly' | 'yearly',
   ): Promise<{
     processed: number;
     failed: Array<{ employeeId: string; error: string }>;
   }> {
     const now = new Date();
-    let startDate: Date;
-    let endDate: Date = now;
+    const endDate: Date = now;
 
-    // Determine period based on accrual type
-    switch (accrualType) {
-      case 'monthly':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
-        break;
-      case 'quarterly':
-        const quarter = Math.floor(now.getMonth() / 3);
-        startDate = new Date(now.getFullYear(), quarter * 3 - 3, 1);
-        endDate = new Date(now.getFullYear(), quarter * 3, 0);
-        break;
-      case 'yearly':
-        startDate = new Date(now.getFullYear() - 1, 0, 1);
-        endDate = new Date(now.getFullYear() - 1, 11, 31);
-        break;
-    }
+    // Run daily reset/reminder pass first to ensure entitlements are fresh before accruing
+    await this.runDailyResetAndAccrual();
 
     const processed: number[] = [];
     const failed: Array<{ employeeId: string; error: string }> = [];
+
+    // Pre-load all policies and seed entitlements for eligible employees
+    const policies = await this.leavePolicyModel.find().lean().exec();
+
+    const activeEmployees = await this.employeeProfileModel
+      .find({ status: EmployeeStatus.ACTIVE })
+      .select('_id')
+      .lean()
+      .exec();
+
+    for (const policy of policies) {
+      const leaveTypeId = (policy.leaveTypeId as any)?.toString();
+      if (!leaveTypeId) continue;
+
+      for (const emp of activeEmployees) {
+        const employeeId = emp._id.toString();
+        try {
+          const eligibility = await this.validateEmployeeEligibility(
+            employeeId,
+            leaveTypeId,
+          );
+          if (!eligibility.eligible) continue;
+
+          let entitlement = await this.leaveEntitlementModel.findOne({
+            employeeId,
+            leaveTypeId,
+          });
+
+          if (!entitlement) {
+            let seedStart: Date;
+            if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+              seedStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+              const q = Math.floor(now.getMonth() / 3);
+              seedStart = new Date(now.getFullYear(), q * 3, 1);
+            } else {
+              seedStart = new Date(now.getFullYear(), 0, 1);
+            }
+
+            const accrual = await this.calculateAccrualForEmployee(
+              employeeId,
+              leaveTypeId,
+              seedStart,
+              endDate,
+            );
+            const nextReset = new Date(now);
+            nextReset.setFullYear(nextReset.getFullYear() + 1);
+
+            entitlement = new this.leaveEntitlementModel({
+              employeeId,
+              leaveTypeId,
+              yearlyEntitlement: accrual.rounded,
+              accruedActual: accrual.actual,
+              accruedRounded: accrual.rounded,
+              carryForward: 0,
+              taken: 0,
+              pending: 0,
+              remaining: accrual.rounded,
+              lastAccrualDate: now,
+              nextResetDate: nextReset,
+            });
+
+            await entitlement.save();
+          }
+        } catch (error) {
+          failed.push({
+            employeeId,
+            error: error.message,
+          });
+        }
+      }
+    }
 
     // Get all entitlements
     const entitlements = await this.leaveEntitlementModel.find().exec();
@@ -3921,17 +4312,6 @@ export class LeavesService {
           .findOne({ leaveTypeId })
           .exec();
         if (!policy) continue;
-
-        // Only process if accrual method matches
-        const shouldProcess =
-          (accrualType === 'monthly' &&
-            policy.accrualMethod === AccrualMethod.MONTHLY) ||
-          (accrualType === 'quarterly' &&
-            policy.accrualMethod === AccrualMethod.PER_TERM) ||
-          (accrualType === 'yearly' &&
-            policy.accrualMethod === AccrualMethod.YEARLY);
-
-        if (!shouldProcess) continue;
 
         // Validate employee status - skip if not active
         const employee = await this.employeeProfileModel
@@ -3971,6 +4351,65 @@ export class LeavesService {
           continue;
         }
 
+        // Reset if nextResetDate has passed
+        if (!entitlement.nextResetDate) {
+          const nextReset = new Date(now);
+          nextReset.setFullYear(nextReset.getFullYear() + 1);
+          entitlement.nextResetDate = nextReset;
+        } else if (entitlement.nextResetDate <= now) {
+          const carryForward =
+            policy.carryForwardAllowed && policy.maxCarryForward !== undefined
+              ? Math.min(
+                  entitlement.remaining || 0,
+                  policy.maxCarryForward ||
+                    parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
+                )
+              : policy.carryForwardAllowed
+                ? entitlement.remaining || 0
+                : 0;
+
+          entitlement.carryForward = carryForward;
+          entitlement.taken = 0;
+          entitlement.pending = 0;
+          entitlement.accruedActual = 0;
+          entitlement.accruedRounded = 0;
+          entitlement.yearlyEntitlement = 0;
+          entitlement.remaining = carryForward;
+          const nextReset = new Date(now);
+          nextReset.setFullYear(nextReset.getFullYear() + 1);
+          entitlement.nextResetDate = nextReset;
+          entitlement.lastAccrualDate = now;
+        }
+
+        // Determine accrual window based on last accrual date and policy method
+        let startDate: Date;
+        if (entitlement.lastAccrualDate) {
+          startDate = new Date(entitlement.lastAccrualDate);
+        } else if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+          const q = Math.floor(now.getMonth() / 3);
+          startDate = new Date(now.getFullYear(), q * 3, 1);
+        } else {
+          startDate = new Date(now.getFullYear(), 0, 1);
+        }
+
+        // Only accrue if due based on lastAccrualDate + interval
+        if (entitlement.lastAccrualDate) {
+          const last = new Date(entitlement.lastAccrualDate);
+          const nextAccrual = new Date(last);
+          if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+            nextAccrual.setMonth(nextAccrual.getMonth() + 1);
+          } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+            nextAccrual.setMonth(nextAccrual.getMonth() + 3);
+          } else {
+            nextAccrual.setFullYear(nextAccrual.getFullYear() + 1);
+          }
+          if (now < nextAccrual) {
+            continue;
+          }
+        }
+
         // Calculate accrual
         const accrual = await this.calculateAccrualForEmployee(
           employeeId,
@@ -3979,25 +4418,34 @@ export class LeavesService {
           endDate,
         );
 
-        // Update entitlement
-        entitlement.accruedActual =
-          (entitlement.accruedActual || 0) + accrual.actual;
-        entitlement.accruedRounded =
-          (entitlement.accruedRounded || 0) + accrual.rounded;
+        // Carry forward from previous remaining with cap if allowed
+        const carryForward =
+          policy.carryForwardAllowed && policy.maxCarryForward !== undefined
+            ? Math.min(
+                entitlement.remaining || 0,
+                policy.maxCarryForward ||
+                  parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
+              )
+            : policy.carryForwardAllowed
+              ? entitlement.remaining || 0
+              : 0;
 
-        // Calculate remaining based on accrual method
-        // For YEARLY accrual: use yearlyEntitlement (upfront allocation)
-        // For MONTHLY/QUARTERLY: use accruedRounded (incremental accrual)
-        const baseAllowance =
-          policy.accrualMethod === AccrualMethod.YEARLY
-            ? entitlement.yearlyEntitlement || 0
-            : entitlement.accruedRounded || 0;
+        entitlement.carryForward = carryForward;
 
-        entitlement.remaining =
-          (entitlement.carryForward || 0) +
-          baseAllowance -
-          (entitlement.taken || 0) -
-          (entitlement.pending || 0);
+        // Update entitlement according to requested logic
+        entitlement.yearlyEntitlement =
+          (entitlement.yearlyEntitlement || 0) + accrual.rounded;
+        entitlement.accruedActual = accrual.actual;
+        entitlement.accruedRounded = accrual.rounded;
+
+        // Remaining = new accrual + carry forward minus already taken/pending
+        entitlement.remaining = Math.max(
+          0,
+          accrual.rounded +
+            carryForward -
+            (entitlement.taken || 0) -
+            (entitlement.pending || 0),
+        );
         entitlement.lastAccrualDate = now;
 
         await entitlement.save();
@@ -4016,202 +4464,173 @@ export class LeavesService {
     };
   }
 
+
+
   /**
-   * Calculate next reset date based on hire date criterion
-   * REQ-041: Reset parameters configuration
-   * @param employeeId Employee ID
-   * @returns Next reset date
+   * Daily reset/accrual check: if nextResetDate is passed, reset entitlement and apply current period accrual
    */
-  async calculateResetDate(employeeId: string): Promise<Date> {
-    if (!Types.ObjectId.isValid(employeeId)) {
-      throw new BadRequestException('Invalid employee ID format');
-    }
-
-    // Get employee hire date
-    const hireDate = await this.getEmployeeHireDate(employeeId);
-
-    if (!hireDate) {
-      // Fallback: use January 1st if hire date not available
-      const now = new Date();
-      return new Date(now.getFullYear() + 1, 0, 1);
-    }
-
-    // Calculate next anniversary based on hire date
+  async runDailyResetAndAccrual(): Promise<{
+    reset: number;
+    accrued: number;
+    failed: Array<{ employeeId: string; error: string }>;
+  }> {
     const now = new Date();
-    const currentYear = now.getFullYear();
-
-    // Next reset is on hire date anniversary
-    let nextReset = new Date(
-      currentYear,
-      hireDate.getMonth(),
-      hireDate.getDate(),
-    );
-
-    // If already passed this year, use next year
-    if (nextReset <= now) {
-      nextReset = new Date(
-        currentYear + 1,
-        hireDate.getMonth(),
-        hireDate.getDate(),
-      );
-    }
-
-    return nextReset;
-  }
-
-  /**
-   * Update reset dates for all employees
-   * @returns Update result
-   */
-  async updateAllResetDates(): Promise<{
-    updated: number;
-    failed: Array<{ employeeId: string; error: string }>;
-  }> {
-    const updated: number[] = [];
-    const failed: Array<{ employeeId: string; error: string }> = [];
-
     const entitlements = await this.leaveEntitlementModel.find().exec();
-
-    for (const entitlement of entitlements) {
-      try {
-        const employeeId = entitlement.employeeId.toString();
-        const resetDate = await this.calculateResetDate(employeeId);
-
-        entitlement.nextResetDate = resetDate;
-        await entitlement.save();
-        updated.push(1);
-      } catch (error) {
-        failed.push({
-          employeeId: entitlement.employeeId.toString(),
-          error: error.message,
-        });
-      }
-    }
-
-    return {
-      updated: updated.length,
-      failed,
-    };
-  }
-
-  /**
-   * Process carry-forward for a single employee
-   * REQ-041: Carry-over parameters
-   * @param employeeId Employee ID
-   * @param leaveTypeId Leave type ID
-   */
-  async processCarryForwardForEmployee(
-    employeeId: string,
-    leaveTypeId: string,
-  ): Promise<void> {
-    if (
-      !Types.ObjectId.isValid(employeeId) ||
-      !Types.ObjectId.isValid(leaveTypeId)
-    ) {
-      throw new BadRequestException('Invalid employee or leave type ID format');
-    }
-
-    const entitlement = await this.leaveEntitlementModel
-      .findOne({
-        employeeId,
-        leaveTypeId,
-      })
-      .exec();
-
-    if (!entitlement) {
-      throw new NotFoundException('Entitlement not found');
-    }
-
-    const policy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
-    if (!policy) {
-      throw new NotFoundException('Leave policy not found');
-    }
-
-    // Check if carry-forward is allowed
-    if (!policy.carryForwardAllowed) {
-      // Reset to 0 if not allowed
-      entitlement.carryForward = 0;
-      await entitlement.save();
-      return;
-    }
-
-    // Calculate unused days
-    const unusedDays = entitlement.remaining || 0;
-
-    // Apply cap (use policy max or env variable default)
-    const maxCarryForward =
-      policy.maxCarryForward ||
-      parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45');
-    const carriedForward = Math.min(unusedDays, maxCarryForward);
-
-    // Update entitlement for new period
-    entitlement.carryForward = carriedForward;
-    entitlement.taken = 0;
-    entitlement.pending = 0;
-    entitlement.accruedActual = 0;
-    entitlement.accruedRounded = 0;
-    entitlement.remaining =
-      (entitlement.yearlyEntitlement || 0) + carriedForward;
-
-    // Calculate expiry date if specified
-    await entitlement.save();
-  }
-
-  /**
-   * Run year-end carry-forward for all employees
-   * REQ-041: Automatic carry-forward processing
-   * @returns Processing result
-   */
-  async runYearEndCarryForward(): Promise<{
-    processed: number;
-    capped: Array<{
-      employeeId: string;
-      leaveTypeId: string;
-      original: number;
-      capped: number;
-    }>;
-    failed: Array<{ employeeId: string; error: string }>;
-  }> {
-    const processed: number[] = [];
-    const capped: Array<{
-      employeeId: string;
-      leaveTypeId: string;
-      original: number;
-      capped: number;
-    }> = [];
     const failed: Array<{ employeeId: string; error: string }> = [];
-
-    const entitlements = await this.leaveEntitlementModel.find().exec();
+    let reset = 0;
+    let accrued = 0;
 
     for (const entitlement of entitlements) {
       try {
         const employeeId = entitlement.employeeId.toString();
         const leaveTypeId = entitlement.leaveTypeId.toString();
+        const policy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+        if (!policy) continue;
 
-        const policy = await this.leavePolicyModel
-          .findOne({ leaveTypeId })
-          .exec();
-        if (!policy || !policy.carryForwardAllowed) continue;
-
-        const originalRemaining = entitlement.remaining || 0;
-        const maxCarryForward =
-          policy.maxCarryForward ||
-          parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45');
-
-        // Process carry-forward
-        await this.processCarryForwardForEmployee(employeeId, leaveTypeId);
-
-        // Track if capping was applied
-        if (originalRemaining > maxCarryForward) {
-          capped.push({
-            employeeId,
-            leaveTypeId,
-            original: originalRemaining,
-            capped: maxCarryForward,
-          });
+        // Notify employee as reset date approaches (month/week/day) with a 24h window to avoid missing by time-of-day
+        if (entitlement.nextResetDate) {
+          const diffDays =
+            (entitlement.nextResetDate.getTime() - now.getTime()) /
+            (1000 * 60 * 60 * 24);
+          const thresholds = [30, 7, 1];
+          const shouldNotify = thresholds.some(
+            (t) => diffDays <= t && diffDays > t - 1,
+          );
+          if (shouldNotify) {
+            const daysLeft = Math.max(1, Math.ceil(diffDays));
+            await this.logNotification(
+              employeeId,
+              'LEAVE_RESET_REMINDER',
+              `Your ${leaveTypeId} balance resets in ${daysLeft} day(s). Consider using or encashing remaining balance.`,
+            );
+          }
         }
 
-        processed.push(1);
+        if (entitlement.nextResetDate && entitlement.nextResetDate <= now) {
+          const carryForward =
+            policy.carryForwardAllowed && policy.maxCarryForward !== undefined
+              ? Math.min(
+                  entitlement.remaining || 0,
+                  policy.maxCarryForward ||
+                    parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
+                )
+              : policy.carryForwardAllowed
+                ? entitlement.remaining || 0
+                : 0;
+
+          entitlement.carryForward = carryForward;
+          entitlement.taken = 0;
+          entitlement.pending = 0;
+          entitlement.accruedActual = 0;
+          entitlement.accruedRounded = 0;
+          entitlement.yearlyEntitlement = 0;
+          entitlement.remaining = carryForward;
+
+          const nextReset = new Date(now);
+          nextReset.setFullYear(nextReset.getFullYear() + 1);
+          entitlement.nextResetDate = nextReset;
+          entitlement.lastAccrualDate = now;
+
+          // Apply policy accrual from scratch for the new cycle
+          let startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          let endDate = now;
+          if (policy.accrualMethod === AccrualMethod.YEARLY) {
+            startDate = new Date(now.getFullYear(), 0, 1);
+          } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+            const quarter = Math.floor(now.getMonth() / 3);
+            startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          }
+
+          const accrual = await this.calculateAccrualForEmployee(
+            employeeId,
+            leaveTypeId,
+            startDate,
+            endDate,
+          );
+
+          entitlement.yearlyEntitlement =
+            (entitlement.yearlyEntitlement || 0) + accrual.rounded;
+          entitlement.accruedActual = accrual.actual;
+          entitlement.accruedRounded = accrual.rounded;
+          entitlement.remaining = Math.max(
+            0,
+            accrual.rounded +
+              (entitlement.carryForward || 0) -
+              (entitlement.taken || 0) -
+              (entitlement.pending || 0),
+          );
+          entitlement.lastAccrualDate = now;
+          await entitlement.save();
+          reset++;
+        }
+
+        // Accrual check based on lastAccrualDate and policy interval (month/quarter/year)
+        const lastAccrual = entitlement.lastAccrualDate
+          ? new Date(entitlement.lastAccrualDate)
+          : null;
+        const nextAccrual = (() => {
+          if (!lastAccrual) return now;
+          const d = new Date(lastAccrual);
+          if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+            d.setMonth(d.getMonth() + 1);
+          } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+            d.setMonth(d.getMonth() + 3);
+          } else {
+            d.setFullYear(d.getFullYear() + 1);
+          }
+          return d;
+        })();
+
+        if (now >= nextAccrual) {
+          let startDate: Date;
+          if (lastAccrual) {
+            startDate = new Date(lastAccrual);
+          } else {
+            // initial accrual window if none exists
+            if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+              startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+            } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+              const quarter = Math.floor(now.getMonth() / 3);
+              startDate = new Date(now.getFullYear(), quarter * 3, 1);
+            } else {
+              startDate = new Date(now.getFullYear(), 0, 1);
+            }
+          }
+
+          const accrual = await this.calculateAccrualForEmployee(
+            employeeId,
+            leaveTypeId,
+            startDate,
+            now,
+          );
+
+          const carryForwardAccrual =
+            policy.carryForwardAllowed && policy.maxCarryForward !== undefined
+              ? Math.min(
+                  entitlement.remaining || 0,
+                  policy.maxCarryForward ||
+                    parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
+                )
+              : policy.carryForwardAllowed
+                ? entitlement.remaining || 0
+                : 0;
+
+          entitlement.carryForward = carryForwardAccrual;
+          entitlement.yearlyEntitlement =
+            (entitlement.yearlyEntitlement || 0) + accrual.rounded;
+          entitlement.accruedActual = accrual.actual;
+          entitlement.accruedRounded = accrual.rounded;
+          entitlement.remaining = Math.max(
+            0,
+            accrual.rounded +
+              (entitlement.carryForward || 0) -
+              (entitlement.taken || 0) -
+              (entitlement.pending || 0),
+          );
+          entitlement.lastAccrualDate = now;
+          await entitlement.save();
+          accrued++;
+        }
       } catch (error) {
         failed.push({
           employeeId: entitlement.employeeId.toString(),
@@ -4220,11 +4639,7 @@ export class LeavesService {
       }
     }
 
-    return {
-      processed: processed.length,
-      capped,
-      failed,
-    };
+    return { reset, accrued, failed };
   }
 
   // ==================== APPROVAL WORKFLOW ====================
@@ -4357,6 +4772,16 @@ export class LeavesService {
     if (!Types.ObjectId.isValid(employeeId)) {
       console.log('[Authorization Debug] Invalid employeeId');
       return false;
+    }
+
+    // If the pending step is explicitly assigned to this user, allow
+    const stepAssignee =
+      (currentStep.decidedBy as any)?._id?.toString?.() ||
+      (currentStep.decidedBy as any)?.toString?.() ||
+      undefined;
+    if (stepAssignee && stepAssignee === userId) {
+      console.log('[Authorization Debug] User is explicitly assigned to this approval step');
+      return true;
     }
 
     // Quick HR role check - query EmployeeSystemRole collection
@@ -4534,11 +4959,14 @@ export class LeavesService {
    */
   async escalateStaleApprovals(): Promise<{
     escalated: number;
+    pending: number;
     errors: string[];
   }> {
-    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '48');
+    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '1');
     const thresholdDate = new Date();
     thresholdDate.setHours(thresholdDate.getHours() - thresholdHours);
+    const hrManagerIds = await this.getHrManagerProfileIds();
+    const dedupeSince = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24h lookback for dedupe
 
     // Find pending requests older than threshold
     const staleRequests = await this.leaveRequestModel.find({
@@ -4546,10 +4974,53 @@ export class LeavesService {
       createdAt: { $lt: thresholdDate },
     });
 
+    // Ensure unique requests by ID
+    const uniqueRequests = Array.from(
+      new Map(
+        staleRequests.map((req) => [req._id.toString(), req]),
+      ).values(),
+    );
+
+    const processedThisRunManager = new Set<string>(); // requestId
+    const processedHrThisRun = new Set<string>(); // `${hrId}:${requestId}`
+    const hrAlertRequests: Array<{ requestId: string; employeeId: string }> = [];
+    const hrRecentMap = new Map<string, Set<string>>(); // hrId -> requestIds
+
     const errors: string[] = [];
     let escalated = 0;
 
-    for (const request of staleRequests) {
+    // Preload recent HR notifications for 24h window to prevent repeats
+    try {
+      const hrObjectIds = hrManagerIds
+        .map((id) => (Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : null))
+        .filter(Boolean) as Types.ObjectId[];
+      if (hrObjectIds.length > 0) {
+        const recentNotifs = await this.notificationLogModel
+          .find({
+            to: { $in: hrObjectIds },
+            type: 'LEAVE_ESCALATION_HR_ALERT',
+            createdAt: { $gte: dedupeSince },
+          })
+          .lean()
+          .exec();
+        for (const notif of recentNotifs) {
+          const hrId = (notif as any).to?.toString?.();
+          if (!hrId) continue;
+          const msg: string = (notif as any).message || '';
+          const match = msg.match(/Leave request\s+([0-9a-fA-F]+)/i);
+          if (!match) continue;
+          const reqId = match[1];
+          if (!hrRecentMap.has(hrId)) {
+            hrRecentMap.set(hrId, new Set());
+          }
+          hrRecentMap.get(hrId)!.add(reqId);
+        }
+      }
+    } catch (err) {
+      // Ignore preload failures; per-run guards still apply
+    }
+
+    for (const request of uniqueRequests) {
       try {
         // Find first pending step
         const pendingIndex = request.approvalFlow.findIndex(
@@ -4558,17 +5029,48 @@ export class LeavesService {
         if (pendingIndex === -1) continue;
 
         const currentStep = request.approvalFlow[pendingIndex];
+        const currentManagerId = currentStep.decidedBy?.toString();
 
         // Check if step is stale
         const stepCreatedAt =
           currentStep.decidedAt || (request as any).createdAt;
         if (stepCreatedAt > thresholdDate) continue;
 
+        const reqId = request._id.toString();
+
         // ESCALATION LOGIC: Find manager's manager via reportsToPositionId
-        if (currentStep.role === 'Manager' && currentStep.decidedBy) {
-          const newManagerId = await this.escalateToNextLevel(
-            currentStep.decidedBy.toString(),
-          );
+        if (currentStep.role === 'Manager' && currentManagerId) {
+          const newManagerId = await this.escalateToNextLevel(currentManagerId);
+
+          // Notify current manager about pending approval
+          const alreadyNotifiedManager =
+            processedThisRunManager.has(request._id.toString()) ||
+            (await this.hasRecentNotification(
+              currentManagerId,
+              'LEAVE_ESCALATION_MANAGER_PENDING',
+              request._id.toString(),
+              dedupeSince,
+            ));
+          if (!alreadyNotifiedManager) {
+            await this.logNotification(
+              currentManagerId,
+              'LEAVE_ESCALATION_MANAGER_PENDING',
+              `Leave request ${request._id.toString()} for employee ${request.employeeId.toString()} has been pending your approval for over ${thresholdHours} hour(s). Please review.`,
+            );
+            processedThisRunManager.add(request._id.toString());
+          }
+
+          // Mark request for HR alert
+          if (hrManagerIds.length === 0) {
+            errors.push(
+              `Request ${request._id}: no HR managers found for escalation notification`,
+            );
+          } else {
+            hrAlertRequests.push({
+              requestId: reqId,
+              employeeId: request.employeeId.toString(),
+            });
+          }
 
           if (newManagerId) {
             // Reassign to higher-level manager
@@ -4577,6 +5079,7 @@ export class LeavesService {
             await request.save();
             escalated++;
 
+            // Notify the next-level manager taking over
             await this.logNotification(
               newManagerId,
               'LEAVE_ESCALATED',
@@ -4595,32 +5098,60 @@ export class LeavesService {
             );
           }
         } else if (currentStep.role === 'HR') {
-          // HR stale: notify HR and employee but do not auto-approve
-          const managerStep = request.approvalFlow.find(
-            (f) => f.role === 'Manager',
-          );
-          const managerId = managerStep?.decidedBy?.toString();
-
-          await this.logNotification(
-            request.employeeId.toString(),
-            'LEAVE_HR_PENDING_ESCALATION',
-            'Your leave request is pending HR action beyond the escalation window',
-          );
-
-          if (managerId) {
-            await this.logNotification(
-              managerId,
-              'LEAVE_HR_PENDING_ESCALATION_NOTIFY',
-              `Leave request for employee ${request.employeeId.toString()} is pending HR action beyond escalation window`,
+          // HR stale: mark for HR alert
+          if (hrManagerIds.length === 0) {
+            errors.push(
+              `Request ${request._id}: HR step pending but no HR managers found for notification`,
             );
+          } else {
+            hrAlertRequests.push({
+              requestId: reqId,
+              employeeId: request.employeeId.toString(),
+            });
           }
         }
       } catch (error) {
+        this.logger.error(
+          `[Escalation] Error for request=${(request as any)?._id?.toString?.() || 'unknown'}: ${error.message}`,
+        );
         errors.push(`Request ${request._id}: ${error.message}`);
       }
     }
 
-    return { escalated, errors };
+    // Send HR alerts per request to each HR (24h dedupe via preload, per-run guard)
+    const uniqueHrAlerts = Array.from(
+      new Map(
+        hrAlertRequests.map((r) => [r.requestId, r]),
+      ).values(),
+    );
+
+    for (const hrId of hrManagerIds) {
+      const hrSeen = hrRecentMap.get(hrId) || new Set<string>();
+
+      for (const alert of uniqueHrAlerts) {
+        const hrKey = `${hrId}:${alert.requestId}`;
+        if (processedHrThisRun.has(hrKey)) {
+          continue;
+        }
+
+        const alreadyNotifiedHr = hrSeen.has(alert.requestId);
+        if (!alreadyNotifiedHr) {
+          processedHrThisRun.add(hrKey); // guard within this run
+          hrSeen.add(alert.requestId);   // guard across runs for this HR
+          await this.logNotification(
+            hrId,
+            'LEAVE_ESCALATION_HR_ALERT',
+            `Leave request ${alert.requestId} for employee ${alert.employeeId} is pending manager/HR action beyond ${thresholdHours} hour(s).`,
+          );
+        } else {
+          processedHrThisRun.add(hrKey);
+        }
+      }
+
+      hrRecentMap.set(hrId, hrSeen);
+    }
+
+    return { escalated, pending: uniqueRequests.length, errors };
   }
 
   /**

@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter, redirect } from "next/navigation";
 import {
     AlertCircle,
     CheckCircle2,
-    FlagTriangleRight,
+    TicketCheck,
+    TicketX,
+    FlagTriangleRight, 
     Loader2,
     ShieldCheck,
     Users,
+    ChevronDown,
+    ChevronUp,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { useAuth } from "@/providers/auth-provider";
@@ -41,24 +45,20 @@ import {
     CalendarResponse,
     Holiday,
     HOLIDAY_TYPES,
-    calculateResetDates,
     cancelLeaveRequest,
     createAdjustment,
     createLeaveCategory,
     createLeaveType,
     fetchPolicies,
+    fetchPositionOptions,
     createLeavePolicy,
     updateLeavePolicy,
-    deleteLeavePolicy,
-    deleteLeaveCategory,
-    deleteLeaveType,
     fetchAllRequests,
     fetchLeaveCategories,
     fetchLeaveTypes,
     flagIrregularRequest,
     overrideRequest,
     runAccrual,
-    runCarryForward,
     updateLeaveCategory,
     updateLeaveType,
     createEntitlement,
@@ -81,8 +81,8 @@ import {
     AuditTrailEntry,
     fetchAuditTrail,
     createBatchEntitlement,
-    createGroupEntitlement,
     BatchEntitlementResponse,
+    updateEntitlement,
     updateApprovalFlow,
     ApprovalFlowStep,
     fetchEmployeeRequests,
@@ -99,15 +99,17 @@ type Capability =
     | "canOverride"
     | "canAdjust"
     | "canRunOps"
+    | "canViewEntitlements"
     | "canManageCatalog"
     | "canManagePolicies"
     | "canSeeAllRequests";
 
 const ROLE_CAPABILITIES: Record<Capability, string[]> = {
     canApprove: ["department head", "HR Manager", "HR Admin", "System Admin"],
-    canOverride: ["HR Admin", "System Admin"],
+    canOverride: ["HR Admin", "HR Manager", "System Admin"],
     canAdjust: ["HR Manager", "HR Admin", "System Admin"],
     canRunOps: ["HR Admin", "System Admin"],
+    canViewEntitlements: ["department head", "HR Manager", "HR Admin", "System Admin"],
     canManageCatalog: ["HR Manager", "HR Admin", "System Admin"],
     canManagePolicies: ["HR Admin", "System Admin"],
     canSeeAllRequests: ["HR Manager", "HR Admin", "System Admin"],
@@ -127,8 +129,8 @@ const ROUNDING_RULE_OPTIONS = [
     { value: "round_down", label: "Round down" },
 ] as const;
 
-// Mirror employee-profile enums (keep in sync if enums change)
-const JOB_POSITION_OPTIONS = [
+// Mirror employee-profile enums (keep in sync if enums change) - used as fallback
+const DEFAULT_JOB_POSITION_OPTIONS = [
     "INTERN",
     "JUNIOR",
     "MID",
@@ -149,6 +151,10 @@ type Filters = {
     leaveTypeId: string;
     employeeId: string;
     departmentId?: string;
+    startDate?: string;
+    endDate?: string;
+    sortBy?: "dates.from" | "createdAt";
+    sortOrder?: "asc" | "desc";
 };
 
 type PolicyFormState = {
@@ -176,13 +182,19 @@ export default function LeavesDashboardPage() {
     const normalizedRole = normalizeRole(currentRole);
     const can = (capability: Capability) =>
         ROLE_CAPABILITIES[capability].map(normalizeRole).includes(normalizedRole);
+    const canEditApprovalFlow = ["hr admin", "system admin","department head", "HR Manager"].includes(normalizedRole);
 
     const [filters, setFilters] = useState<Filters>({
         status: "",
         leaveTypeId: "",
         employeeId: "",
         departmentId: "",
+        startDate: "",
+        endDate: "",
+        sortBy: "createdAt",
+        sortOrder: "desc",
     });
+    const [positionOptions, setPositionOptions] = useState<string[]>([...DEFAULT_JOB_POSITION_OPTIONS]);
     const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
     const [requests, setRequests] = useState<LeaveRequest[]>([]);
     const [loading, setLoading] = useState(true);
@@ -216,18 +228,37 @@ export default function LeavesDashboardPage() {
     });
     const [policyEdits, setPolicyEdits] = useState<Record<string, PolicyFormState>>({});
     const [policySavingId, setPolicySavingId] = useState<string | null>(null);
-  const [entitlementForm, setEntitlementForm] = useState({
-    employeeId: "",
-    leaveTypeId: "",
-    yearlyEntitlement: "",
-    accruedActual: "",
-    accruedRounded: "",
-    carryForward: "",
-    personalized: false,
-  });
+    const [expandedPolicyIds, setExpandedPolicyIds] = useState<Set<string>>(new Set());
+    const [entitlementForm, setEntitlementForm] = useState({
+        employeeId: "",
+        leaveTypeId: "",
+        yearlyEntitlement: "",
+        accruedActual: "",
+        accruedRounded: "",
+        carryForward: "",
+        personalized: false,
+    });
     const [entitlements, setEntitlements] = useState<LeaveEntitlement[]>([]);
     const [entitlementSearchEmployee, setEntitlementSearchEmployee] = useState("");
-  const [calendarYear, setCalendarYear] = useState("");
+    const [entitlementDetails, setEntitlementDetails] = useState<LeaveEntitlement | null>(null);
+    const [entitlementEditForm, setEntitlementEditForm] = useState({
+        yearlyEntitlement: "",
+        accruedActual: "",
+        accruedRounded: "",
+        carryForward: "",
+        taken: "",
+        pending: "",
+        remaining: "",
+        lastAccrualDate: "",
+        nextResetDate: "",
+    });
+    const [savingEntitlement, setSavingEntitlement] = useState(false);
+    const [pendingEntitlementUpdate, setPendingEntitlementUpdate] = useState<{
+        id: string;
+        payload: any;
+    } | null>(null);
+    const [entitlementAdjustmentMode, setEntitlementAdjustmentMode] = useState(false);
+    const [calendarYear, setCalendarYear] = useState("");
     const [calendar, setCalendar] = useState<CalendarResponse | null>(null);
     const [calendarLoading, setCalendarLoading] = useState(false);
     const [blockedForm, setBlockedForm] = useState({ from: "", to: "", reason: "" });
@@ -260,6 +291,7 @@ export default function LeavesDashboardPage() {
     const [notifications, setNotifications] = useState<NotificationLog[]>([]);
     const [notificationsLoading, setNotificationsLoading] = useState(false);
     const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null);
+    const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
     const [auditEmployeeId, setAuditEmployeeId] = useState("");
     const [auditTrail, setAuditTrail] = useState<AuditTrailEntry[]>([]);
     const [auditLoading, setAuditLoading] = useState(false);
@@ -286,21 +318,6 @@ export default function LeavesDashboardPage() {
     const [batchResult, setBatchResult] = useState<BatchEntitlementResponse | null>(null);
     const [batchSubmitting, setBatchSubmitting] = useState(false);
 
-    // Group entitlement state
-    const [groupEntitlementForm, setGroupEntitlementForm] = useState({
-        departmentId: "",
-        positionId: "",
-        contractType: "",
-        minTenure: "",
-        leaveTypeId: "",
-        yearlyEntitlement: "",
-        accruedActual: "",
-        accruedRounded: "",
-        carryForward: "",
-        personalized: false,
-    });
-    const [groupResult, setGroupResult] = useState<BatchEntitlementResponse | null>(null);
-    const [groupSubmitting, setGroupSubmitting] = useState(false);
 
     // Approval flow editing state
     const [showApprovalFlowModal, setShowApprovalFlowModal] = useState(false);
@@ -315,6 +332,11 @@ export default function LeavesDashboardPage() {
     const [overlappingLoading, setOverlappingLoading] = useState(false);
     const [showOverlappingOnly, setShowOverlappingOnly] = useState(true);
 
+    const totalDurationDays = useMemo(
+        () => requests.reduce((sum, req) => sum + getRequestDurationDays(req), 0),
+        [requests],
+    );
+
     useEffect(() => {
         if (status === "unauthenticated") {
             router.replace("/auth/login");
@@ -324,7 +346,7 @@ export default function LeavesDashboardPage() {
     const loadBase = async () => {
         setError(null);
         try {
-            const [types, cats, pols, hols] = await Promise.all([
+            const [types, cats, pols, hols, posOpts, depts] = await Promise.all([
                 fetchLeaveTypes().catch(() => []),
                 fetchLeaveCategories().catch(() => []),
                 can("canManagePolicies") ? fetchPolicies().catch(() => []) : Promise.resolve([]),
@@ -332,12 +354,20 @@ export default function LeavesDashboardPage() {
                 can("canSeeAllRequests") || normalizedRole === "department head"
                     ? fetchHolidays().catch(() => [])
                     : Promise.resolve([]),
+                fetchPositionOptions().catch(() => DEFAULT_JOB_POSITION_OPTIONS),
+                fetchHeadDepartments().catch(() => []),
             ]);
             setLeaveTypes(types || []);
             setCategories(cats || []);
             setPolicies(pols || []);
             setHolidays(hols || []);
+            const mergedPositions = Array.from(
+                new Set([...(posOpts || []), ...DEFAULT_JOB_POSITION_OPTIONS]),
+            );
+            setPositionOptions(mergedPositions);
+            setHeadDepartments(depts || []);
         } catch (err: any) {
+            setPositionOptions([...DEFAULT_JOB_POSITION_OPTIONS]);
             setError(err?.response?.data?.message || "Failed to load leave catalog.");
         }
     };
@@ -409,6 +439,18 @@ export default function LeavesDashboardPage() {
         setPolicyEdits(mapped);
     }, [policies]);
 
+    const togglePolicyExpanded = (pid: string) => {
+        setExpandedPolicyIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(pid)) {
+                next.delete(pid);
+            } else {
+                next.add(pid);
+            }
+            return next;
+        });
+    };
+
     const loadProfileForScope = async () => {
         if (can("canSeeAllRequests")) return;
         if (!user?.id) return;
@@ -442,8 +484,10 @@ export default function LeavesDashboardPage() {
                 const myReqs = await fetchEmployeeRequests({
                     status: filters.status || undefined,
                     leaveTypeId: filters.leaveTypeId || undefined,
-                    sortBy: "createdAt",
-                    sortOrder: "desc",
+                    startDate: filters.startDate || undefined,
+                    endDate: filters.endDate || undefined,
+                    sortBy: filters.sortBy || "createdAt",
+                    sortOrder: filters.sortOrder || "desc",
                 });
                 const reqs = (myReqs || []).map((r: any) => ({
                     ...r,
@@ -458,26 +502,28 @@ export default function LeavesDashboardPage() {
                 leaveTypeId: filters.leaveTypeId || undefined,
                 employeeId: filters.employeeId || undefined,
                 departmentId: filters.departmentId || undefined,
-                sortBy: "createdAt",
-                sortOrder: "desc",
+                startDate: filters.startDate || undefined,
+                endDate: filters.endDate || undefined,
+                sortBy: filters.sortBy || "createdAt",
+                sortOrder: filters.sortOrder || "desc",
             };
 
             if (!can("canSeeAllRequests")) {
-            const deptId =
-                filters.departmentId ||
-                (profile as any)?.department?._id ||
-                (profile as any)?.department?.id ||
-                (profile as any)?.department?.toString?.();
-            if (deptId) {
-                baseFilters.departmentId = deptId;
-            } else if (normalizedRole === "department head") {
-                // Let backend auto-scope department heads to their managed departments
-                baseFilters.departmentId = headDepartments?.map((d) => d.id) || undefined;
-                baseFilters.employeeId = undefined;
-            } else if (user?.id) {
-                baseFilters.employeeId = user.id;
+                const deptId =
+                    filters.departmentId ||
+                    (profile as any)?.department?._id ||
+                    (profile as any)?.department?.id ||
+                    (profile as any)?.department?.toString?.();
+                if (deptId) {
+                    baseFilters.departmentId = deptId;
+                } else if (normalizedRole === "department head") {
+                    // Let backend auto-scope department heads to their managed departments
+                    baseFilters.departmentId = headDepartments?.map((d) => d.id) || undefined;
+                    baseFilters.employeeId = undefined;
+                } else if (user?.id) {
+                    baseFilters.employeeId = user.id;
+                }
             }
-        }
 
         const rawReqs = await fetchAllRequests(baseFilters);
         const reqs = (rawReqs || []).map((r: any) => ({
@@ -496,7 +542,7 @@ export default function LeavesDashboardPage() {
         if (!user?.id) return;
         setNotificationsLoading(true);
         try {
-            const toParam = can("canSeeAllRequests") ? undefined : user.id;
+            const toParam =user.id;
             const data = await fetchNotifications(toParam ? { to: toParam } : undefined);
             setNotifications(data || []);
         } catch (err) {
@@ -516,7 +562,13 @@ export default function LeavesDashboardPage() {
     useEffect(() => {
         if (status === "authenticated") {
             void loadProfileForScope();
-            if (normalizedRole === "department head") {
+            // Department head, HR Admin, HR Manager, System Admin: load departments for dropdown
+            if (
+                normalizedRole === "department head" ||
+                normalizedRole === "hr admin" ||
+                normalizedRole === "hr manager" ||
+                normalizedRole === "system admin"
+            ) {
                 fetchHeadDepartments()
                     .then((depts) => setHeadDepartments(depts || []))
                     .catch(() => setHeadDepartments([]));
@@ -532,7 +584,18 @@ export default function LeavesDashboardPage() {
             void loadRequests();
             void loadNotifications();
         }
-    }, [status, filters.status, filters.leaveTypeId, filters.employeeId, filters.departmentId, normalizedRole]);
+    }, [
+        status,
+        filters.status,
+        filters.leaveTypeId,
+        filters.employeeId,
+        filters.departmentId,
+        filters.startDate,
+        filters.endDate,
+        filters.sortBy,
+        filters.sortOrder,
+        normalizedRole,
+    ]);
 
     const stats = useMemo(() => {
         const result = {
@@ -553,6 +616,29 @@ export default function LeavesDashboardPage() {
         const step = req.approvalFlow?.find((s) => s.status === "pending");
         return step?.role?.toLowerCase?.() || null;
     };
+
+    const fetchAndSelectRequest = async (req: LeaveRequest) => {
+        setSelectedRequest(req);
+        return req;
+    };
+
+    const normalizeApprovalFlowForEdit = (flow?: any[]): ApprovalFlowStep[] =>
+        (flow || []).map((step: any) => {
+            const decidedByRaw =
+                typeof step?.decidedBy === "string"
+                    ? step.decidedBy
+                    : step?.decidedBy?._id?.toString?.() ||
+                      step?.decidedBy?.id?.toString?.() ||
+                      step?.decidedBy?.toString?.();
+            const decidedBy = decidedByRaw?.trim?.();
+
+            return {
+                role: step?.role || "",
+                status: (step?.status as ApprovalFlowStep["status"]) || "pending",
+                decidedBy: decidedBy || undefined,
+                decidedAt: step?.decidedAt || undefined,
+            };
+        });
 
     // Check if the current user's approval step is pending
     const canUserApproveRequest = (req: LeaveRequest): boolean => {
@@ -722,20 +808,7 @@ export default function LeavesDashboardPage() {
             setError(err?.response?.data?.message || "Update category failed.");
         }
     };
-
-    const handleDeleteCategory = async (id: string) => {
-        if (!can("canManageCatalog")) return;
-        setActionMessage(null);
-        setError(null);
-        try {
-            await deleteLeaveCategory(id);
-            await loadBase();
-            setActionMessage("Category deleted.");
-        } catch (err: any) {
-            setError(err?.response?.data?.message || "Delete category failed.");
-        }
-    };
-
+    
     const handleCreateType = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!can("canManageCatalog")) return;
@@ -825,22 +898,6 @@ export default function LeavesDashboardPage() {
             await loadBase();
         } catch (err: any) {
             setError(err?.response?.data?.message || "Policy update failed.");
-        } finally {
-            setPolicySavingId(null);
-        }
-    };
-
-    const handleDeletePolicyInline = async (id: string) => {
-        if (!can("canManagePolicies")) return;
-        setActionMessage(null);
-        setError(null);
-        setPolicySavingId(id);
-        try {
-            await deleteLeavePolicy(id);
-            setActionMessage("Policy deleted.");
-            await loadBase();
-        } catch (err: any) {
-            setError(err?.response?.data?.message || "Delete policy failed.");
         } finally {
             setPolicySavingId(null);
         }
@@ -1060,6 +1117,32 @@ export default function LeavesDashboardPage() {
         return { name, code };
     };
 
+    const getEntitlementId = (ent: any) =>
+        ent?.id || ent?._id || (typeof ent?.entitlementId === "string" ? ent.entitlementId : "");
+
+    const numToStr = (val: any) =>
+        val === undefined || val === null || Number.isNaN(val) ? "" : `${val}`;
+
+    const setEntitlementFormFromData = (ent: any) => {
+        const toDateInput = (val?: string) => {
+            if (!val) return "";
+            const d = new Date(val);
+            return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+        };
+
+        setEntitlementEditForm({
+            yearlyEntitlement: numToStr(ent?.yearlyEntitlement),
+            accruedActual: numToStr(ent?.accruedActual),
+            accruedRounded: numToStr(ent?.accruedRounded),
+            carryForward: numToStr(ent?.carryForward),
+            taken: numToStr(ent?.taken),
+            pending: numToStr(ent?.pending),
+            remaining: numToStr(ent?.remaining),
+            lastAccrualDate: toDateInput(ent?.lastAccrualDate),
+            nextResetDate: toDateInput(ent?.nextResetDate),
+        });
+    };
+
     const handleLoadEntitlements = async (employeeIdParam?: string | any) => {
         const targetEmployeeId = normalizeId(employeeIdParam ?? entitlementSearchEmployee);
         if (!targetEmployeeId) {
@@ -1092,21 +1175,62 @@ export default function LeavesDashboardPage() {
             amount: "",
             reason: "",
         });
+        setEntitlementAdjustmentMode(false);
+        setPendingEntitlementUpdate(null);
         setShowAdjustmentModal(true);
     };
 
+    const closeAdjustmentModal = () => {
+        setShowAdjustmentModal(false);
+        setEntitlementAdjustmentMode(false);
+        setPendingEntitlementUpdate(null);
+    };
 
-    const handleDeleteType = async (id: string) => {
-        if (!can("canManageCatalog")) return;
-        setActionMessage(null);
+    const openEntitlementDetails = (ent: any) => {
+        setEntitlementDetails(ent as any);
+        setEntitlementFormFromData(ent);
+    };
+
+    const handleSaveEntitlementDetails = async () => {
+        if (!entitlementDetails) return;
+        const entitlementId = getEntitlementId(entitlementDetails);
+        if (!entitlementId) return;
+
         setError(null);
-        try {
-            await deleteLeaveType(id);
-            await loadBase();
-            setActionMessage("Leave type deleted.");
-        } catch (err: any) {
-            setError(err?.response?.data?.message || "Delete leave type failed.");
+        setActionMessage(null);
+
+        const payload: any = {};
+
+        if (entitlementEditForm.lastAccrualDate) {
+            const d = new Date(entitlementEditForm.lastAccrualDate);
+            if (!Number.isNaN(d.getTime())) {
+                payload.lastAccrualDate = d.toISOString();
+            }
         }
+
+        if (entitlementEditForm.nextResetDate) {
+            const d = new Date(entitlementEditForm.nextResetDate);
+            if (!Number.isNaN(d.getTime())) {
+                payload.nextResetDate = d.toISOString();
+            }
+        }
+
+        setPendingEntitlementUpdate({ id: entitlementId, payload });
+
+        const leaveTypeId = getEntitlementLeaveTypeId(entitlementDetails);
+        const disp = getEntitlementDisplay(entitlementDetails);
+
+        setAdjustment({
+            employeeId: normalizeId(entitlementDetails.employeeId),
+            leaveTypeId,
+            leaveTypeLabel: `${disp.name}${disp.code ? ` (${disp.code})` : ""}`,
+            adjustmentType: "add",
+            amount: "0",
+            reason: "",
+        });
+
+        setEntitlementAdjustmentMode(true);
+        setShowAdjustmentModal(true);
     };
 
     const handleOverride = async (id: string, decision: "approve" | "reject") => {
@@ -1141,23 +1265,27 @@ export default function LeavesDashboardPage() {
         }
     };
 
-    const handleCancel = async (id: string) => {
-        setBusyId(id);
-        setError(null);
-        try {
-            await cancelLeaveRequest(id);
-            await loadRequests();
-        } catch (err: any) {
-            setError(err?.response?.data?.message || "Cancel failed.");
-        } finally {
-            setBusyId(null);
-        }
-    };
+
 
     const handleAdjustment = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!can("canAdjust")) return;
         if (!user?.id) return;
+        const parsedAmount = Number(adjustment.amount);
+        const isEntitlementUpdate = entitlementAdjustmentMode && pendingEntitlementUpdate;
+        if (!adjustment.employeeId || !adjustment.leaveTypeId) {
+            setError("Select an entitlement before creating an adjustment.");
+            return;
+        }
+        if (!Number.isFinite(parsedAmount) || (!isEntitlementUpdate && parsedAmount <= 0)) {
+            setError(isEntitlementUpdate ? "Amount must be a number." : "Enter a positive adjustment amount.");
+            return;
+        }
+        const reason = adjustment.reason.trim();
+        if (!reason) {
+            setError("Adjustment reason is required.");
+            return;
+        }
         setSubmittingAdjustment(true);
         setError(null);
         setActionMessage(null);
@@ -1166,55 +1294,63 @@ export default function LeavesDashboardPage() {
                 employeeId: adjustment.employeeId,
                 leaveTypeId: adjustment.leaveTypeId,
                 adjustmentType: adjustment.adjustmentType as any,
-                amount: Number(adjustment.amount),
-                reason: adjustment.reason,
+                amount: parsedAmount,
+                reason,
                 hrUserId: user.id,
             });
-            setActionMessage("Adjustment created.");
-            const refreshEmployee = adjustment.employeeId;
-            setAdjustment({
-                employeeId: "",
-                leaveTypeId: "",
-                leaveTypeLabel: "",
-                adjustmentType: "add",
-                amount: "",
-                reason: "",
-            });
-            setShowAdjustmentModal(false);
-            if (refreshEmployee) {
-                setEntitlementSearchEmployee(refreshEmployee);
-                await handleLoadEntitlements(refreshEmployee);
-                await handleLoadAuditTrail(refreshEmployee);
+            if (isEntitlementUpdate && pendingEntitlementUpdate) {
+                setSavingEntitlement(true);
+                const updated = await updateEntitlement(pendingEntitlementUpdate.id, pendingEntitlementUpdate.payload);
+                setEntitlementDetails(null);
+                setEntitlementFormFromData(updated);
+                setEntitlements((prev) =>
+                    prev.map((e) => (getEntitlementId(e) === pendingEntitlementUpdate.id ? (updated as any) : e)),
+                );
+                setActionMessage("Entitlement updated.");
+                setPendingEntitlementUpdate(null);
+                setEntitlementAdjustmentMode(false);
+                closeAdjustmentModal();
+            } else {
+                setActionMessage("Adjustment created.");
+                const refreshEmployee = adjustment.employeeId;
+                setAdjustment({
+                    employeeId: "",
+                    leaveTypeId: "",
+                    leaveTypeLabel: "",
+                    adjustmentType: "add",
+                    amount: "",
+                    reason: "",
+                });
+                closeAdjustmentModal();
+                if (refreshEmployee) {
+                    setEntitlementSearchEmployee(refreshEmployee);
+                    await handleLoadEntitlements(refreshEmployee);
+                    await handleLoadAuditTrail(refreshEmployee);
+                }
             }
-            await loadRequests();
         } catch (err: any) {
             setError(err?.response?.data?.message || "Adjustment failed.");
         } finally {
             setSubmittingAdjustment(false);
+            setSavingEntitlement(false);
         }
     };
 
-  const handleOps = async (op: "monthly" | "quarterly" | "yearly" | "carry" | "reset") => {
-    if (!can("canRunOps")) return;
-    setActionMessage(null);
-    setError(null);
-    setLoading(true);
+    const handleRunAccrual = async () => {
+        if (!can("canRunOps")) return;
+        setActionMessage(null);
+        setError(null);
+        setLoading(true);
         try {
-            if (op === "carry") {
-                await runCarryForward();
-            } else if (op === "reset") {
-                await calculateResetDates();
-            } else {
-                await runAccrual(op);
-            }
-            setActionMessage("Operation triggered successfully.");
+            await runAccrual();
+            setActionMessage("Accrual triggered successfully.");
             await loadRequests();
         } catch (err: any) {
             setError(err?.response?.data?.message || "Operation failed.");
         } finally {
-      setLoading(false);
-    }
-  };
+            setLoading(false);
+        }
+    };
 
     const handleBatchEntitlement = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1274,79 +1410,39 @@ export default function LeavesDashboardPage() {
         }
     };
 
-    const handleGroupEntitlement = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!can("canManagePolicies")) return;
-        setActionMessage(null);
-        setError(null);
-        setGroupSubmitting(true);
-        setGroupResult(null);
-        try {
-            const filters: any = {};
-            if (groupEntitlementForm.departmentId) filters.departmentId = groupEntitlementForm.departmentId;
-            if (groupEntitlementForm.positionId) filters.positionId = groupEntitlementForm.positionId;
-            if (groupEntitlementForm.contractType) filters.contractType = groupEntitlementForm.contractType;
-            if (groupEntitlementForm.minTenure) filters.minTenure = Number(groupEntitlementForm.minTenure);
+    const openApprovalFlowEditor = (target?: LeaveRequest) => {
+        if (!canEditApprovalFlow) return;
+        const requestToEdit = target || selectedRequest;
+        if (!requestToEdit || requestToEdit.status !== "pending") return;
 
-            const payload: any = {
-                filters,
-                leaveTypeId: groupEntitlementForm.leaveTypeId,
-                personalized: groupEntitlementForm.personalized,
-            };
-
-            if (groupEntitlementForm.yearlyEntitlement) {
-                payload.yearlyEntitlement = Number(groupEntitlementForm.yearlyEntitlement);
-            }
-            if (groupEntitlementForm.accruedActual) {
-                payload.accruedActual = Number(groupEntitlementForm.accruedActual);
-            }
-            if (groupEntitlementForm.accruedRounded) {
-                payload.accruedRounded = Number(groupEntitlementForm.accruedRounded);
-            }
-            if (groupEntitlementForm.carryForward) {
-                payload.carryForward = Number(groupEntitlementForm.carryForward);
-            }
-
-            const result = await createGroupEntitlement(payload);
-            setGroupResult(result);
-            setActionMessage(
-                `Group entitlement: ${result.created} created, ${result.skipped} skipped, ${result.failed} failed.`
-            );
-            setGroupEntitlementForm({
-                departmentId: "",
-                positionId: "",
-                contractType: "",
-                minTenure: "",
-                leaveTypeId: "",
-                yearlyEntitlement: "",
-                accruedActual: "",
-                accruedRounded: "",
-                carryForward: "",
-                personalized: false,
-            });
-        } catch (err: any) {
-            setError(err?.response?.data?.message || "Group entitlement creation failed.");
-        } finally {
-            setGroupSubmitting(false);
-        }
-    };
-
-    const openApprovalFlowEditor = () => {
-        if (!selectedRequest || !can("canOverride")) return;
-        const flow = selectedRequest.approvalFlow || [];
-        setEditingApprovalFlow(flow.map((step) => ({ ...step })));
+        setSelectedRequest(requestToEdit);
+        setEditingApprovalFlow(normalizeApprovalFlowForEdit(requestToEdit.approvalFlow));
         setShowApprovalFlowModal(true);
     };
 
     const handleUpdateApprovalFlow = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!can("canOverride")) return;
+        if (!canEditApprovalFlow) return;
         if (!selectedRequest?.id) return;
         setSavingApprovalFlow(true);
         setError(null);
         setActionMessage(null);
         try {
-            const updated = await updateApprovalFlow(selectedRequest.id, editingApprovalFlow);
+            const flowPayload = editingApprovalFlow.map((step) => {
+                const parsedDecidedAt = step.decidedAt ? new Date(step.decidedAt) : null;
+                const decidedAt =
+                    parsedDecidedAt && !Number.isNaN(parsedDecidedAt.getTime())
+                        ? parsedDecidedAt.toISOString()
+                        : undefined;
+
+                return {
+                    ...step,
+                    decidedBy: step.decidedBy?.trim?.() || undefined,
+                    decidedAt,
+                };
+            });
+
+            const updated = await updateApprovalFlow(selectedRequest.id, flowPayload);
             setActionMessage("Approval flow updated successfully.");
             setShowApprovalFlowModal(false);
             await loadRequests();
@@ -1396,9 +1492,36 @@ export default function LeavesDashboardPage() {
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-            <Navbar />
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 py-10 space-y-8">
+        <>
+            <style dangerouslySetInnerHTML={{__html: `
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 8px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 4px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.2);
+                    border-radius: 4px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background: rgba(255, 255, 255, 0.3);
+                }
+                .custom-scrollbar {
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+                }
+            `}} />
+            <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+                <Navbar />
+            <div className="flex gap-6 max-w-[95vw] mx-auto px-4 sm:px-6 py-10
+                min-h-screen
+                [&_input[type=number]]:[appearance:textfield]
+                [&_input[type=number]::-webkit-inner-spin-button]:appearance-none
+                [&_input[type=number]::-webkit-outer-spin-button]:appearance-none">
+
+                <main className="flex-1 space-y-8">
                 <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center">
                         <ShieldCheck className="w-6 h-6 text-white" />
@@ -1409,23 +1532,6 @@ export default function LeavesDashboardPage() {
                             Dashboard role: {currentRole}
                             {can("canSeeAllRequests") ? " (full visibility)" : " (scoped to your department/team)"}
                         </p>
-                    </div>
-                    <div className="ml-auto">
-                        <Button
-                            variant="secondary"
-                            onClick={() => loadRequests()}
-                            disabled={loading}
-                            className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:border-white/30"
-                        >
-                            {loading ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Loading
-                                </>
-                            ) : (
-                                "Refresh"
-                            )}
-                        </Button>
                     </div>
                 </div>
 
@@ -1487,11 +1593,9 @@ export default function LeavesDashboardPage() {
                                         Show only overlapping
                                     </label>
                                     <Button
-                                        size="sm"
-                                        variant="outline"
+                                        type="button"
                                         onClick={handleLoadOverlappingLeaves}
                                         disabled={overlappingLoading}
-                                        className="border-white/20 text-white hover:bg-white/10"
                                     >
                                         {overlappingLoading ? (
                                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -1579,7 +1683,7 @@ export default function LeavesDashboardPage() {
                                                         r.id === overlap.requestB || (r as any)._id === overlap.requestB
                                                     );
                                                     return (
-                                                        <div key={idx} className="text-xs p-2 bg-white/5 rounded border border-amber-500/20">
+                                                        <div key={`${overlap.requestA}-${overlap.requestB}-${idx}`} className="text-xs p-2 bg-white/5 rounded border border-amber-500/20">
                                                             <p className="text-slate-300">
                                                                 <span className="font-medium">{renderEmployee(reqA?.employeeId)}</span>{" "}
                                                                 <span className="text-amber-400">({reqA?.status || "pending"})</span>
@@ -1621,7 +1725,7 @@ export default function LeavesDashboardPage() {
                     ))}
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                     <Card className="bg-white/5 border-white/10 text-white lg:col-span-2">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -1629,7 +1733,7 @@ export default function LeavesDashboardPage() {
                                 Requests
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-4">
+                            <CardContent className="space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div className="space-y-1">
                                     <Label>Status</Label>
@@ -1692,6 +1796,90 @@ export default function LeavesDashboardPage() {
                                         disabled={!can("canSeeAllRequests")}
                                     />
                                 </div>
+                                <div className="space-y-1">
+                                    <Label>Date from</Label>
+                                    <Input
+                                        type="date"
+                                        value={filters.startDate}
+                                        onChange={(e) =>
+                                            setFilters((prev) => ({ ...prev, startDate: e.target.value }))
+                                        }
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Date to</Label>
+                                    <Input
+                                        type="date"
+                                        value={filters.endDate}
+                                        onChange={(e) => setFilters((prev) => ({ ...prev, endDate: e.target.value }))}
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Department</Label>
+                                    <Select
+                                        value={filters.departmentId || "__any_dept"}
+                                        onValueChange={(value) =>
+                                            setFilters((prev) => ({
+                                                ...prev,
+                                                departmentId: value === "__any_dept" ? "" : value,
+                                            }))
+                                        }
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Any" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="__any_dept">Any</SelectItem>
+                                            {headDepartments?.map((dept) => (
+                                                <SelectItem key={dept.id} value={dept.id}>
+                                                    {dept.name || dept.code || dept.id}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Sort by</Label>
+                                    <Select
+                                        value={filters.sortBy || "createdAt"}
+                                        onValueChange={(value) =>
+                                            setFilters((prev) => ({
+                                                ...prev,
+                                                sortBy: value as "dates.from" | "createdAt",
+                                            }))
+                                        }
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Created date" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="createdAt">Created date</SelectItem>
+                                            <SelectItem value="dates.from">Leave start date</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Sort order</Label>
+                                    <Select
+                                        value={filters.sortOrder || "desc"}
+                                        onValueChange={(value) =>
+                                            setFilters((prev) => ({
+                                                ...prev,
+                                                sortOrder: value as "asc" | "desc",
+                                            }))
+                                        }
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Descending" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="desc">Newest first</SelectItem>
+                                            <SelectItem value="asc">Oldest first</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
 
                             {loading ? (
@@ -1711,19 +1899,15 @@ export default function LeavesDashboardPage() {
                                                         {selectedRequestIds.size} request(s) selected
                                                     </p>
                                                     <Button
-                                                        size="sm"
-                                                        variant="secondary"
                                                         disabled={bulkProcessing}
                                                         onClick={() => handleBulkAction("approved")}
                                                     >
                                                         {bulkProcessing ? (
                                                             <Loader2 className="w-4 h-4 animate-spin mr-1" />
                                                         ) : null}
-                                                        Bulk Approve
+                                                        Approve
                                                     </Button>
                                                     <Button
-                                                        size="sm"
-                                                        variant="ghost"
                                                         className="text-rose-200"
                                                         disabled={bulkProcessing}
                                                         onClick={() => handleBulkAction("rejected")}
@@ -1731,7 +1915,7 @@ export default function LeavesDashboardPage() {
                                                         {bulkProcessing ? (
                                                             <Loader2 className="w-4 h-4 animate-spin mr-1" />
                                                         ) : null}
-                                                        Bulk Reject
+                                                        Reject
                                                     </Button>
                                                     <Button
                                                         size="sm"
@@ -1763,7 +1947,14 @@ export default function LeavesDashboardPage() {
                                             )}
                                         </div>
                                     )}
-                                    <Table className="text-white">
+                                    <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-200">
+                                        <span>Showing {requests.length} request(s)</span>
+                                        <Badge variant="outline" className="border-white/20 text-white">
+                                            Total days: {totalDurationDays}
+                                        </Badge>
+                                    </div>
+                                    <div className="max-h-[600px] overflow-y-auto custom-scrollbar">
+                                        <Table className="text-white">
                                         <TableHeader>
                                             <TableRow className="border-white/10">
                                                 {isHRRole && (
@@ -1793,6 +1984,7 @@ export default function LeavesDashboardPage() {
                                                 <TableHead className="text-slate-300">Employee</TableHead>
                                                 <TableHead className="text-slate-300">Leave</TableHead>
                                                 <TableHead className="text-slate-300">Dates</TableHead>
+                                                <TableHead className="text-slate-300">Duration</TableHead>
                                                 <TableHead className="text-slate-300">Status</TableHead>
                                                 <TableHead className="text-slate-300">Flags</TableHead>
                                                 <TableHead className="text-slate-300">Actions</TableHead>
@@ -1803,40 +1995,67 @@ export default function LeavesDashboardPage() {
                                             const requestId = req.id || (req as any)._id || `req-${idx}`;
                                             const hrStep = req.approvalFlow?.find((s) => s.role === "HR");
                                             const canSelectForBulk = hrStep?.status === "pending" && req.status !== "cancelled";
+                                            const isExpanded = expandedRequestId === requestId;
 
                                             return (
-                                                <TableRow
-                                                    key={requestId}
-                                                    className="border-white/5 hover:bg-white/5"
-                                                >
-                                                    {isHRRole && (
-                                                        <TableCell className="w-12" onClick={(e) => e.stopPropagation()}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={selectedRequestIds.has(requestId)}
-                                                                onChange={() => toggleRequestSelection(requestId)}
-                                                                disabled={!canSelectForBulk}
-                                                                className={canSelectForBulk ? "cursor-pointer" : "cursor-not-allowed opacity-50"}
-                                                            />
+                                                <React.Fragment key={requestId}>
+                                                    <TableRow
+                                                        className="border-white/5 hover:bg-white/5"
+                                                    >
+                                                        {isHRRole && (
+                                                            <TableCell className="w-12" onClick={(e) => e.stopPropagation()}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedRequestIds.has(requestId)}
+                                                                    onChange={() => toggleRequestSelection(requestId)}
+                                                                    disabled={!canSelectForBulk}
+                                                                    className={canSelectForBulk ? "cursor-pointer" : "cursor-not-allowed opacity-50"}
+                                                                />
+                                                            </TableCell>
+                                                        )}
+                                                        <TableCell
+                                                            className="whitespace-nowrap text-slate-200 cursor-pointer"
+                                                            onClick={() => setSelectedRequest(req)}
+                                                        >
+                                                            {renderEmployee(req.employeeId)}
                                                         </TableCell>
-                                                    )}
-                                                    <TableCell
-                                                        className="whitespace-nowrap text-slate-200 cursor-pointer"
-                                                        onClick={() => setSelectedRequest(req)}
-                                                    >
-                                                        {renderEmployee(req.employeeId)}
-                                                    </TableCell>
-                                                    <TableCell
-                                                        className="cursor-pointer"
-                                                        onClick={() => setSelectedRequest(req)}
-                                                    >
-                                                        {req.leaveType?.name || "-"}
-                                                    </TableCell>
+                                                        <TableCell>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="cursor-pointer" onClick={() => setSelectedRequest(req)}>
+                                                                    {req.leaveType?.name || "-"}
+                                                                </span>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
+                                                                    className="h-6 px-2 text-slate-400 hover:text-slate-300 hover:bg-white/5"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setExpandedRequestId(isExpanded ? null : requestId);
+                                                                        if (!isExpanded) {
+                                                                            void fetchAndSelectRequest(req);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    {isExpanded ? (
+                                                                        <ChevronUp className="w-3 h-3" />
+                                                                    ) : (
+                                                                        <ChevronDown className="w-3 h-3" />
+                                                                    )}
+                                                                    <span className="text-xs ml-1">Details</span>
+                                                                </Button>
+                                                            </div>
+                                                        </TableCell>
                                                     <TableCell
                                                         className="whitespace-nowrap cursor-pointer"
                                                         onClick={() => setSelectedRequest(req)}
                                                     >
                                                         {formatDate(req.dates.from)} - {formatDate(req.dates.to)}
+                                                    </TableCell>
+                                                    <TableCell
+                                                        className="cursor-pointer"
+                                                        onClick={() => setSelectedRequest(req)}
+                                                    >
+                                                        {getRequestDurationDays(req)} day(s)
                                                     </TableCell>
                                                     <TableCell
                                                         className="cursor-pointer"
@@ -1874,7 +2093,6 @@ export default function LeavesDashboardPage() {
                                                                     <>
                                                                         <Button
                                                                             size="sm"
-                                                                            variant="secondary"
                                                                             disabled={busyId === requestId}
                                                                             onClick={() => handleStatus(req, "approved")}
                                                                         >
@@ -1895,7 +2113,7 @@ export default function LeavesDashboardPage() {
                                                         ) : (
                                                             "-"
                                                         )}
-                                                        {can("canOverride") ? (
+                                                        {req.status !== "cancelled" && can("canOverride") ? (
                                                             <>
                                                                 <Button
                                                                     size="sm"
@@ -1904,20 +2122,23 @@ export default function LeavesDashboardPage() {
                                                                     disabled={busyId === requestId}
                                                                     onClick={() => handleOverride(requestId, "approve")}
                                                                 >
-                                                                    Override +
+                                                                    Override 
+                                                                    <TicketCheck className="w-4 h-4 mr-1/" />
                                                                 </Button>
                                                                 <Button
                                                                     size="sm"
                                                                     variant="ghost"
-                                                                    className="text-rose-200"
+                                                                    className="text-rose-200 "
                                                                     disabled={busyId === requestId}
                                                                     onClick={() => handleOverride(requestId, "reject")}
                                                                 >
-                                                                    Override ?
+                                                                    
+                                                                    Override
+                                                                    <TicketX className="w-4 h-4 mr-1" />
                                                                 </Button>
                                                             </>
                                                         ) : null}
-                                                        {can("canApprove") ? (
+                                                        {req.status !== "cancelled" && can("canApprove") ? (
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
@@ -1925,130 +2146,160 @@ export default function LeavesDashboardPage() {
                                                                 disabled={busyId === requestId}
                                                                 onClick={() => handleFlag(requestId)}
                                                             >
-                                                                <FlagTriangleRight className="w-4 h-4 mr-1" />
+                                                                
                                                                 Flag
+                                                                <FlagTriangleRight className="w-4 h-4 mr-1" />
                                                             </Button>
                                                         ) : null}
                                                     </TableCell>
                                                 </TableRow>
-                                            );
-                                        })}
+                                                {isExpanded && selectedRequest && (selectedRequest as any).id === requestId && (
+                                                    <TableRow key={`${requestId}-details`} className="border-white/5">
+                                                        <TableCell colSpan={isHRRole ? 8 : 7} className="bg-white/5">
+                                                            <div className="p-4 space-y-3 text-sm text-slate-200">
+                                                                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                                                                    <span className="font-semibold text-white">
+                                                                        {selectedRequest.leaveType?.name || "Leave request"}
+                                                                    </span>
+                                                                    <Badge variant="secondary" className={
+                                                                        selectedRequest.status === "approved"
+                                                                            ? "bg-emerald-500/20 text-emerald-100"
+                                                                            : selectedRequest.status === "rejected"
+                                                                                ? "bg-rose-500/20 text-rose-100"
+                                                                                : selectedRequest.status === "cancelled"
+                                                                                    ? "bg-slate-500/30 text-slate-200"
+                                                                                    : "bg-amber-500/20 text-amber-100"
+                                                                    }>
+                                                                        {selectedRequest.status}
+                                                                    </Badge>
+                                                                </div>
+                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                    <div>
+                                                                        <p className="text-slate-400 mb-1">Employee</p>
+                                                                        <p className="text-white">
+                                                                            {renderEmployee(selectedRequest.employeeId)}
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-slate-400 mb-1">Dates</p>
+                                                                        <p className="text-white">
+                                                                            {formatDate(selectedRequest.dates.from)} - {formatDate(selectedRequest.dates.to)}
+                                                                        </p>
+                                                                        <p className="text-slate-400 text-xs mt-1">
+                                                                            Duration: {selectedRequest.durationDays} day(s)
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-slate-400 mb-1">Timestamps</p>
+                                                                        <p className="text-white text-xs">
+                                                                            Created: {selectedRequest.createdAt
+                                                                                ? new Date(selectedRequest.createdAt).toLocaleString()
+                                                                                : "N/A"}
+                                                                        </p>
+                                                                        <p className="text-white text-xs">
+                                                                            Updated: {selectedRequest.updatedAt
+                                                                                ? new Date(selectedRequest.updatedAt).toLocaleString()
+                                                                                : "N/A"}
+                                                                        </p>
+                                                                    </div>
+                                                                    {selectedRequest.irregularPatternFlag && (
+                                                                        <div>
+                                                                            <p className="text-slate-400 mb-1">Flags</p>
+                                                                            <Badge variant="destructive">Irregular Pattern</Badge>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                {selectedRequest.justification && (
+                                                                    <div>
+                                                                        <p className="text-slate-400 mb-1">Justification</p>
+                                                                        <p className="text-white">{selectedRequest.justification}</p>
+                                                                    </div>
+                                                                )}
+                                                                {(() => {
+                                                                    const attachmentObj = (selectedRequest as any).attachment || (selectedRequest as any).attachmentId;
+                                                                    if (attachmentObj && typeof attachmentObj === "object" && (attachmentObj._id || attachmentObj.id)) {
+                                                                        const attachmentId = (attachmentObj._id || attachmentObj.id).toString();
+                                                                        const attachmentName = attachmentObj.originalName || attachmentObj.name || "Download Attachment";
+                                                                        return (
+                                                                            <div>
+                                                                                <p className="text-slate-400 mb-1">Attachment</p>
+                                                                                <a
+                                                                                    href={getAttachmentDownloadUrl(attachmentId)}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="text-blue-400 hover:underline text-sm"
+                                                                                >
+                                                                                    {attachmentName}
+                                                                                </a>
+                                                                            </div>
+                                                                        );
+                                                                    }
+                                                                    return null;
+                                                                })()}
+                                                                {selectedRequest.approvalFlow && selectedRequest.approvalFlow.length > 0 ? (
+                                                                    <div className="space-y-1 pt-2 border-t border-white/10">
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <p className="text-sm font-semibold text-white">Approval Workflow:</p>
+                                                                            {canEditApprovalFlow && selectedRequest.status === "pending" ? (
+                                                                                <Button
+                                                                                    size="sm"
+                                                                                    onClick={() => openApprovalFlowEditor(selectedRequest)}
+                                                                                >
+                                                                                    Edit workflow
+                                                                                </Button>
+                                                                            ) : null}
+                                                                        </div>
+                                                                        <div className="space-y-1">
+                                                                            {selectedRequest.approvalFlow.map((step, idx) => (
+                                                                                <div key={idx} className="flex items-center justify-between text-xs p-2 rounded bg-white/5">
+                                                                                    <span className="font-medium">{step.role}</span>
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <Badge
+                                                                                            variant="secondary"
+                                                                                            className={
+                                                                                                step.status === "approved"
+                                                                                                    ? "bg-emerald-500/30 text-emerald-100"
+                                                                                                    : step.status === "rejected"
+                                                                                                        ? "bg-rose-500/30 text-rose-100"
+                                                                                                        : "bg-amber-500/30 text-amber-100"
+                                                                                            }
+                                                                                        >
+                                                                                            {step.status}
+                                                                                        </Badge>
+                                                                                        {step.decidedBy && <span className="text-slate-400">by {step.decidedBy}</span>}
+                                                                                        {step.decidedAt && (
+                                                                                            <span className="text-slate-400">
+                                                                                                {new Date(step.decidedAt).toLocaleDateString()}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                ) : null}
+                                                            </div>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                )}
+                                            </React.Fragment>
+                                        );
+                                    })}
                                     </TableBody>
-                                </Table>
+                                        </Table>
+                                    </div>
                                 </>
                             )}
                         </CardContent>
                     </Card>
 
-                    {selectedRequest ? (
-                        <Card className="bg-white/5 border-white/10 text-white">
-                            <CardHeader>
-                                <CardTitle>Request details</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-2 text-sm text-slate-200">
-                                <div className="flex items-center justify-between">
-                                    <span className="font-semibold">{selectedRequest.leaveType?.name || "Leave request"}</span>
-                                    <Badge
-                                        variant="secondary"
-                                        className={
-                                            selectedRequest.status === "approved"
-                                                ? "bg-emerald-500/20 text-emerald-100"
-                                                : selectedRequest.status === "rejected"
-                                                    ? "bg-rose-500/20 text-rose-100"
-                                                    : selectedRequest.status === "cancelled"
-                                                        ? "bg-slate-500/30 text-slate-200"
-                                                        : "bg-amber-500/20 text-amber-100"
-                                        }
-                                    >
-                                        {selectedRequest.status}
-                                    </Badge>
-                                </div>
-                                <p>Employee: {renderEmployee(selectedRequest.employeeId)}</p>
-                                <p>
-                                    Dates: {formatDate(selectedRequest.dates.from)} - {formatDate(selectedRequest.dates.to)} (
-                                    {selectedRequest.durationDays} day(s))
-                                </p>
-                                {selectedRequest.justification ? (
-                                    <p>Justification: {selectedRequest.justification}</p>
-                                ) : null}
-                                {(() => {
-                                    // Handle single attachment - check populated attachment object
-                                    const attachmentObj = (selectedRequest as any).attachment || (selectedRequest as any).attachmentId;
-                                    if (attachmentObj && typeof attachmentObj === "object" && (attachmentObj._id || attachmentObj.id)) {
-                                        const attachmentId = (attachmentObj._id || attachmentObj.id).toString();
-                                        const attachmentName = attachmentObj.originalName || attachmentObj.name || "Download Attachment";
-                                        return (
-                                            <p>
-                                                Attachment:{" "}
-                                                <a
-                                                    href={getAttachmentDownloadUrl(attachmentId)}
-                                                    target="_blank"
-                                                    className="text-blue-400 hover:underline"
-                                                >
-                                                    {attachmentName}
-                                                </a>
-                                            </p>
-                                        );
-                                    }
-                                    return null;
-                                })()}
-                                <p>Created: {selectedRequest.createdAt ? new Date(selectedRequest.createdAt).toLocaleString() : "N/A"}</p>
-                                <p>Updated: {selectedRequest.updatedAt ? new Date(selectedRequest.updatedAt).toLocaleString() : "N/A"}</p>
-
-                                {selectedRequest.approvalFlow && selectedRequest.approvalFlow.length > 0 ? (
-                                    <div className="space-y-1 pt-2 border-t border-white/10">
-                                        <Label className="text-sm font-semibold text-white">Approval Workflow:</Label>
-                                        <div className="space-y-1">
-                                            {selectedRequest.approvalFlow.map((step, idx) => (
-                                                <div key={idx} className="flex items-center justify-between text-xs p-2 rounded bg-white/5">
-                                                    <span className="font-medium">{step.role}</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <Badge
-                                                            variant="secondary"
-                                                            className={
-                                                                step.status === "approved"
-                                                                    ? "bg-emerald-500/30 text-emerald-100"
-                                                                    : step.status === "rejected"
-                                                                        ? "bg-rose-500/30 text-rose-100"
-                                                                        : "bg-amber-500/30 text-amber-100"
-                                                            }
-                                                        >
-                                                            {step.status}
-                                                        </Badge>
-                                                        {step.decidedBy && <span className="text-slate-400">by {step.decidedBy}</span>}
-                                                        {step.decidedAt && (
-                                                            <span className="text-slate-400">
-                                                                {new Date(step.decidedAt).toLocaleDateString()}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : null}
-
-                                {can("canOverride") && selectedRequest ? (
-                                    <Button
-                                        variant="outline"
-                                        onClick={openApprovalFlowEditor}
-                                        className="w-full mt-2 border-white/20 text-white hover:bg-white/10"
-                                        size="sm"
-                                    >
-                                        Edit Approval Workflow
-                                    </Button>
-                                ) : null}
-                            </CardContent>
-                        </Card>
-                ) : null}
-
                 <div className="space-y-4">
                     {showAdjustmentModal ? (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4">
                             <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-white/10 p-6 space-y-4 text-white">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-lg font-semibold">Adjustment</h3>
-                                    <Button variant="ghost" className="text-slate-200" onClick={() => setShowAdjustmentModal(false)}>
+                                    <Button variant="ghost" className="text-slate-200" onClick={closeAdjustmentModal}>
                                         Close
                                     </Button>
                                 </div>
@@ -2072,14 +2323,15 @@ export default function LeavesDashboardPage() {
                                             <Label>Type</Label>
                                             <Select
                                                 value={adjustment.adjustmentType}
+                                                disabled={entitlementAdjustmentMode}
                                                 onValueChange={(value) =>
                                                     setAdjustment((prev) => ({ ...prev, adjustmentType: value as typeof adjustment.adjustmentType }))
                                                 }
                                             >
-                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectTrigger className="bg-white/5 border-white/10 text-white" disabled={entitlementAdjustmentMode}>
                                                     <SelectValue />
                                                 </SelectTrigger>
-                                                <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectContent className="bg-slate-900 text-white border-white/10 z-[80]">
                                                     <SelectItem value="add">Add</SelectItem>
                                                     <SelectItem value="deduct">Deduct</SelectItem>
                                                     <SelectItem value="encashment">Encashment</SelectItem>
@@ -2095,6 +2347,7 @@ export default function LeavesDashboardPage() {
                                                 value={adjustment.amount}
                                                 onChange={(e) => setAdjustment((p) => ({ ...p, amount: e.target.value }))}
                                                 required
+                                                disabled={entitlementAdjustmentMode}
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2141,39 +2394,42 @@ export default function LeavesDashboardPage() {
                                     <div className="space-y-2">
                                         {editingApprovalFlow.map((step, idx) => (
                                             <div key={idx} className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
-                                                <div className="flex items-center justify-between">
-                                                    <Label className="text-sm">Step {idx + 1}</Label>
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="text-rose-200"
-                                                        onClick={() => removeApprovalStep(idx)}
-                                                    >
-                                                        Remove
-                                                    </Button>
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <div className="space-y-1">
-                                                        <Label className="text-xs">Role</Label>
-                                                        <Input
-                                                            value={step.role}
-                                                            onChange={(e) => updateApprovalStep(idx, { role: e.target.value })}
-                                                            placeholder="e.g., Manager, HR"
-                                                            required
-                                                            className="bg-white/5 border-white/10 text-white"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <Label className="text-xs">Status</Label>
-                                                        <Select
-                                                            value={step.status}
-                                                            onValueChange={(value: any) => updateApprovalStep(idx, { status: value })}
-                                                        >
-                                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                     <div className="flex items-center justify-between">
+                                                     <Label className="text-sm">Step {idx + 1}</Label>
+                                                     <Button
+                                                         type="button"
+                                                         variant="ghost"
+                                                         size="sm"
+                                                         className="text-rose-200 cursor-not-allowed opacity-60"
+                                                         disabled
+                                                         onClick={() => removeApprovalStep(idx)}
+                                                     >
+                                                         Remove
+                                                     </Button>
+                                                 </div>
+                                                 <div className="grid grid-cols-2 gap-2">
+                                                     <div className="space-y-1">
+                                                         <Label className="text-xs">Role</Label>
+                                                         <Input
+                                                             value={step.role}
+                                                             disabled
+                                                             onChange={(e) => updateApprovalStep(idx, { role: e.target.value })}
+                                                             placeholder="e.g., Manager, HR"
+                                                             required
+                                                             className="bg-white/5 border-white/10 text-white"
+                                                         />
+                                                     </div>
+                                                     <div className="space-y-1">
+                                                         <Label className="text-xs">Status</Label>
+                                                         <Select
+                                                             value={step.status}
+                                                             disabled
+                                                             onValueChange={(value: any) => updateApprovalStep(idx, { status: value })}
+                                                         >
+                                                            <SelectTrigger disabled className="bg-white/5 border-white/10 text-white">
                                                                 <SelectValue />
                                                             </SelectTrigger>
-                                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                             <SelectContent className="bg-slate-900 text-white border-white/10">
                                                                 <SelectItem value="pending">Pending</SelectItem>
                                                                 <SelectItem value="approved">Approved</SelectItem>
                                                                 <SelectItem value="rejected">Rejected</SelectItem>
@@ -2181,45 +2437,47 @@ export default function LeavesDashboardPage() {
                                                         </Select>
                                                     </div>
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <div className="space-y-1">
-                                                        <Label className="text-xs">Decided By (Employee ID)</Label>
-                                                        <Input
-                                                            value={step.decidedBy || ""}
+                                                     <div className="grid grid-cols-2 gap-2">
+                                                         <div className="space-y-1">
+                                                             <Label className="text-xs">Decided By (Employee ID)</Label>
+                                                             <Input
+                                                                 value={step.decidedBy || ""}
                                                             onChange={(e) => updateApprovalStep(idx, { decidedBy: e.target.value || undefined })}
                                                             placeholder="Optional"
                                                             className="bg-white/5 border-white/10 text-white"
                                                         />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <Label className="text-xs">Decided At (Date)</Label>
-                                                        <Input
-                                                            type="datetime-local"
-                                                            value={
-                                                                step.decidedAt
-                                                                    ? new Date(step.decidedAt).toISOString().slice(0, 16)
-                                                                    : ""
-                                                            }
-                                                            onChange={(e) =>
-                                                                updateApprovalStep(idx, {
-                                                                    decidedAt: e.target.value ? e.target.value : undefined,
-                                                                })
-                                                            }
-                                                            className="bg-white/5 border-white/10 text-white"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        onClick={addApprovalStep}
-                                        className="w-full border-white/20 text-white hover:bg-white/10"
-                                    >
-                                        + Add Approval Step
-                                    </Button>
+                                                         </div>
+                                                         <div className="space-y-1">
+                                                             <Label className="text-xs">Decided At (Date)</Label>
+                                                             <Input
+                                                                 type="datetime-local"
+                                                                 value={
+                                                                     step.decidedAt
+                                                                         ? new Date(step.decidedAt).toISOString().slice(0, 16)
+                                                                         : ""
+                                                                 }
+                                                                 disabled
+                                                                 onChange={(e) =>
+                                                                     updateApprovalStep(idx, {
+                                                                         decidedAt: e.target.value ? e.target.value : undefined,
+                                                                     })
+                                                                 }
+                                                                 className="bg-white/5 border-white/10 text-white"
+                                                             />
+                                                         </div>
+                                                     </div>
+                                                 </div>
+                                             ))}
+                                         </div>
+                                         <Button
+                                             type="button"
+                                             variant="outline"
+                                             disabled
+                                             onClick={addApprovalStep}
+                                             className="w-full border-white/20 text-white hover:bg-white/10 cursor-not-allowed opacity-60"
+                                         >
+                                             + Add Approval Step
+                                         </Button>
                                     <div className="pt-3 border-t border-white/10">
                                         <Button
                                             type="submit"
@@ -2241,191 +2499,148 @@ export default function LeavesDashboardPage() {
                         </div>
                     ) : null}
 
-                        <Card className="bg-white/5 border-white/10 text-white">
-                            <CardHeader>
-                                <CardTitle>Notifications</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-2">
-                                {notificationsLoading ? (
-                                    <div className="flex items-center gap-2 text-slate-300 text-sm">
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        Loading notifications...
-                                    </div>
-                                ) : notifications.length === 0 ? (
-                                    <p className="text-sm text-slate-400">No notifications.</p>
-                                ) : (
-                                    <ul className="space-y-2">
-                                        {notifications.map((note) => (
-                                            <li
-                                                key={note._id}
-                                                className="p-2 rounded-lg bg-white/5 border border-white/10 text-sm"
-                                            >
-                                                <div className="flex items-center justify-between">
-                                                    <span className="font-semibold text-white">{note.type}</span>
-                                                    {note.createdAt ? (
-                                                        <span className="text-xs text-slate-400">
-                              {new Date(note.createdAt).toLocaleString()}
-                            </span>
-                                                    ) : null}
-                                                </div>
-                                                {note.message ? (
-                                                    <p className="text-slate-200 text-sm mt-1">{note.message}</p>
-                                                ) : null}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </CardContent>
-                        </Card>
-
-                        {can("canManageCatalog") ? (
-                            <Card className="bg-white/5 border-white/10 text-white">
-                                <CardHeader>
-                                    <CardTitle>Catalog - Categories</CardTitle>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                    <form className="space-y-2" onSubmit={handleCreateCategory}>
-                                        <Label className="text-sm">New category</Label>
-                                        <Input
-                                            value={newCategory.name}
-                                            onChange={(e) => setNewCategory((p) => ({ ...p, name: e.target.value }))}
-                                            placeholder="Name"
-                                            required
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                        <Input
-                                            value={newCategory.description}
-                                            onChange={(e) => setNewCategory((p) => ({ ...p, description: e.target.value }))}
-                                            placeholder="Description (optional)"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                        <Button type="submit" className="w-full">
-                                            Create category
+                    {entitlementDetails ? (() => {
+                        const disp = getEntitlementDisplay(entitlementDetails);
+                        const leaveLabel = `${disp.name}${disp.code ? ` (${disp.code})` : ""}`;
+                        return (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+                                <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-white/10 p-6 space-y-4 text-white max-h-[80vh] overflow-y-auto">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-semibold">Entitlement Details</h3>
+                                            <p className="text-sm text-slate-300">{leaveLabel}</p>
+                                        </div>
+                                        <Button variant="ghost" className="text-slate-200" onClick={() => setEntitlementDetails(null)}>
+                                            Close
                                         </Button>
-                                    </form>
-
-                                    <div className="border-t border-white/10 pt-3">
-                                        <Label className="text-sm">Edit category</Label>
-                                        <div className="space-y-2">
-                                            <Select
-                                                value={editCategory.id || "__none"}
-                                                onValueChange={(value) => {
-                                                    if (value === "__none") {
-                                                        setEditCategory({ id: "", name: "", description: "" });
-                                                        return;
-                                                    }
-                                                    const found = categories.find((c) => {
-                                                        const cid =
-                                                            (c as any).id ||
-                                                            (c as any)._id ||
-                                                            (c as any).categoryId;
-                                                        return cid?.toString?.() === value;
-                                                    });
-                                                    setEditCategory({
-                                                        id: value,
-                                                        name: found?.name || "",
-                                                        description: found?.description || "",
-                                                    });
-                                                }}
-                                            >
-                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                    <SelectValue placeholder="Select category" />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                    <SelectItem value="__none">None</SelectItem>
-                                                    {categories.map((cat, idx) => {
-                                                        const cid =
-                                                            (cat as any).id ||
-                                                            (cat as any)._id ||
-                                                            (cat as any).categoryId;
-                                                        if (!cid) return null;
-                                                        const value = cid.toString();
-                                                        return (
-                                                            <SelectItem key={value} value={value}>
-                                                                {cat.name}
-                                                            </SelectItem>
-                                                        );
-                                                    })}
-                                                </SelectContent>
-                                            </Select>
-                                            {editCategory.id ? (
-                                                <>
-                                                    <Input
-                                                        value={editCategory.name}
-                                                        onChange={(e) => setEditCategory((p) => ({ ...p, name: e.target.value }))}
-                                                        placeholder="Name"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
-                                                    <Input
-                                                        value={editCategory.description}
-                                                        onChange={(e) =>
-                                                            setEditCategory((p) => ({ ...p, description: e.target.value }))
-                                                        }
-                                                        placeholder="Description"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
-                                                    <Button type="button" variant="secondary" onClick={handleUpdateCategory}>
-                                                        Update
-                                                    </Button>
-                                                </>
-                                            ) : null}
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Employee ID</Label>
+                                            <Input value={normalizeId(entitlementDetails.employeeId)} disabled className="bg-white/5 border-white/10 text-white" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Leave type</Label>
+                                            <Input value={leaveLabel} disabled className="bg-white/5 border-white/10 text-white" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Yearly entitlement</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.yearlyEntitlement}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Carry forward</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.carryForward}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Accrued (actual)</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.accruedActual}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Accrued (rounded)</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.accruedRounded}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Taken</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.taken}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Pending</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.5"
+                                                value={entitlementEditForm.pending}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1 sm:col-span-2">
+                                            <Label className="text-xs text-slate-400">Remaining</Label>
+                                            <Input
+                                                value={entitlementEditForm.remaining}
+                                                disabled
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Last accrual</Label>
+                                            <Input
+                                                type="date"
+                                                value={entitlementEditForm.lastAccrualDate}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({ ...p, lastAccrualDate: e.target.value }))
+                                                }
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs text-slate-400">Next reset</Label>
+                                            <Input
+                                                type="date"
+                                                value={entitlementEditForm.nextResetDate}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({ ...p, nextResetDate: e.target.value }))
+                                                }
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
                                         </div>
                                     </div>
-                                </CardContent>
-                            </Card>
-                        ) : null}
-
-                        {can("canRunOps") ? (
-                            <Card className="bg-white/5 border-white/10 text-white">
-                                <CardHeader>
-                                    <CardTitle>Run operations</CardTitle>
-                                </CardHeader>
-                                <CardContent className="space-y-2">
-                                    <div className="grid grid-cols-2 gap-2">
+                                    <div className="pt-2 flex flex-col sm:flex-row gap-2">
                                         <Button
-                                            variant="secondary"
-                                            className="bg-white/5"
-                                            onClick={() => handleOps("monthly")}
-                                            disabled={loading}
+                                            className="w-full sm:w-auto"
+                                            onClick={() => void handleSaveEntitlementDetails()}
+                                            disabled={savingEntitlement}
                                         >
-                                            Accrual - Monthly
+                                            {savingEntitlement ? (
+                                                <>
+                                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                    Saving...
+                                                </>
+                                            ) : (
+                                                "Save changes"
+                                            )}
                                         </Button>
                                         <Button
-                                            variant="secondary"
-                                            className="bg-white/5"
-                                            onClick={() => handleOps("quarterly")}
-                                            disabled={loading}
+                                            className="w-full sm:w-auto"
+                                            variant="outline"
+                                            onClick={() => setEntitlementDetails(null)}
                                         >
-                                            Accrual - Quarterly
-                                        </Button>
-                                        <Button
-                                            variant="secondary"
-                                            className="bg-white/5"
-                                            onClick={() => handleOps("yearly")}
-                                            disabled={loading}
-                                        >
-                                            Accrual - Yearly
-                                        </Button>
-                                        <Button
-                                            variant="secondary"
-                                            className="bg-white/5"
-                                            onClick={() => handleOps("carry")}
-                                            disabled={loading}
-                                        >
-                                            Carry-forward
+                                            Close
                                         </Button>
                                     </div>
-                                    <Button
-                                        variant="outline"
-                                        className="w-full text-white border-white/20"
-                                        onClick={() => handleOps("reset")}
-                                        disabled={loading}
-                                    >
-                                        Reset dates
-                                    </Button>
-                                </CardContent>
-                            </Card>
-                        ) : null}
+                                </div>
+                            </div>
+                        );
+                    })() : null}
 
                     </div>
                 </div>
@@ -2438,52 +2653,64 @@ export default function LeavesDashboardPage() {
                         <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <form className="space-y-3" onSubmit={handleCreateType}>
                                 <Label className="text-sm">Create leave type</Label>
-                                <Input
-                                    value={newType.code}
-                                    onChange={(e) => setNewType((p) => ({ ...p, code: e.target.value }))}
-                                    placeholder="Code (e.g., ANN)"
-                                    required
-                                    className="bg-white/5 border-white/10 text-white"
-                                />
-                                <Input
-                                    value={newType.name}
-                                    onChange={(e) => setNewType((p) => ({ ...p, name: e.target.value }))}
-                                    placeholder="Name"
-                                    required
-                                    className="bg-white/5 border-white/10 text-white"
-                                />
-                                <Select
-                                    value={newType.categoryId || "__none"}
-                                    onValueChange={(value) =>
-                                        setNewType((p) => ({ ...p, categoryId: value === "__none" ? "" : value }))
-                                    }
-                                >
-                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                        <SelectValue placeholder="Select category" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-slate-900 text-white border-white/10">
-                                        <SelectItem value="__none">Select category</SelectItem>
-                                        {categories.map((cat, idx) => {
-                                            const catId =
-                                                (cat as any).id ||
-                                                (cat as any)._id ||
-                                                (cat as any).categoryId;
-                                            if (!catId) return null;
-                                            const value = catId.toString();
-                                            return (
-                                                <SelectItem key={value} value={value}>
-                                                    {cat.name}
-                                                </SelectItem>
-                                            );
-                                        })}
-                                    </SelectContent>
-                                </Select>
-                                <Input
-                                    value={newType.description}
-                                    onChange={(e) => setNewType((p) => ({ ...p, description: e.target.value }))}
-                                    placeholder="Description (optional)"
-                                    className="bg-white/5 border-white/10 text-white"
-                                />
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Code</Label>
+                                    <Input
+                                        value={newType.code}
+                                        onChange={(e) => setNewType((p) => ({ ...p, code: e.target.value }))}
+                                        placeholder="Code (e.g., ANN)"
+                                        required
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Name</Label>
+                                    <Input
+                                        value={newType.name}
+                                        onChange={(e) => setNewType((p) => ({ ...p, name: e.target.value }))}
+                                        placeholder="Name"
+                                        required
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Category</Label>
+                                    <Select
+                                        value={newType.categoryId || "__none"}
+                                        onValueChange={(value) =>
+                                            setNewType((p) => ({ ...p, categoryId: value === "__none" ? "" : value }))
+                                        }
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Select category" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="__none">Select category</SelectItem>
+                                            {categories.map((cat, idx) => {
+                                                const catId =
+                                                    (cat as any).id ||
+                                                    (cat as any)._id ||
+                                                    (cat as any).categoryId;
+                                                if (!catId) return null;
+                                                const value = catId.toString();
+                                                return (
+                                                    <SelectItem key={value} value={value}>
+                                                        {cat.name}
+                                                    </SelectItem>
+                                                );
+                                            })}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Description</Label>
+                                    <Input
+                                        value={newType.description}
+                                        onChange={(e) => setNewType((p) => ({ ...p, description: e.target.value }))}
+                                        placeholder="Description (optional)"
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
                                 <Button type="submit">Create leave type</Button>
                             </form>
 
@@ -2534,50 +2761,62 @@ export default function LeavesDashboardPage() {
 
                                 {editType.id ? (
                                     <>
-                                        <Input
-                                            value={editType.code}
-                                            onChange={(e) => setEditType((p) => ({ ...p, code: e.target.value }))}
-                                            placeholder="Code"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                        <Input
-                                            value={editType.name}
-                                            onChange={(e) => setEditType((p) => ({ ...p, name: e.target.value }))}
-                                            placeholder="Name"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                        <Select
-                                            value={editType.categoryId || "__none"}
-                                            onValueChange={(value) =>
-                                                setEditType((p) => ({ ...p, categoryId: value === "__none" ? "" : value }))
-                                            }
-                                        >
-                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                <SelectValue placeholder="Select category" />
-                                            </SelectTrigger>
-                                            <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                <SelectItem value="__none">Select category</SelectItem>
-                                                {categories.map((cat, idx) => {
-                                                    const catId =
-                                                        (cat as any).id ||
-                                                        (cat as any)._id ||
-                                                        (cat as any).categoryId;
-                                                    if (!catId) return null;
-                                                    const value = catId.toString();
-                                                    return (
-                                                        <SelectItem key={value} value={value}>
-                                                            {cat.name}
-                                                        </SelectItem>
-                                                    );
-                                                })}
-                                            </SelectContent>
-                                        </Select>
-                                        <Input
-                                            value={editType.description}
-                                            onChange={(e) => setEditType((p) => ({ ...p, description: e.target.value }))}
-                                            placeholder="Description"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Code</Label>
+                                            <Input
+                                                value={editType.code}
+                                                onChange={(e) => setEditType((p) => ({ ...p, code: e.target.value }))}
+                                                placeholder="Code"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Name</Label>
+                                            <Input
+                                                value={editType.name}
+                                                onChange={(e) => setEditType((p) => ({ ...p, name: e.target.value }))}
+                                                placeholder="Name"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Category</Label>
+                                            <Select
+                                                value={editType.categoryId || "__none"}
+                                                onValueChange={(value) =>
+                                                    setEditType((p) => ({ ...p, categoryId: value === "__none" ? "" : value }))
+                                                }
+                                            >
+                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                    <SelectValue placeholder="Select category" />
+                                                </SelectTrigger>
+                                                <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                    <SelectItem value="__none">Select category</SelectItem>
+                                                    {categories.map((cat, idx) => {
+                                                        const catId =
+                                                            (cat as any).id ||
+                                                            (cat as any)._id ||
+                                                            (cat as any).categoryId;
+                                                        if (!catId) return null;
+                                                        const value = catId.toString();
+                                                        return (
+                                                            <SelectItem key={value} value={value}>
+                                                                {cat.name}
+                                                            </SelectItem>
+                                                        );
+                                                    })}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Description</Label>
+                                            <Input
+                                                value={editType.description}
+                                                onChange={(e) => setEditType((p) => ({ ...p, description: e.target.value }))}
+                                                placeholder="Description"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
                                         <div className="flex gap-2">
                                             <Button type="button" variant="secondary" onClick={handleUpdateType}>
                                                 Update
@@ -2596,115 +2835,142 @@ export default function LeavesDashboardPage() {
                             <CardTitle>Policies & Entitlements</CardTitle>
                         </CardHeader>
                         <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <form className="space-y-3" onSubmit={handleCreatePolicy}>
+                            <form className="space-y-3 h-full flex flex-col" onSubmit={handleCreatePolicy}>
                                 <Label className="text-sm">Create leave policy</Label>
-                                <Select
-                                    value={policyForm.leaveTypeId || "__none"}
-                                    onValueChange={(value) =>
-                                        setPolicyForm((p) => ({ ...p, leaveTypeId: value === "__none" ? "" : value }))
-                                    }
-                                >
-                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                        <SelectValue placeholder="Select leave type" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-slate-900 text-white border-white/10">
-                                        <SelectItem value="__none">Select leave type</SelectItem>
-                                        {leaveTypes.map((lt, idx) => {
-                                            const id = (lt as any).id || (lt as any)._id;
-                                            if (!id) return null;
-                                            return (
-                                                <SelectItem key={id || `lt-${idx}`} value={id}>
-                                                    {lt.name} ({lt.code})
-                                                </SelectItem>
-                                            );
-                                        })}
-                                    </SelectContent>
-                                </Select>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Leave type</Label>
                                     <Select
-                                        value={policyForm.accrualMethod || "__none"}
+                                        value={policyForm.leaveTypeId || "__none"}
                                         onValueChange={(value) =>
-                                            setPolicyForm((p) => ({ ...p, accrualMethod: value === "__none" ? "" : value }))
+                                            setPolicyForm((p) => ({ ...p, leaveTypeId: value === "__none" ? "" : value }))
                                         }
                                     >
                                         <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                            <SelectValue placeholder="Select accrual method" />
+                                            <SelectValue placeholder="Select leave type" />
                                         </SelectTrigger>
                                         <SelectContent className="bg-slate-900 text-white border-white/10">
-                                            <SelectItem value="__none">Select accrual method</SelectItem>
-                                            {ACCRUAL_METHOD_OPTIONS.map((opt) => (
-                                                <SelectItem key={opt.value} value={opt.value}>
-                                                    {opt.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <Select
-                                        value={policyForm.roundingRule || "__none"}
-                                        onValueChange={(value) =>
-                                            setPolicyForm((p) => ({ ...p, roundingRule: value === "__none" ? "" : value }))
-                                        }
-                                    >
-                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                            <SelectValue placeholder="Select rounding rule" />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-slate-900 text-white border-white/10">
-                                            <SelectItem value="__none">Select rounding rule</SelectItem>
-                                            {ROUNDING_RULE_OPTIONS.map((opt) => (
-                                                <SelectItem key={opt.value} value={opt.value}>
-                                                    {opt.label}
-                                                </SelectItem>
-                                            ))}
+                                            <SelectItem value="__none">Select leave type</SelectItem>
+                                            {leaveTypes.map((lt, idx) => {
+                                                const id = (lt as any).id || (lt as any)._id;
+                                                if (!id) return null;
+                                                return (
+                                                    <SelectItem key={id || `lt-${idx}`} value={id}>
+                                                        {lt.name} ({lt.code})
+                                                    </SelectItem>
+                                                );
+                                            })}
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                        type="number"
-                                        value={policyForm.monthlyRate}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, monthlyRate: e.target.value }))}
-                                        placeholder="Monthly rate"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Input
-                                        type="number"
-                                        value={policyForm.yearlyRate}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, yearlyRate: e.target.value }))}
-                                        placeholder="Yearly rate"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Accrual method</Label>
+                                        <Select
+                                            value={policyForm.accrualMethod || "__none"}
+                                            onValueChange={(value) =>
+                                                setPolicyForm((p) => ({ ...p, accrualMethod: value === "__none" ? "" : value }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select accrual method" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="__none">Select accrual method</SelectItem>
+                                                {ACCRUAL_METHOD_OPTIONS.map((opt) => (
+                                                    <SelectItem key={opt.value} value={opt.value}>
+                                                        {opt.label}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Rounding rule</Label>
+                                        <Select
+                                            value={policyForm.roundingRule || "__none"}
+                                            onValueChange={(value) =>
+                                                setPolicyForm((p) => ({ ...p, roundingRule: value === "__none" ? "" : value }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select rounding rule" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="__none">Select rounding rule</SelectItem>
+                                                {ROUNDING_RULE_OPTIONS.map((opt) => (
+                                                    <SelectItem key={opt.value} value={opt.value}>
+                                                        {opt.label}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                        type="number"
-                                        value={policyForm.maxCarryForward}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, maxCarryForward: e.target.value }))}
-                                        placeholder="Max carry forward"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Input
-                                        type="number"
-                                        value={policyForm.expiryAfterMonths}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, expiryAfterMonths: e.target.value }))}
-                                        placeholder="Expiry after months"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Monthly rate</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.monthlyRate}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, monthlyRate: e.target.value }))}
+                                            placeholder="Monthly rate"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Yearly rate</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.yearlyRate}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, yearlyRate: e.target.value }))}
+                                            placeholder="Yearly rate"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                        type="number"
-                                        value={policyForm.minNoticeDays}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, minNoticeDays: e.target.value }))}
-                                        placeholder="Min notice days"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Input
-                                        type="number"
-                                        value={policyForm.maxConsecutiveDays}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, maxConsecutiveDays: e.target.value }))}
-                                        placeholder="Max consecutive days"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Max carry forward</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.maxCarryForward}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, maxCarryForward: e.target.value }))}
+                                            placeholder="Max carry forward"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Expiry after months</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.expiryAfterMonths}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, expiryAfterMonths: e.target.value }))}
+                                            placeholder="Expiry after months"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Min notice days</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.minNoticeDays}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, minNoticeDays: e.target.value }))}
+                                            placeholder="Min notice days"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Max consecutive days</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.maxConsecutiveDays}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, maxConsecutiveDays: e.target.value }))}
+                                            placeholder="Max consecutive days"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
                                 </div>
                                 <label className="flex items-center gap-2 text-sm text-white/80">
                                     <input
@@ -2718,13 +2984,16 @@ export default function LeavesDashboardPage() {
                                 </label>
                                 <div className="space-y-2 rounded-lg border border-white/10 p-3 bg-white/5">
                                     <p className="text-sm font-semibold">Eligibility</p>
-                                    <Input
-                                        type="number"
-                                        value={policyForm.eligibilityMinTenureMonths}
-                                        onChange={(e) => setPolicyForm((p) => ({ ...p, eligibilityMinTenureMonths: e.target.value }))}
-                                        placeholder="Minimum tenure (months)"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Minimum tenure (months)</Label>
+                                        <Input
+                                            type="number"
+                                            value={policyForm.eligibilityMinTenureMonths}
+                                            onChange={(e) => setPolicyForm((p) => ({ ...p, eligibilityMinTenureMonths: e.target.value }))}
+                                            placeholder="Minimum tenure (months)"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
                                     <div className="space-y-1">
                                         <p className="text-xs text-slate-300">Allowed positions (dropdown, multi-select)</p>
                                         <Select
@@ -2745,7 +3014,7 @@ export default function LeavesDashboardPage() {
                                             </SelectTrigger>
                                             <SelectContent className="bg-slate-900 text-white border-white/10 max-h-60">
                                                 <SelectItem value="__none">Add position</SelectItem>
-                                                {JOB_POSITION_OPTIONS.map((opt) => (
+                                                {positionOptions.map((opt) => (
                                                     <SelectItem key={opt} value={opt}>
                                                         {opt}
                                                     </SelectItem>
@@ -2820,132 +3089,160 @@ export default function LeavesDashboardPage() {
                                         </div>
                                     </div>
                                 </div>
-                                <Button type="submit" className="w-full">
-                                    Create policy
-                                </Button>
-                            </form>
-
-                            <div className="space-y-3">
-                                <Label className="text-sm">Audit trail (HR)</Label>
-                                <div className="flex gap-2">
-                                    <Input
-                                        value={auditEmployeeId}
-                                        onChange={(e) => setAuditEmployeeId(e.target.value)}
-                                        placeholder="Employee ID"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Button
-                                      type="button"
-                                      onClick={() => void handleLoadAuditTrail()}
-                                      disabled={!auditEmployeeId || auditLoading}
-                                    >
-                                        {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Load audit"}
+                                <div className="pt-1">
+                                    <Button type="submit" className="w-full mt-auto">
+                                        Create policy
                                     </Button>
                                 </div>
-                                {auditTrail.length ? (
-                                    <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
-                                        {auditTrail.map((entry) => (
-                                            <div
-                                                key={entry.adjustmentId}
-                                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
-                                            >
-                                                <div className="text-sm space-y-1">
-                                                    <p className="font-semibold">{entry.leaveType}</p>
-                                                    <p className="text-xs text-slate-300">
-                                                        {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
-                                                    </p>
-                                                    <p className="text-xs text-slate-400">
-                              HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
-                                                        {entry.createdAt ? formatDate(entry.createdAt) : ""}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        ))}
+                            </form>
+
+                            <div className="grid grid-rows-[auto_1fr] h-full gap-4">
+                                <div className="space-y-3">
+                                    <Label className="text-sm">Audit trail (HR)</Label>
+                                    <div className="flex gap-2 items-end">
+                                        <div className="flex-1 space-y-1">
+                                            <Label className="text-xs">Employee ID</Label>
+                                            <Input
+                                                value={auditEmployeeId}
+                                                onChange={(e) => setAuditEmployeeId(e.target.value)}
+                                                placeholder="Employee ID"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <Button
+                                          type="button"
+                                          onClick={() => void handleLoadAuditTrail()}
+                                          disabled={!auditEmployeeId || auditLoading}
+                                        >
+                                            {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Load audit"}
+                                        </Button>
                                     </div>
-                                ) : (
-                                    <p className="text-xs text-slate-400">No audit entries loaded.</p>
-                                )}
+                                    {auditTrail.length ? (
+                                        <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
+                                            {auditTrail.map((entry) => (
+                                                <div
+                                                    key={entry.adjustmentId}
+                                                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
+                                                >
+                                                    <div className="text-sm space-y-1">
+                                                        <p className="font-semibold">{entry.leaveType}</p>
+                                                        <p className="text-xs text-slate-300">
+                                                            {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
+                                                        </p>
+                                                        <p className="text-xs text-slate-400">
+                              HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
+                                                            {entry.createdAt ? formatDate(entry.createdAt) : ""}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs text-slate-400">No audit entries loaded.</p>
+                                    )}
+                                </div>
+                                <form className="space-y-3 flex flex-col justify-end" onSubmit={handleCreateEntitlement}>
+                                    <Label className="text-sm">Create entitlement</Label>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Employee ID</Label>
+                                        <Input
+                                            value={entitlementForm.employeeId}
+                                            onChange={(e) => setEntitlementForm((p) => ({ ...p, employeeId: e.target.value }))}
+                                            placeholder="Employee ID"
+                                            required
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Leave type</Label>
+                                        <Select
+                                            value={entitlementForm.leaveTypeId || "__none"}
+                                            onValueChange={(value) =>
+                                                setEntitlementForm((p) => ({ ...p, leaveTypeId: value === "__none" ? "" : value }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select leave type" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="__none">Select leave type</SelectItem>
+                                                {leaveTypes.map((lt, idx) => {
+                                                    const id = (lt as any).id || (lt as any)._id;
+                                                    if (!id) return null;
+                                                    return (
+                                                        <SelectItem key={id || `lt-ent-${idx}`} value={id}>
+                                                            {lt.name} ({lt.code})
+                                                        </SelectItem>
+                                                    );
+                                                })}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Yearly entitlement</Label>
+                                            <Input
+                                                type="number"
+                                                value={entitlementForm.yearlyEntitlement}
+                                                onChange={(e) =>
+                                                    setEntitlementForm((p) => ({ ...p, yearlyEntitlement: e.target.value }))
+                                                }
+                                                placeholder="Yearly entitlement"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Carry forward</Label>
+                                            <Input
+                                                type="number"
+                                                value={entitlementForm.carryForward}
+                                                onChange={(e) => setEntitlementForm((p) => ({ ...p, carryForward: e.target.value }))}
+                                                placeholder="Carry forward"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Accrued actual</Label>
+                                            <Input
+                                                type="number"
+                                                value={entitlementForm.accruedActual}
+                                                onChange={(e) => setEntitlementForm((p) => ({ ...p, accruedActual: e.target.value }))}
+                                                placeholder="Accrued actual"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Accrued rounded</Label>
+                                            <Input
+                                                type="number"
+                                                value={entitlementForm.accruedRounded}
+                                                onChange={(e) => setEntitlementForm((p) => ({ ...p, accruedRounded: e.target.value }))}
+                                                placeholder="Accrued rounded"
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    <label className="flex items-center gap-2 text-sm text-white/80">
+                                        <input
+                                            type="checkbox"
+                                            checked={entitlementForm.personalized}
+                                            onChange={(e) =>
+                                                setEntitlementForm((p) => ({ ...p, personalized: e.target.checked }))
+                                            }
+                                        />
+                                        Personalized (skip eligibility)
+                                    </label>
+                                    <div className="pt-1">
+                                        <Button type="submit" className="w-full">
+                                            Create entitlement
+                                        </Button>
+                                    </div>
+                                </form>
                             </div>
 
-                            <form className="space-y-3" onSubmit={handleCreateEntitlement}>
-                                <Label className="text-sm">Create entitlement</Label>
-                                <Input
-                                    value={entitlementForm.employeeId}
-                                    onChange={(e) => setEntitlementForm((p) => ({ ...p, employeeId: e.target.value }))}
-                                    placeholder="Employee ID"
-                                    required
-                                    className="bg-white/5 border-white/10 text-white"
-                                />
-                                <Select
-                                    value={entitlementForm.leaveTypeId || "__none"}
-                                    onValueChange={(value) =>
-                                        setEntitlementForm((p) => ({ ...p, leaveTypeId: value === "__none" ? "" : value }))
-                                    }
-                                >
-                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                        <SelectValue placeholder="Select leave type" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-slate-900 text-white border-white/10">
-                                        <SelectItem value="__none">Select leave type</SelectItem>
-                                        {leaveTypes.map((lt, idx) => {
-                                            const id = (lt as any).id || (lt as any)._id;
-                                            if (!id) return null;
-                                            return (
-                                                <SelectItem key={id || `lt-ent-${idx}`} value={id}>
-                                                    {lt.name} ({lt.code})
-                                                </SelectItem>
-                                            );
-                                        })}
-                                    </SelectContent>
-                                </Select>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                        type="number"
-                                        value={entitlementForm.yearlyEntitlement}
-                                        onChange={(e) =>
-                                            setEntitlementForm((p) => ({ ...p, yearlyEntitlement: e.target.value }))
-                                        }
-                                        placeholder="Yearly entitlement"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Input
-                                        type="number"
-                                        value={entitlementForm.carryForward}
-                                        onChange={(e) => setEntitlementForm((p) => ({ ...p, carryForward: e.target.value }))}
-                                        placeholder="Carry forward"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <Input
-                                        type="number"
-                                        value={entitlementForm.accruedActual}
-                                        onChange={(e) => setEntitlementForm((p) => ({ ...p, accruedActual: e.target.value }))}
-                                        placeholder="Accrued actual"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                    <Input
-                                        type="number"
-                                        value={entitlementForm.accruedRounded}
-                                        onChange={(e) => setEntitlementForm((p) => ({ ...p, accruedRounded: e.target.value }))}
-                                        placeholder="Accrued rounded"
-                                        className="bg-white/5 border-white/10 text-white"
-                                    />
-                                </div>
-                                <label className="flex items-center gap-2 text-sm text-white/80">
-                                    <input
-                                        type="checkbox"
-                                        checked={entitlementForm.personalized}
-                                        onChange={(e) =>
-                                            setEntitlementForm((p) => ({ ...p, personalized: e.target.checked }))
-                                        }
-                                    />
-                                    Personalized (skip eligibility)
-                                </label>
-                                <Button type="submit" className="w-full">
-                                    Create entitlement
-                                </Button>
-                            </form>
+
                         </CardContent>
                     </Card>
                 ) : null}
@@ -3160,274 +3457,10 @@ export default function LeavesDashboardPage() {
                 {can("canManagePolicies") ? (
                     <Card className="bg-white/5 border-white/10 text-white">
                         <CardHeader>
-                            <CardTitle>Group Entitlement Creation</CardTitle>
-                            <p className="text-sm text-slate-300">
-                                Create entitlements for employees matching specific criteria.
-                            </p>
-                        </CardHeader>
-                        <CardContent>
-                            <form className="space-y-3" onSubmit={handleGroupEntitlement}>
-                                <div className="space-y-2">
-                                    <Label className="text-sm font-semibold">Filter Criteria (at least one required)</Label>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">Department ID</Label>
-                                            <Input
-                                                value={groupEntitlementForm.departmentId}
-                                                onChange={(e) =>
-                                                    setGroupEntitlementForm((p) => ({ ...p, departmentId: e.target.value }))
-                                                }
-                                                placeholder="Optional"
-                                                className="bg-white/5 border-white/10 text-white"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">Position ID</Label>
-                                            <Input
-                                                value={groupEntitlementForm.positionId}
-                                                onChange={(e) =>
-                                                    setGroupEntitlementForm((p) => ({ ...p, positionId: e.target.value }))
-                                                }
-                                                placeholder="Optional"
-                                                className="bg-white/5 border-white/10 text-white"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">Contract Type</Label>
-                                            <Select
-                                                value={groupEntitlementForm.contractType || "__none"}
-                                                onValueChange={(value) =>
-                                                    setGroupEntitlementForm((p) => ({
-                                                        ...p,
-                                                        contractType: value === "__none" ? "" : value,
-                                                    }))
-                                                }
-                                            >
-                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                    <SelectValue placeholder="Select contract type" />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                    <SelectItem value="__none">Any</SelectItem>
-                                                    {CONTRACT_TYPE_OPTIONS.map((opt) => (
-                                                        <SelectItem key={opt} value={opt}>
-                                                            {opt}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs">Minimum Tenure (months)</Label>
-                                            <Input
-                                                type="number"
-                                                value={groupEntitlementForm.minTenure}
-                                                onChange={(e) =>
-                                                    setGroupEntitlementForm((p) => ({ ...p, minTenure: e.target.value }))
-                                                }
-                                                placeholder="Optional"
-                                                className="bg-white/5 border-white/10 text-white"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label className="text-sm">Leave Type</Label>
-                                    <Select
-                                        value={groupEntitlementForm.leaveTypeId || "__none"}
-                                        onValueChange={(value) =>
-                                            setGroupEntitlementForm((p) => ({
-                                                ...p,
-                                                leaveTypeId: value === "__none" ? "" : value,
-                                            }))
-                                        }
-                                    >
-                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                            <SelectValue placeholder="Select leave type" />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-slate-900 text-white border-white/10">
-                                            <SelectItem value="__none">Select leave type</SelectItem>
-                                            {leaveTypes.map((lt, idx) => {
-                                                const id = (lt as any).id || (lt as any)._id;
-                                                if (!id) return null;
-                                                return (
-                                                    <SelectItem key={id || `group-lt-${idx}`} value={id}>
-                                                        {lt.name} ({lt.code})
-                                                    </SelectItem>
-                                                );
-                                            })}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs">Yearly Entitlement</Label>
-                                        <Input
-                                            type="number"
-                                            value={groupEntitlementForm.yearlyEntitlement}
-                                            onChange={(e) =>
-                                                setGroupEntitlementForm((p) => ({ ...p, yearlyEntitlement: e.target.value }))
-                                            }
-                                            placeholder="Optional"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-xs">Carry Forward</Label>
-                                        <Input
-                                            type="number"
-                                            value={groupEntitlementForm.carryForward}
-                                            onChange={(e) =>
-                                                setGroupEntitlementForm((p) => ({ ...p, carryForward: e.target.value }))
-                                            }
-                                            placeholder="Optional"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs">Accrued Actual</Label>
-                                        <Input
-                                            type="number"
-                                            value={groupEntitlementForm.accruedActual}
-                                            onChange={(e) =>
-                                                setGroupEntitlementForm((p) => ({ ...p, accruedActual: e.target.value }))
-                                            }
-                                            placeholder="Optional"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-xs">Accrued Rounded</Label>
-                                        <Input
-                                            type="number"
-                                            value={groupEntitlementForm.accruedRounded}
-                                            onChange={(e) =>
-                                                setGroupEntitlementForm((p) => ({ ...p, accruedRounded: e.target.value }))
-                                            }
-                                            placeholder="Optional"
-                                            className="bg-white/5 border-white/10 text-white"
-                                        />
-                                    </div>
-                                </div>
-
-                                <label className="flex items-center gap-2 text-sm text-white/80">
-                                    <input
-                                        type="checkbox"
-                                        checked={groupEntitlementForm.personalized}
-                                        onChange={(e) =>
-                                            setGroupEntitlementForm((p) => ({ ...p, personalized: e.target.checked }))
-                                        }
-                                    />
-                                    Personalized (skip eligibility checks)
-                                </label>
-
-                                <Button type="submit" disabled={groupSubmitting} className="w-full">
-                                    {groupSubmitting ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                            Creating...
-                                        </>
-                                    ) : (
-                                        "Create Group Entitlements"
-                                    )}
-                                </Button>
-                            </form>
-
-                            {groupResult ? (
-                                <div className="mt-4 space-y-2 rounded-lg border border-white/10 bg-white/5 p-3">
-                                    <p className="text-sm font-semibold">Group Creation Results:</p>
-                                    <div className="grid grid-cols-3 gap-2 text-xs">
-                                        <div className="rounded bg-emerald-500/20 p-2 text-center">
-                                            <p className="font-bold text-emerald-100">{groupResult.created}</p>
-                                            <p className="text-emerald-200">Created</p>
-                                        </div>
-                                        <div className="rounded bg-amber-500/20 p-2 text-center">
-                                            <p className="font-bold text-amber-100">{groupResult.skipped}</p>
-                                            <p className="text-amber-200">Skipped</p>
-                                        </div>
-                                        <div className="rounded bg-rose-500/20 p-2 text-center">
-                                            <p className="font-bold text-rose-100">{groupResult.failed}</p>
-                                            <p className="text-rose-200">Failed</p>
-                                        </div>
-                                    </div>
-
-                                    {groupResult.createdEmployeeIds.length > 0 && (
-                                        <div className="pt-2 border-t border-white/10">
-                                            <p className="text-xs font-semibold text-emerald-200 mb-1">Created for:</p>
-                                            <div className="flex flex-wrap gap-1">
-                                                {groupResult.createdEmployeeIds.slice(0, 10).map((eid) => (
-                                                    <Badge
-                                                        key={eid}
-                                                        variant="secondary"
-                                                        className="bg-emerald-500/30 text-emerald-100 text-xs"
-                                                    >
-                                                        {eid}
-                                                    </Badge>
-                                                ))}
-                                                {groupResult.createdEmployeeIds.length > 10 && (
-                                                    <span className="text-xs text-slate-400">
-                                                        +{groupResult.createdEmployeeIds.length - 10} more
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {groupResult.skippedEmployeeIds.length > 0 && (
-                                        <div className="pt-2 border-t border-white/10">
-                                            <p className="text-xs font-semibold text-amber-200 mb-1">Skipped (already exist):</p>
-                                            <div className="flex flex-wrap gap-1">
-                                                {groupResult.skippedEmployeeIds.slice(0, 10).map((eid) => (
-                                                    <Badge
-                                                        key={eid}
-                                                        variant="secondary"
-                                                        className="bg-amber-500/30 text-amber-100 text-xs"
-                                                    >
-                                                        {eid}
-                                                    </Badge>
-                                                ))}
-                                                {groupResult.skippedEmployeeIds.length > 10 && (
-                                                    <span className="text-xs text-slate-400">
-                                                        +{groupResult.skippedEmployeeIds.length - 10} more
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {groupResult.errors.length > 0 && (
-                                        <div className="pt-2 border-t border-white/10">
-                                            <p className="text-xs font-semibold text-rose-200 mb-1">Errors:</p>
-                                            <div className="space-y-1 max-h-32 overflow-y-auto">
-                                                {groupResult.errors.map((err, idx) => (
-                                                    <div
-                                                        key={idx}
-                                                        className="text-xs bg-rose-500/10 border border-rose-500/20 rounded p-2"
-                                                    >
-                                                        <span className="font-semibold text-rose-200">{err.employeeId}:</span>{" "}
-                                                        <span className="text-rose-100">{err.error}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            ) : null}
-                        </CardContent>
-                    </Card>
-                ) : null}
-
-                {can("canManagePolicies") ? (
-                    <Card className="bg-white/5 border-white/10 text-white">
-                        <CardHeader>
                             <CardTitle>Existing policies</CardTitle>
-                            <p className="text-sm text-slate-300">Update or delete current policies.</p>
+                            <p className="text-sm text-slate-300">Update current policies.</p>
                         </CardHeader>
-                        <CardContent className="space-y-4">
+                        <CardContent className="space-y-4 max-h-[32rem] overflow-y-auto pr-2 custom-scrollbar">
                             {policies.length ? (
                                 <div className="space-y-4">
                                     {policies.map((pol) => {
@@ -3442,154 +3475,192 @@ export default function LeavesDashboardPage() {
                                                 ltObj?.code ||
                                                 ltObj?._id?.toString?.() ||
                                                 "Leave type";
+                                        const expanded = expandedPolicyIds.has(pid);
                                         return (
                                             <div key={pid} className="space-y-3 border border-white/10 rounded-xl p-3 bg-white/5">
                                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                                                    <div>
+                                                    <div className="flex-1">
                                                         <p className="text-sm font-semibold">{ltLabel}</p>
                                                         <p className="text-xs text-slate-300">ID: {pid}</p>
+                                                        <div className="mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-slate-200">
+                                                            <span>Accrual: {form.accrualMethod || "—"}</span>
+                                                            <span>Rounding: {form.roundingRule || "—"}</span>
+                                                            <span>Yearly rate: {form.yearlyRate || "—"}</span>
+                                                        </div>
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <Button
                                                             size="sm"
-                                                            onClick={() => void handleUpdatePolicyInline(pid)}
-                                                            disabled={policySavingId === pid || !form.leaveTypeId}
+                                                            variant="secondary"
+                                                            onClick={() => togglePolicyExpanded(pid)}
                                                         >
-                                                            {policySavingId === pid ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
-                                                            Update
+                                                            {expanded ? "Hide details" : "Details"}
                                                         </Button>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            className="text-rose-200"
-                                                            onClick={() => void handleDeletePolicyInline(pid)}
-                                                            disabled={policySavingId === pid}
-                                                        >
-                                                            Delete
-                                                        </Button>
+                                                        {expanded ? (
+                                                            <Button
+                                                                size="sm"
+                                                                onClick={() => void handleUpdatePolicyInline(pid)}
+                                                                disabled={policySavingId === pid || !form.leaveTypeId}
+                                                            >
+                                                                {policySavingId === pid ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+                                                                Update
+                                                            </Button>
+                                                        ) : null}
                                                     </div>
                                                 </div>
+                                                {expanded ? (
+                                                <div className="space-y-3">
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                    <Select
-                                                        value={form.leaveTypeId || "__none"}
-                                                        onValueChange={(value) =>
-                                                            setPolicyEditState(pid, { leaveTypeId: value === "__none" ? "" : value })
-                                                        }
-                                                    >
-                                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                            <SelectValue placeholder="Select leave type" />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                            <SelectItem value="__none">Select leave type</SelectItem>
-                                                            {leaveTypes.map((lt) => {
-                                                                const ltId = (lt as any).id || (lt as any)._id;
-                                                                if (!ltId) return null;
-                                                                return (
-                                                                    <SelectItem key={ltId.toString()} value={ltId.toString()}>
-                                                                        {lt.name} ({lt.code})
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Leave type</Label>
+                                                        <Select
+                                                            value={form.leaveTypeId || "__none"}
+                                                            onValueChange={(value) =>
+                                                                setPolicyEditState(pid, { leaveTypeId: value === "__none" ? "" : value })
+                                                            }
+                                                        >
+                                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                                <SelectValue placeholder="Select leave type" />
+                                                            </SelectTrigger>
+                                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                                <SelectItem value="__none">Select leave type</SelectItem>
+                                                                {leaveTypes.map((lt) => {
+                                                                    const ltId = (lt as any).id || (lt as any)._id;
+                                                                    if (!ltId) return null;
+                                                                    return (
+                                                                        <SelectItem key={ltId.toString()} value={ltId.toString()}>
+                                                                            {lt.name} ({lt.code})
+                                                                        </SelectItem>
+                                                                    );
+                                                                })}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Accrual method</Label>
+                                                        <Select
+                                                            value={form.accrualMethod || "__none"}
+                                                            onValueChange={(value) =>
+                                                                setPolicyEditState(pid, { accrualMethod: value === "__none" ? "" : value })
+                                                            }
+                                                        >
+                                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                                <SelectValue placeholder="Select accrual method" />
+                                                            </SelectTrigger>
+                                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                                <SelectItem value="__none">Select accrual method</SelectItem>
+                                                                {ACCRUAL_METHOD_OPTIONS.map((opt) => (
+                                                                    <SelectItem key={opt.value} value={opt.value}>
+                                                                        {opt.label}
                                                                     </SelectItem>
-                                                                );
-                                                            })}
-                                                        </SelectContent>
-                                                    </Select>
-                                                    <Select
-                                                        value={form.accrualMethod || "__none"}
-                                                        onValueChange={(value) =>
-                                                            setPolicyEditState(pid, { accrualMethod: value === "__none" ? "" : value })
-                                                        }
-                                                    >
-                                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                            <SelectValue placeholder="Select accrual method" />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                            <SelectItem value="__none">Select accrual method</SelectItem>
-                                                            {ACCRUAL_METHOD_OPTIONS.map((opt) => (
-                                                                <SelectItem key={opt.value} value={opt.value}>
-                                                                    {opt.label}
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
                                                 </div>
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                    <Select
-                                                        value={form.roundingRule || "__none"}
-                                                        onValueChange={(value) =>
-                                                            setPolicyEditState(pid, { roundingRule: value === "__none" ? "" : value })
-                                                        }
-                                                    >
-                                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
-                                                            <SelectValue placeholder="Select rounding rule" />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="bg-slate-900 text-white border-white/10">
-                                                            <SelectItem value="__none">Select rounding rule</SelectItem>
-                                                            {ROUNDING_RULE_OPTIONS.map((opt) => (
-                                                                <SelectItem key={opt.value} value={opt.value}>
-                                                                    {opt.label}
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Rounding rule</Label>
+                                                        <Select
+                                                            value={form.roundingRule || "__none"}
+                                                            onValueChange={(value) =>
+                                                                setPolicyEditState(pid, { roundingRule: value === "__none" ? "" : value })
+                                                            }
+                                                        >
+                                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                                <SelectValue placeholder="Select rounding rule" />
+                                                            </SelectTrigger>
+                                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                                <SelectItem value="__none">Select rounding rule</SelectItem>
+                                                                {ROUNDING_RULE_OPTIONS.map((opt) => (
+                                                                    <SelectItem key={opt.value} value={opt.value}>
+                                                                        {opt.label}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
                                                     <div className="grid grid-cols-2 gap-2">
+                                                        <div className="space-y-1">
+                                                            <Label className="text-xs">Monthly rate</Label>
+                                                            <Input
+                                                                type="number"
+                                                                value={form.monthlyRate}
+                                                                onChange={(e) => setPolicyEditState(pid, { monthlyRate: e.target.value })}
+                                                                placeholder="Monthly rate"
+                                                                className="bg-white/5 border-white/10 text-white"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <Label className="text-xs">Yearly rate</Label>
+                                                            <Input
+                                                                type="number"
+                                                                value={form.yearlyRate}
+                                                                onChange={(e) => setPolicyEditState(pid, { yearlyRate: e.target.value })}
+                                                                placeholder="Yearly rate"
+                                                                className="bg-white/5 border-white/10 text-white"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Max carry forward</Label>
                                                         <Input
                                                             type="number"
-                                                            value={form.monthlyRate}
-                                                            onChange={(e) => setPolicyEditState(pid, { monthlyRate: e.target.value })}
-                                                            placeholder="Monthly rate"
+                                                            value={form.maxCarryForward}
+                                                            onChange={(e) => setPolicyEditState(pid, { maxCarryForward: e.target.value })}
+                                                            placeholder="Max carry forward"
                                                             className="bg-white/5 border-white/10 text-white"
                                                         />
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Expiry after months</Label>
                                                         <Input
                                                             type="number"
-                                                            value={form.yearlyRate}
-                                                            onChange={(e) => setPolicyEditState(pid, { yearlyRate: e.target.value })}
-                                                            placeholder="Yearly rate"
+                                                            value={form.expiryAfterMonths}
+                                                            onChange={(e) => setPolicyEditState(pid, { expiryAfterMonths: e.target.value })}
+                                                            placeholder="Expiry after months"
                                                             className="bg-white/5 border-white/10 text-white"
                                                         />
                                                     </div>
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-2">
-                                                    <Input
-                                                        type="number"
-                                                        value={form.maxCarryForward}
-                                                        onChange={(e) => setPolicyEditState(pid, { maxCarryForward: e.target.value })}
-                                                        placeholder="Max carry forward"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
-                                                    <Input
-                                                        type="number"
-                                                        value={form.expiryAfterMonths}
-                                                        onChange={(e) => setPolicyEditState(pid, { expiryAfterMonths: e.target.value })}
-                                                        placeholder="Expiry after months"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <Input
-                                                        type="number"
-                                                        value={form.minNoticeDays}
-                                                        onChange={(e) => setPolicyEditState(pid, { minNoticeDays: e.target.value })}
-                                                        placeholder="Min notice days"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
-                                                    <Input
-                                                        type="number"
-                                                        value={form.maxConsecutiveDays}
-                                                        onChange={(e) => setPolicyEditState(pid, { maxConsecutiveDays: e.target.value })}
-                                                        placeholder="Max consecutive days"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Min notice days</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={form.minNoticeDays}
+                                                            onChange={(e) => setPolicyEditState(pid, { minNoticeDays: e.target.value })}
+                                                            placeholder="Min notice days"
+                                                            className="bg-white/5 border-white/10 text-white"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Max consecutive days</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={form.maxConsecutiveDays}
+                                                            onChange={(e) => setPolicyEditState(pid, { maxConsecutiveDays: e.target.value })}
+                                                            placeholder="Max consecutive days"
+                                                            className="bg-white/5 border-white/10 text-white"
+                                                        />
+                                                    </div>
                                                 </div>
                                                 <div className="space-y-2 rounded-lg border border-white/10 p-3 bg-white/5">
                                                     <p className="text-sm font-semibold">Eligibility</p>
-                                                    <Input
-                                                        type="number"
-                                                        value={form.eligibilityMinTenureMonths}
-                                                        onChange={(e) =>
-                                                            setPolicyEditState(pid, { eligibilityMinTenureMonths: e.target.value })
-                                                        }
-                                                        placeholder="Minimum tenure (months)"
-                                                        className="bg-white/5 border-white/10 text-white"
-                                                    />
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Minimum tenure (months)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            value={form.eligibilityMinTenureMonths}
+                                                            onChange={(e) =>
+                                                                setPolicyEditState(pid, { eligibilityMinTenureMonths: e.target.value })
+                                                            }
+                                                            placeholder="Minimum tenure (months)"
+                                                            className="bg-white/5 border-white/10 text-white"
+                                                        />
+                                                    </div>
                                                     <div className="space-y-1">
                                                         <p className="text-xs text-slate-300">Allowed positions (dropdown, multi-select)</p>
                                                         <Select
@@ -3608,11 +3679,11 @@ export default function LeavesDashboardPage() {
                                                             </SelectTrigger>
                                                             <SelectContent className="bg-slate-900 text-white border-white/10 max-h-60">
                                                                 <SelectItem value="__none">Add position</SelectItem>
-                                                                {JOB_POSITION_OPTIONS.map((opt) => (
-                                                                    <SelectItem key={opt} value={opt}>
-                                                                        {opt}
-                                                                    </SelectItem>
-                                                                ))}
+                                                {positionOptions.map((opt) => (
+                                                    <SelectItem key={opt} value={opt}>
+                                                        {opt}
+                                                    </SelectItem>
+                                                ))}
                                                             </SelectContent>
                                                         </Select>
                                                         <div className="flex flex-wrap gap-2">
@@ -3687,6 +3758,8 @@ export default function LeavesDashboardPage() {
                                                     />
                                                     Carry forward allowed
                                                 </label>
+                                                </div>
+                                                ) : null}
                                             </div>
                                         );
                                     })}
@@ -3698,7 +3771,7 @@ export default function LeavesDashboardPage() {
                     </Card>
                 ) : null}
 
-                {can("canManagePolicies") ? (
+                {can("canViewEntitlements") ? (
                     <Card className="bg-white/5 border-white/10 text-white">
                         <CardHeader>
                             <CardTitle>Entitlements</CardTitle>
@@ -3737,16 +3810,25 @@ export default function LeavesDashboardPage() {
                                                         {ent.carryForward}
                                                     </p>
                                                 </div>
-                                                {can("canAdjust") ? (
+                                                <div className="flex items-center gap-2">
                                                     <Button
                                                         size="sm"
-                                                        variant="secondary"
-                                                        className="bg-blue-600/30 border border-blue-400/40"
-                                                        onClick={() => openAdjustmentModal(ent)}
+                                                        variant="outline"
+                                                        onClick={() => openEntitlementDetails(ent as any)}
                                                     >
-                                                        Adjust
+                                                        Details
                                                     </Button>
-                                                ) : null}
+                                                    {can("canAdjust") ? (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            className="bg-blue-600/30 border border-blue-400/40"
+                                                            onClick={() => openAdjustmentModal(ent)}
+                                                        >
+                                                            Adjust
+                                                        </Button>
+                                                    ) : null}
+                                                </div>
                                             </div>
                                             );
                                         })}
@@ -3781,8 +3863,7 @@ export default function LeavesDashboardPage() {
                                         {calendarLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Load calendar"}
                                     </Button>
                                     <Button
-                                        type="button"
-                                        variant="secondary"
+                                        variant="outline"
                                         onClick={handleCreateCalendar}
                                         disabled={calendarLoading || !calendarYear}
                                     >
@@ -3970,9 +4051,193 @@ export default function LeavesDashboardPage() {
                         </CardContent>
                     </Card>
                 ) : null}
-            </main>
+                </main>
+                
+                {/*Right Side*/}
+                <aside className="w-[320px] shrink-0 space-y-4">
+                    {/* Notifications */}
+                    <Card className="bg-white/5 border-white/10 text-white flex flex-col max-h-[60vh]">
+                        <CardHeader className="flex-shrink-0 pb-3">
+                            <CardTitle className="text-lg">Notifications</CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                            {notificationsLoading ? (
+                                <div className="flex items-center gap-2 text-slate-300 text-sm">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Loading notifications...
+                                </div>
+                            ) : notifications.length === 0 ? (
+                                <p className="text-sm text-slate-400">No notifications.</p>
+                            ) : (
+                                <ul className="space-y-2">
+                                    {notifications.map((note) => (
+                                        <li
+                                            key={note._id}
+                                            className="p-2 rounded-lg bg-white/5 border border-white/10 text-sm"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-semibold text-white">{note.type}</span>
+                                                {note.createdAt ? (
+                                                    <span className="text-xs text-slate-400">
+                                                        {new Date(note.createdAt).toLocaleString()}
+                                                    </span>
+                                                ) : null}
+                                            </div>
+                                            {note.message ? (
+                                                <p className="text-slate-200 text-sm mt-1">{note.message}</p>
+                                            ) : null}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Catalog Categories Management */}                
+                    {can("canManageCatalog") ? (
+                    <Card className="bg-white/5 border-white/10 text-white">
+                        <CardHeader>
+                            <CardTitle>Catalog - Categories</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                            <form className="space-y-2" onSubmit={handleCreateCategory}>
+                                <Label className="text-sm">New category</Label>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Name</Label>
+                                    <Input
+                                        value={newCategory.name}
+                                        onChange={(e) => setNewCategory((p) => ({ ...p, name: e.target.value }))}
+                                        placeholder="Name"
+                                        required
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Description</Label>
+                                    <Input
+                                        value={newCategory.description}
+                                        onChange={(e) => setNewCategory((p) => ({ ...p, description: e.target.value }))}
+                                        placeholder="Description (optional)"
+                                        className="bg-white/5 border-white/10 text-white"
+                                    />
+                                </div>
+                                <Button type="submit" className="w-full">
+                                    Create category
+                                </Button>
+                            </form>
+
+                            <div className="border-t border-white/10 pt-3">
+                                <Label className="text-sm">Edit category</Label>
+                                <div className="space-y-2">
+                                    <Select
+                                        value={editCategory.id || "__none"}
+                                        onValueChange={(value) => {
+                                            if (value === "__none") {
+                                                setEditCategory({ id: "", name: "", description: "" });
+                                                return;
+                                            }
+                                            const found = categories.find((c) => {
+                                                const cid =
+                                                    (c as any).id ||
+                                                    (c as any)._id ||
+                                                    (c as any).categoryId;
+                                                return cid?.toString?.() === value;
+                                            });
+                                            setEditCategory({
+                                                id: value,
+                                                name: found?.name || "",
+                                                description: found?.description || "",
+                                            });
+                                        }}
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Select category" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="__none">None</SelectItem>
+                                            {categories.map((cat, idx) => {
+                                                const cid =
+                                                    (cat as any).id ||
+                                                    (cat as any)._id ||
+                                                    (cat as any).categoryId;
+                                                if (!cid) return null;
+                                                const value = cid.toString();
+                                                return (
+                                                    <SelectItem key={value} value={value}>
+                                                        {cat.name}
+                                                    </SelectItem>
+                                                );
+                                            })}
+                                        </SelectContent>
+                                    </Select>
+                                    {editCategory.id ? (
+                                        <>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Name</Label>
+                                                <Input
+                                                    value={editCategory.name}
+                                                    onChange={(e) => setEditCategory((p) => ({ ...p, name: e.target.value }))}
+                                                    placeholder="Name"
+                                                    className="bg-white/5 border-white/10 text-white"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Description</Label>
+                                                <Input
+                                                    value={editCategory.description}
+                                                    onChange={(e) =>
+                                                        setEditCategory((p) => ({ ...p, description: e.target.value }))
+                                                    }
+                                                    placeholder="Description"
+                                                    className="bg-white/5 border-white/10 text-white"
+                                                />
+                                            </div>
+                                            <Button type="button" variant="secondary" onClick={handleUpdateCategory}>
+                                                Update
+                                            </Button>
+                                        </>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                    ) : null}
+
+                    {/* Run Accruals */}
+                    {can("canRunOps") ? (
+                        <Card className="bg-white/5 border-white/10 text-white">
+                            <CardHeader>
+                                <CardTitle>Run accrual</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-2">
+                                <Button
+                                    size ="full"
+                                    onClick={handleRunAccrual}
+                                    disabled={loading}
+                                >
+                                    Run accrual
+                                </Button>
+                            </CardContent>
+                        </Card>
+                        ) : null}
+                </aside>
+            </div>
         </div>
+        </>
     );
+}
+
+function getRequestDurationDays(req: LeaveRequest) {
+    if (typeof req.durationDays === "number") {
+        return req.durationDays;
+    }
+    const from = req?.dates?.from ? new Date(req.dates.from) : null;
+    const to = req?.dates?.to ? new Date(req.dates.to) : null;
+    if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return 0;
+    }
+    const diffDays = Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    return Number.isNaN(diffDays) ? 0 : diffDays;
 }
 
 function formatDate(value: string) {
