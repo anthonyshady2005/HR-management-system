@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { AdjustmentType } from '../enums/adjustment-type.enum';
@@ -40,7 +41,7 @@ export class CreateAdjustmentDto {
     example: 5,
   })
   @IsNumber()
-  @IsNotEmpty()
+  @Min(0)
   amount: number;
 
   @ApiProperty({

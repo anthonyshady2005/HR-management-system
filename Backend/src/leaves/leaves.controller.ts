@@ -69,7 +69,6 @@ import { UpdateBalanceDto } from './dto/update-balance.dto';
 import { LeaveEntitlementResponseDto } from './dto/leave-entitlement-response.dto';
 import { BalanceSummaryResponseDto } from './dto/balance-summary-response.dto';
 import { CreateBatchEntitlementDto } from './dto/create-batch-entitlement.dto';
-import { CreateGroupEntitlementDto } from './dto/create-group-entitlement.dto';
 import { BatchEntitlementResponseDto } from './dto/batch-entitlement-response.dto';
 
 // Leave Adjustment DTOs
@@ -147,6 +146,37 @@ export class LeavesController {
   @ApiResponse({ status: 404, description: 'Attachment not found' })
   async getAttachmentById(@Param('attachmentId') attachmentId: string) {
     return await this.leavesService.getAttachmentForHr(attachmentId);
+  }
+
+  @Get('positions')
+  @ApiOperation({
+    summary: 'Get position options (enum + org titles)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of position labels',
+  })
+  async getPositions() {
+    const positions = await this.leavesService.getPositionOptions();
+    return { positions };
+  }
+
+  @Get('notifications')
+  @Roles('department employee', 'department head', 'HR Manager', 'HR Admin', 'System Admin')
+  @ApiOperation({
+    summary: 'Get notification logs',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description: 'Optional recipient ID to filter notifications',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notifications retrieved successfully',
+  })
+  async getNotifications(@Query('to') to?: string) {
+    return await this.leavesService.getNotificationLogs(to);
   }
 
   @Post('attachments/upload')
@@ -700,19 +730,18 @@ export class LeavesController {
     const isHrOrAdmin = roles.some((r) =>
       ['hr admin', 'hr manager', 'system admin'].includes(r),
     );
+    const currentUserId =
+      isDeptHead && !isHrOrAdmin ? this.getCurrentUserId(req) : null;
 
     // department head visibility: restrict to their departments unless elevated role
     let departmentFilter: string | string[] | undefined = query.departmentId;
+    let headDepartmentIds: string[] = [];
     if (isDeptHead && !isHrOrAdmin) {
-      const currentUserId = this.getCurrentUserId(req);
-      const headDepartments = await this.leavesService.getDepartmentsForHead(
-        currentUserId,
-      );
-      const headDepartmentIds = headDepartments.map((d) => d.id);
-      if (!headDepartmentIds.length) {
-        // No mapped departments; return empty result instead of 403 to avoid blocking dashboard
-        return [];
-      }
+      headDepartmentIds = currentUserId
+        ? (await this.leavesService.getDepartmentsForHead(currentUserId)).map(
+            (d) => d.id,
+          )
+        : [];
 
       if (query.departmentId) {
         if (!headDepartmentIds.includes(query.departmentId)) {
@@ -721,7 +750,7 @@ export class LeavesController {
           );
         }
         departmentFilter = query.departmentId;
-      } else {
+      } else if (headDepartmentIds.length) {
         departmentFilter = headDepartmentIds;
       }
     }
@@ -729,6 +758,7 @@ export class LeavesController {
     return await this.leavesService.getAllLeaveRequests({
       ...query,
       departmentId: departmentFilter,
+      includeDecidedByIds: currentUserId ? [currentUserId] : undefined,
     });
   }
 
@@ -758,14 +788,12 @@ export class LeavesController {
       currentUserId,
     );
     const headDepartmentIds = headDepartments.map((d) => d.id);
-
-    if (!headDepartmentIds.length) {
-      return [];
-    }
+    const departmentFilter = headDepartmentIds.length ? headDepartmentIds : undefined;
 
     return await this.leavesService.getAllLeaveRequests({
       ...query,
-      departmentId: headDepartmentIds,
+      departmentId: departmentFilter,
+      includeDecidedByIds: [currentUserId],
     });
   }
 
@@ -775,7 +803,13 @@ export class LeavesController {
   @ApiOperation({ summary: 'Get departments managed by current head' })
   async getDepartmentsForHead(@Request() req) {
     const currentUserId = this.getCurrentUserId(req);
-    return await this.leavesService.getDepartmentsForHead(currentUserId);
+    const includeAllForHr = this.getUserRoles(req).some((r) =>
+      ['hr admin', 'hr manager', 'system admin'].includes(r),
+    );
+    return await this.leavesService.getDepartmentsForHead(
+      currentUserId,
+      includeAllForHr,
+    );
   }
 
   @Get('requests/me')
@@ -1091,7 +1125,7 @@ export class LeavesController {
    * REQ-026: HR Admin override for any leave request
    */
   @Patch('requests/:id/override')
-  @Roles('HR Admin', 'System Admin')
+  @Roles('HR Admin', 'System Admin','HR Manager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'HR override approval/rejection',
@@ -1128,7 +1162,7 @@ export class LeavesController {
   }
 
   @Patch('requests/:id/approval-flow')
-  @Roles('HR Admin', 'System Admin')
+  @Roles('HR Admin', 'System Admin','department head', 'HR Manager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update approval workflow for a leave request',
@@ -1345,54 +1379,7 @@ The operation processes all employees and returns a summary showing:
     return await this.leavesService.createBatchEntitlement(dto);
   }
 
-  @Post('entitlements/group')
-  @Roles('HR Admin', 'System Admin')
-  @ApiOperation({
-    summary: 'Create entitlements for a group of employees based on filters',
-    description: `Creates entitlements for employees matching specific filters.
 
-REQ-007: Group entitlement creation based on organizational structure
-
-This endpoint allows HR Admin to:
-- Assign leave entitlements to all employees in a department
-- Target specific positions or contract types
-- Filter by minimum tenure
-- Combine multiple filters for precise targeting
-
-The operation:
-1. Queries employees matching all specified filters (AND logic)
-2. Filters by tenure if specified
-3. Creates entitlements for eligible employees
-4. Returns detailed results
-
-Supported filters:
-- departmentId: Target specific department
-- positionId: Target specific position
-- contractType: Target contract type (e.g., "Permanent", "Contract")
-- minTenure: Minimum tenure in months`,
-  })
-  @ApiBody({ type: CreateGroupEntitlementDto })
-  @ApiResponse({
-    status: 201,
-    description: 'Group entitlement creation completed',
-    type: BatchEntitlementResponseDto,
-  })
-  @ApiResponse({ status: 400, description: 'Invalid input data' })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'No employees found matching the filters',
-  })
-  async createGroupEntitlement(@Body() dto: CreateGroupEntitlementDto) {
-    return await this.leavesService.createGroupEntitlement(dto);
-  }
 
   @Get('entitlements/employee/:employeeId')
   @ApiOperation({
@@ -1432,6 +1419,35 @@ Supported filters:
   @ApiResponse({ status: 400, description: 'Invalid ID format' })
   @ApiResponse({ status: 404, description: 'Entitlement not found' })
   async getEntitlementById(@Param('id') id: string) {
+    return await this.leavesService.getEntitlementById(id);
+  }
+
+  @Patch('entitlements/:id')
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update entitlement balances',
+    description:
+      'Allows HR to edit entitlement balance fields. Remaining is recalculated automatically.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Entitlement ID',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @ApiBody({ type: UpdateBalanceDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Entitlement updated successfully',
+    type: LeaveEntitlementResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid entitlement ID or payload' })
+  @ApiResponse({ status: 404, description: 'Entitlement not found' })
+  async updateEntitlement(
+    @Param('id') id: string,
+    @Body() dto: UpdateBalanceDto,
+  ) {
+    await this.leavesService.updateBalance(id, dto);
     return await this.leavesService.getEntitlementById(id);
   }
 
@@ -1990,96 +2006,59 @@ Supported filters:
   // ==================== ACCRUAL & CARRY-FORWARD AUTOMATION (EXTENDED) ====================
 
   /**
-   * REQ-003, REQ-040, REQ-041: Manual trigger for monthly accrual
-   * Processes accrual for all employees with MONTHLY accrual method
+   * Manual trigger: escalate stale approvals (manager/HR)
    */
-  @Post('accrual/run-monthly')
-  @Roles('HR Admin', 'System Admin')
+  @Post('requests/escalations/stale')
+  @HttpCode(HttpStatus.OK)
+  @Roles('HR Admin', 'HR Manager', 'System Admin')
   @ApiOperation({
-    summary: 'Manually trigger monthly accrual process',
+    summary: 'Manually run stale approval escalation',
     description:
-      'Processes monthly accrual for all employees. Excludes unpaid leave periods (BR-11).',
+      'Checks pending requests older than the AUTO_ESCALATION_HOURS threshold and notifies/escalates per workflow rules.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Monthly accrual completed successfully',
+    description: 'Escalation process executed',
   })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  async runMonthlyAccrual() {
-    const result = await this.leavesService.runAccrualProcess('monthly');
+  async escalateStaleApprovals() {
+    const result = await this.leavesService.escalateStaleApprovals();
     return {
-      message: 'Monthly accrual process completed',
-      processed: result.processed,
-      failed: result.failed,
+      message: 'Stale approvals escalation executed',
+      ...result,
     };
   }
 
   /**
-   * REQ-003, REQ-040, REQ-041: Manual trigger for quarterly accrual
-   * Processes accrual for all employees with PER_TERM (quarterly) accrual method
+   * Manual trigger for accrual (single endpoint)
    */
-  @Post('accrual/run-quarterly')
+  @Post('accrual/run')
   @Roles('HR Admin', 'System Admin')
   @ApiOperation({
-    summary: 'Manually trigger quarterly accrual process',
+    summary: 'Manually trigger accrual process',
     description:
-      'Processes quarterly accrual for all employees. Excludes unpaid leave periods (BR-11).',
+      'Runs accrual across all policies/entitlements. Optional type can hint a period but the service processes all.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['monthly', 'quarterly', 'yearly'],
+          default: 'monthly',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 200,
-    description: 'Quarterly accrual completed successfully',
+    description: 'Accrual process completed successfully',
   })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  async runQuarterlyAccrual() {
-    const result = await this.leavesService.runAccrualProcess('quarterly');
+  async runAccrualGeneric(@Body() body: { type?: 'monthly' | 'quarterly' | 'yearly' }) {
+    const type = body?.type;
+    const result = await this.leavesService.runAccrualProcess(type);
     return {
-      message: 'Quarterly accrual process completed',
-      processed: result.processed,
-      failed: result.failed,
-    };
-  }
-
-  /**
-   * REQ-003, REQ-040, REQ-041: Manual trigger for yearly accrual
-   * Processes accrual for all employees with YEARLY accrual method
-   */
-  @Post('accrual/run-yearly')
-  @Roles('HR Admin', 'System Admin')
-  @ApiOperation({
-    summary: 'Manually trigger yearly accrual process',
-    description:
-      'Processes yearly accrual for all employees. Excludes unpaid leave periods (BR-11).',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Yearly accrual completed successfully',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  async runYearlyAccrual() {
-    const result = await this.leavesService.runAccrualProcess('yearly');
-    return {
-      message: 'Yearly accrual process completed',
+      message: 'Accrual process completed',
       processed: result.processed,
       failed: result.failed,
     };
@@ -2159,107 +2138,8 @@ Supported filters:
     };
   }
 
-  /**
-   * REQ-040, REQ-041: Manual trigger for year-end carry-forward
-   * Processes carry-forward for all employees with caps and expiry rules
-   */
-  @Post('carry-forward/run')
-  @Roles('HR Admin', 'System Admin')
-  @ApiOperation({
-    summary: 'Manually trigger year-end carry-forward',
-    description:
-      'Processes carry-forward for all employees, applying max carry-forward caps (45 days default) and expiry dates.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Carry-forward completed successfully',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  async runCarryForward() {
-    const result = await this.leavesService.runYearEndCarryForward();
-    return {
-      message: 'Year-end carry-forward process completed',
-      processed: result.processed,
-      capped: result.capped,
-      failed: result.failed,
-    };
-  }
-
-  /**
-   * REQ-003: Calculate reset dates for all employees
-   * Updates nextResetDate based on hire date criterion
-   */
-  @Post('reset-dates/calculate')
-  @Roles('HR Admin', 'System Admin')
-  @ApiOperation({
-    summary: 'Calculate and update reset dates for all employees',
-    description:
-      'Calculates reset dates based on employee hire dates and updates all entitlements.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Reset dates calculated successfully',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Authentication required',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden - HR Admin or System Admin role required',
-  })
-  async calculateResetDates() {
-    const result = await this.leavesService.updateAllResetDates();
-    return {
-      message: 'Reset dates calculation completed',
-      updated: result.updated,
-      failed: result.failed,
-    };
-  }
-
-  // ==================== NOTIFICATIONS ====================
-
-  @Post('notifications')
-  @Roles('HR Admin', 'HR Manager', 'System Admin', 'department head')
-  @ApiOperation({ summary: 'Create a notification log entry' })
-  @ApiBody({ type: NotificationLogCreateDTO })
-  async createNotification(@Body() dto: NotificationLogCreateDTO) {
-    return this.leavesService.createNotificationLog(dto);
-  }
-
-  @Get('notifications')
-  @ApiOperation({
-    summary: 'Get notification logs',
-    description:
-      'Admins/HR/heads can view all or filter by recipient; employees are restricted to their own notifications.',
-  })
-  @ApiQuery({
-    name: 'to',
-    required: false,
-    description:
-      'Recipient employee ID (ObjectId). Ignored for employees; defaults to current user for them.',
-  })
-  async getNotifications(@Query('to') to: string | undefined, @Request() req) {
-    const currentUserId = this.getCurrentUserId(req);
-    const roles = this.getUserRoles(req);
-    const isEmployee = roles.includes('department employee');
-
-    const target = isEmployee ? currentUserId : to;
-    return this.leavesService.getNotificationLogs(target);
-  }
-
-  // ==================== VALIDATION ENDPOINTS (EXTENDED) ====================
-
-  /**
-   * Check balance sufficiency for leave request
-   */
+  // Manual carry-forward/reset endpoints removed; handled by daily maintenance
+  // Check balance sufficiency for leave request
   @Get('validation/check-balance')
   @ApiOperation({
     summary: 'Check if employee has sufficient balance for leave request',
