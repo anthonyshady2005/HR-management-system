@@ -1,8 +1,10 @@
+import * as path from 'path';
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -70,6 +72,10 @@ import { OfferFinalStatus } from './enums/offer-final-status.enum';
 import { ApprovalStatus } from './enums/approval-status.enum';
 import { TerminationStatus } from './enums/termination-status.enum';
 import { EmployeeProfileService } from '../employee-profile/employee-profile.service';
+import { Candidate, CandidateDocument } from '../employee-profile/models/candidate.schema';
+import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
+import { EmployeeStatus } from '../employee-profile/enums/employee-profile.enums';
+import { Logger } from '@nestjs/common';
 
 /**
  * Recruitment Service
@@ -88,6 +94,8 @@ import { EmployeeProfileService } from '../employee-profile/employee-profile.ser
  */
 @Injectable()
 export class RecruitmentService {
+  private readonly logger = new Logger(RecruitmentService.name);
+
   constructor(
     // ========== Model Injections ==========
     @InjectModel(JobTemplate.name)
@@ -116,6 +124,10 @@ export class RecruitmentService {
     private referralModel: Model<ReferralDocument>,
     @InjectModel(Document.name)
     private documentModel: Model<DocumentDocument>,
+    @InjectModel(Candidate.name)
+    private candidateModel: Model<CandidateDocument>,
+    @InjectModel(EmployeeProfile.name)
+    private employeeProfileModel: Model<EmployeeProfileDocument>,
 
     // ========== Service Dependencies ==========
     private employeeProfileService: EmployeeProfileService,
@@ -573,7 +585,11 @@ export class RecruitmentService {
    * @returns Application document with populated relations
    * @throws NotFoundException if application not found
    */
-  async findApplicationById(id: string): Promise<ApplicationDocument> {
+  async findApplicationById(
+    id: string,
+    userId?: string,
+    userRoles?: string[],
+  ): Promise<ApplicationDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid application ID');
     }
@@ -588,6 +604,17 @@ export class RecruitmentService {
     if (!application) {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
+
+    // Ownership validation: JOB_CANDIDATE can only access their own applications
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const candidateId = application.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to access this application',
+        );
+      }
+    }
+
     return application;
   }
 
@@ -706,9 +733,25 @@ export class RecruitmentService {
    */
   async getApplicationHistory(
     id: string,
+    userId?: string,
+    userRoles?: string[],
   ): Promise<ApplicationStatusHistoryDocument[]> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid application ID');
+    }
+
+    // Ownership validation: JOB_CANDIDATE can only access their own application history
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const application = await this.applicationModel.findById(id).exec();
+      if (!application) {
+        throw new NotFoundException(`Application with ID ${id} not found`);
+      }
+      const candidateId = application.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to access this application history',
+        );
+      }
     }
 
     return await this.applicationHistoryModel
@@ -724,9 +767,27 @@ export class RecruitmentService {
    * @returns Array of communication log entries
    * @note This is a placeholder - communication logs may be stored elsewhere
    */
-  async getApplicationCommunicationLogs(id: string): Promise<any[]> {
+  async getApplicationCommunicationLogs(
+    id: string,
+    userId?: string,
+    userRoles?: string[],
+  ): Promise<any[]> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid application ID');
+    }
+
+    // Ownership validation: JOB_CANDIDATE can only access their own communication logs
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const application = await this.applicationModel.findById(id).exec();
+      if (!application) {
+        throw new NotFoundException(`Application with ID ${id} not found`);
+      }
+      const candidateId = application.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to access this application communication logs',
+        );
+      }
     }
 
     // TODO: Implement communication logs storage and retrieval
@@ -845,7 +906,11 @@ export class RecruitmentService {
    * @returns Interview document with populated relations
    * @throws NotFoundException if interview not found
    */
-  async findInterviewById(id: string): Promise<InterviewDocument> {
+  async findInterviewById(
+    id: string,
+    userId?: string,
+    userRoles?: string[],
+  ): Promise<InterviewDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid interview ID');
     }
@@ -860,6 +925,18 @@ export class RecruitmentService {
     if (!interview) {
       throw new NotFoundException(`Interview with ID ${id} not found`);
     }
+
+    // Ownership validation: JOB_CANDIDATE can only access their own interviews
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const application = interview.applicationId as any;
+      const candidateId = application?.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to access this interview',
+        );
+      }
+    }
+
     return interview;
   }
 
@@ -1162,7 +1239,11 @@ export class RecruitmentService {
    * @returns Offer document with populated relations
    * @throws NotFoundException if offer not found
    */
-  async findOfferById(id: string): Promise<OfferDocument> {
+  async findOfferById(
+    id: string,
+    userId?: string,
+    userRoles?: string[],
+  ): Promise<OfferDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid offer ID');
     }
@@ -1178,6 +1259,17 @@ export class RecruitmentService {
     if (!offer) {
       throw new NotFoundException(`Offer with ID ${id} not found`);
     }
+
+    // Ownership validation: JOB_CANDIDATE can only access their own offers
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const candidateId = offer.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to access this offer',
+        );
+      }
+    }
+
     return offer;
   }
 
@@ -1214,12 +1306,17 @@ export class RecruitmentService {
    * Update candidate response to offer
    * @param id - Offer ID
    * @param response - Candidate response status
+   * @param userId - Current user ID (for ownership validation)
+   * @param userRoles - Current user roles (for ownership validation)
    * @returns Updated offer document
    * @throws NotFoundException if offer not found
+   * @throws ForbiddenException if user is not authorized
    */
   async updateOfferResponse(
     id: string,
     response: OfferResponseStatus,
+    userId?: string,
+    userRoles?: string[],
   ): Promise<OfferDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid offer ID');
@@ -1228,6 +1325,17 @@ export class RecruitmentService {
     const offer = await this.offerModel.findById(id).exec();
     if (!offer) {
       throw new NotFoundException(`Offer with ID ${id} not found`);
+    }
+
+    // Ownership validation: JOB_CANDIDATE can only update their own offer responses
+    // HR roles can update any offer response
+    if (userId && userRoles?.includes('Job Candidate')) {
+      const candidateId = offer.candidateId?.toString();
+      if (candidateId !== userId) {
+        throw new ForbiddenException(
+          'You are not authorized to update this offer response',
+        );
+      }
     }
 
     if (offer.applicantResponse !== OfferResponseStatus.PENDING) {
@@ -1460,7 +1568,178 @@ export class RecruitmentService {
         : undefined,
     });
 
-    return await contract.save();
+    const savedContract = await contract.save();
+
+    // Integration: If both parties have signed, create employee profile and initialize onboarding
+    if (savedContract.employeeSignedAt && savedContract.employerSignedAt) {
+      try {
+        await this.handleContractSigned(savedContract);
+      } catch (error) {
+        this.logger.error(
+          `Failed to process contract signed integration for contract ${savedContract._id}:`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        // Don't fail contract creation if integration fails - log and continue
+      }
+    }
+
+    return savedContract;
+  }
+
+  /**
+   * Handle contract signed - create employee profile and initialize onboarding
+   * This is called automatically when both parties sign the contract
+   */
+  private async handleContractSigned(contract: ContractDocument): Promise<void> {
+    // Get offer and candidate data
+    const offer = await this.offerModel
+      .findById(contract.offerId)
+      .populate('candidateId')
+      .exec();
+
+    if (!offer) {
+      throw new NotFoundException('Offer not found for contract');
+    }
+
+    const candidate = await this.candidateModel.findById(offer.candidateId).exec();
+    if (!candidate) {
+      throw new NotFoundException('Candidate not found for offer');
+    }
+
+    // Check if employee profile already exists (avoid duplicates)
+    const existingProfile = await this.employeeProfileService
+      .getEmployeeById(candidate._id.toString())
+      .catch(() => null);
+
+    if (existingProfile) {
+      this.logger.log(
+        `Employee profile already exists for candidate ${candidate._id}, skipping creation`,
+      );
+      return;
+    }
+
+    // Create employee profile from candidate
+    const employeeNumber = `EMP-${Date.now()}`;
+    const dateOfHire = contract.acceptanceDate || new Date();
+
+    // Check if profile already exists
+    const existingProfileDoc = await this.employeeProfileModel
+      .findById(candidate._id)
+      .exec();
+
+    if (existingProfileDoc) {
+      this.logger.log(
+        `Employee profile already exists for candidate ${candidate._id}, skipping creation`,
+      );
+      return;
+    }
+
+    // Create employee profile from candidate data
+    const employeeProfile = new this.employeeProfileModel({
+      _id: candidate._id, // Use same ID as candidate to maintain reference
+      employeeNumber,
+      dateOfHire,
+      firstName: candidate.firstName,
+      lastName: candidate.lastName,
+      middleName: candidate.middleName,
+      fullName: candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+      nationalId: candidate.nationalId,
+      personalEmail: candidate.personalEmail,
+      workEmail: `${candidate.firstName}.${candidate.lastName}@company.com`.toLowerCase(),
+      mobilePhone: candidate.mobilePhone,
+      dateOfBirth: candidate.dateOfBirth,
+      gender: candidate.gender,
+      maritalStatus: candidate.maritalStatus,
+      address: candidate.address,
+      primaryPositionId: candidate.positionId,
+      primaryDepartmentId: candidate.departmentId,
+      status: EmployeeStatus.ACTIVE,
+      statusEffectiveFrom: dateOfHire,
+      contractStartDate: dateOfHire,
+      contractType: 'FULL_TIME', // Default, can be updated later
+    });
+
+    await employeeProfile.save();
+
+    this.logger.log(
+      `Created employee profile ${employeeProfile._id} from candidate ${candidate._id}`,
+    );
+
+    // Create onboarding automatically
+    await this.createOnboardingForNewEmployee(
+      employeeProfile._id.toString(),
+      contract._id.toString(),
+    );
+
+    this.logger.log(
+      `Successfully created employee profile and initialized onboarding for employee ${employeeProfile._id}`,
+    );
+  }
+
+  /**
+   * Create onboarding for newly hired employee
+   */
+  private async createOnboardingForNewEmployee(
+    employeeId: string,
+    contractId: string,
+  ): Promise<void> {
+    // Default onboarding tasks based on department/role
+    // These can be customized based on business rules
+    const defaultTasks = [
+      {
+        name: 'Complete Employee Information Form',
+        department: 'HR',
+        status: 'pending' as const,
+        deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      },
+      {
+        name: 'IT Access Setup',
+        department: 'IT',
+        status: 'pending' as const,
+        deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days
+      },
+      {
+        name: 'Bank Account Information',
+        department: 'Finance',
+        status: 'pending' as const,
+        deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days
+      },
+      {
+        name: 'Workspace Setup',
+        department: 'Facilities',
+        status: 'pending' as const,
+        deadline: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days
+      },
+      {
+        name: 'Orientation Session',
+        department: 'HR',
+        status: 'pending' as const,
+        deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days
+      },
+    ];
+
+    // Create onboarding directly with contractId (required field)
+    const onboarding = new this.onboardingModel({
+      employeeId: new Types.ObjectId(employeeId),
+      contractId: new Types.ObjectId(contractId),
+      tasks: defaultTasks.map((task) => ({
+        name: task.name,
+        department: task.department,
+        status: task.status,
+        deadline: task.deadline,
+        completedAt: undefined,
+        documentId: undefined,
+        notes: undefined,
+      })),
+      completed: false,
+      completedAt: undefined,
+    });
+
+    await onboarding.save();
+
+    this.logger.log(
+      `Created onboarding for employee ${employeeId} with ${defaultTasks.length} default tasks`,
+    );
   }
 
   /**
@@ -1544,6 +1823,20 @@ export class RecruitmentService {
     if (!updated) {
       throw new NotFoundException(`Contract with ID ${id} not found`);
     }
+
+    // Integration: If both parties have signed, create employee profile and initialize onboarding
+    if (updated.employeeSignedAt && updated.employerSignedAt) {
+      try {
+        await this.handleContractSigned(updated);
+      } catch (error) {
+        this.logger.error(
+          `Failed to process contract signed integration for contract ${updated._id}:`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        // Don't fail contract signing if integration fails - log and continue
+      }
+    }
+
     return updated;
   }
 
@@ -1852,11 +2145,7 @@ export class RecruitmentService {
     }
 
     const termination = await this.terminationRequestModel
-      .findByIdAndUpdate(
-        id,
-        { status },
-        { new: true, runValidators: true },
-      )
+      .findById(id)
       .exec();
 
     if (!termination) {
@@ -1864,7 +2153,91 @@ export class RecruitmentService {
         `Termination request with ID ${id} not found`,
       );
     }
-    return termination;
+
+    const previousStatus = termination.status;
+
+    // Update termination status
+    termination.status = status;
+    const updatedTermination = await termination.save();
+
+    // Integration: If termination is approved, trigger employee deactivation workflow
+    if (
+      status === TerminationStatus.APPROVED &&
+      previousStatus !== TerminationStatus.APPROVED
+    ) {
+      try {
+        await this.handleTerminationApproved(termination);
+      } catch (error) {
+        this.logger.error(
+          `Failed to process termination approved integration for termination ${id}:`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        // Don't fail status update if integration fails - log and continue
+      }
+    }
+
+    return updatedTermination;
+  }
+
+  /**
+   * Handle termination approved - deactivate employee and process final settlements
+   */
+  private async handleTerminationApproved(
+    termination: TerminationRequestDocument,
+  ): Promise<void> {
+    const employeeId = termination.employeeId.toString();
+    const terminationDate = termination.terminationDate || new Date();
+
+    this.logger.log(
+      `Processing termination approved for employee ${employeeId}`,
+    );
+
+    // 1. Deactivate employee profile
+    try {
+      await this.employeeProfileService.deactivateEmployee(employeeId, employeeId, {
+        status: EmployeeStatus.TERMINATED,
+        effectiveDate: terminationDate,
+        reason: termination.reason || 'Termination approved',
+      });
+      this.logger.log(`Deactivated employee profile for ${employeeId}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to deactivate employee profile for ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error; // Re-throw as this is critical
+    }
+
+    // 2. Process final leave settlement (if LeavesService is available)
+    // Note: This requires LeavesModule to be imported in RecruitmentModule
+    try {
+      // Dynamic import to avoid circular dependencies
+      const leavesModule = await import(
+        path.resolve(__dirname, '../leaves/leaves.service')
+      );
+      // leavesModule.LeavesService is now accessible if you ever need it
+      
+      // This will work if LeavesService is injected, otherwise will be handled gracefully
+      this.logger.log(
+        `Leave settlement processing should be triggered for employee ${employeeId}`,
+      );
+      // TODO: Inject LeavesService via module import to enable this
+      // await leavesService.processFinalSettlementForTerminatedEmployee(employeeId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not process leave settlement for ${employeeId} - LeavesService not available`,
+      );
+    }
+
+    // 3. Process final payroll (termination benefits are handled in payroll execution)
+    // Note: Payroll execution automatically handles termination benefits when processing payroll
+    this.logger.log(
+      `Payroll termination benefits will be processed in next payroll run for employee ${employeeId}`,
+    );
+
+    this.logger.log(
+      `Successfully processed termination approved workflow for employee ${employeeId}`,
+    );
   }
 
   /**
