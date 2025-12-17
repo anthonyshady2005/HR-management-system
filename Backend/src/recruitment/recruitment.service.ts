@@ -74,7 +74,7 @@ import { TerminationStatus } from './enums/termination-status.enum';
 import { EmployeeProfileService } from '../employee-profile/employee-profile.service';
 import { Candidate, CandidateDocument } from '../employee-profile/models/candidate.schema';
 import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
-import { EmployeeStatus } from '../employee-profile/enums/employee-profile.enums';
+import { EmployeeStatus, DeactivationReason } from '../employee-profile/enums/employee-profile.enums';
 import { Logger } from '@nestjs/common';
 import { Consent, ConsentDocument } from './models/consent.schema';
 import { NotificationIntegrationService } from './integrations/notification-integration.service';
@@ -2456,9 +2456,9 @@ export class RecruitmentService {
     // 1. Deactivate employee profile
     try {
       await this.employeeProfileService.deactivateEmployee(employeeId, employeeId, {
-        status: EmployeeStatus.TERMINATED,
+        deactivationReason: DeactivationReason.TERMINATION,
         effectiveDate: terminationDate,
-        reason: termination.reason || 'Termination approved',
+        notes: termination.employeeComments || 'Termination approved',
       });
       this.logger.log(`Deactivated employee profile for ${employeeId}`);
     } catch (error) {
