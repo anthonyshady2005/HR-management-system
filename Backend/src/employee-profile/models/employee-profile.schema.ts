@@ -1,9 +1,12 @@
+/* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import {
   ContractType,
   EmployeeStatus,
   WorkType,
+  PayGrade,
 } from '../enums/employee-profile.enums';
 import { AppraisalRatingScaleType } from '../../performance/enums/performance.enums';
 import { Department } from '../../organization-structure/models/department.schema';
@@ -11,7 +14,7 @@ import { Position } from '../../organization-structure/models/position.schema';
 import { AppraisalCycle } from '../../performance/models/appraisal-cycle.schema';
 import { AppraisalRecord } from '../../performance/models/appraisal-record.schema';
 import { AppraisalTemplate } from '../../performance/models/appraisal-template.schema';
-import { payGrade } from '../../payroll-configuration/models/payGrades.schema';
+// import { payGrade } from '../../payroll-configuration/models/payGrades.schema';
 import { UserProfileBase } from './user-schema';
 
 export type EmployeeProfileDocument = HydratedDocument<EmployeeProfile>;
@@ -80,8 +83,9 @@ export class EmployeeProfile extends UserProfileBase {
   @Prop({ type: Types.ObjectId, ref: 'Position' })
   supervisorPositionId?: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: payGrade.name })
-  payGradeId?: Types.ObjectId;
+  // Changed from ObjectId ref to String Enum to decouple from Payroll Config module
+  @Prop({ type: String, enum: Object.values(PayGrade) })
+  payGradeId?: string;
 
   @Prop({ type: Types.ObjectId, ref: 'AppraisalRecord' })
   lastAppraisalRecordId?: Types.ObjectId;

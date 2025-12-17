@@ -36,6 +36,10 @@ import {
   PositionSchema,
 } from '../organization-structure/models/position.schema';
 import {
+  PositionAssignment,
+  PositionAssignmentSchema,
+} from '../organization-structure/models/position-assignment.schema';
+import {
   AppraisalRecord,
   AppraisalRecordSchema,
 } from '../performance/models/appraisal-record.schema';
@@ -43,6 +47,7 @@ import {
   ChangeWorkflowRule,
   ChangeWorkflowRuleSchema,
 } from './workflow-rule.schema';
+import { Notification, NotificationSchema } from './models/notification.schema';
 import { ProfileSyncService } from './profile-sync.service';
 
 @Module({
@@ -59,8 +64,10 @@ import { ProfileSyncService } from './profile-sync.service';
       { name: ProfileAuditLog.name, schema: ProfileAuditLogSchema },
       { name: Department.name, schema: DepartmentSchema },
       { name: Position.name, schema: PositionSchema },
+      { name: PositionAssignment.name, schema: PositionAssignmentSchema },
       { name: AppraisalRecord.name, schema: AppraisalRecordSchema },
       { name: ChangeWorkflowRule.name, schema: ChangeWorkflowRuleSchema },
+      { name: Notification.name, schema: NotificationSchema },
     ]),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'DEFAULT_SECRET',

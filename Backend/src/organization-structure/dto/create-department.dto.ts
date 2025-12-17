@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsEnum, IsMongoId } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDepartmentDto {
@@ -25,4 +25,12 @@ export class CreateDepartmentDto {
   @IsOptional()
   @IsEnum(['active', 'inactive'])
   status: 'active' | 'inactive' = 'active';
+
+  @ApiPropertyOptional({ 
+    description: 'ID of the position that serves as department head', 
+    type: String 
+  })
+  @IsOptional()
+  @IsMongoId()
+  headPositionId?: string;
 }

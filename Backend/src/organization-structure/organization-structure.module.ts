@@ -25,7 +25,17 @@ import {
   EmployeeProfile,
   EmployeeProfileSchema,
 } from '../employee-profile/models/employee-profile.schema';
+import {
+  NotificationLog,
+  NotificationLogSchema,
+} from '../time-management/models/notification-log.schema';
+import { payGrade, payGradeSchema } from '../payroll-configuration/models/payGrades.schema';
 import { CommonModule } from '../common/common.module';
+import { OrganizationStructureValidationService } from './validation/organization-structure-validation.service';
+import { StructureChangeRequestService } from './structure-change-request.service';
+import { StructureApprovalService } from './structure-approval.service';
+import { StructureChangeRequestController } from './structure-change-request.controller';
+import { HierarchyViewService } from './hierarchy-view.service';
 
 @Module({
   imports: [
@@ -40,10 +50,22 @@ import { CommonModule } from '../common/common.module';
         schema: StructureChangeRequestSchema,
       },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: payGrade.name, schema: payGradeSchema },
     ]),
     CommonModule,
   ],
-  controllers: [OrganizationStructureController],
-  providers: [OrganizationStructureService, StructureChangeLogService],
+  controllers: [
+    OrganizationStructureController,
+    StructureChangeRequestController,
+  ],
+  providers: [
+    OrganizationStructureService,
+    StructureChangeLogService,
+    OrganizationStructureValidationService,
+    StructureChangeRequestService,
+    StructureApprovalService,
+    HierarchyViewService,
+  ],
 })
 export class OrganizationStructureModule {}

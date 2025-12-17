@@ -4,16 +4,14 @@ import {
   StructureRequestStatus,
   StructureRequestType,
 } from '../enums/organization-structure.enums';
-import { EmployeeProfile } from '../../employee-profile/models/employee-profile.schema';
 
 export type StructureChangeRequestDocument =
   HydratedDocument<StructureChangeRequest>;
 
 @Schema({ collection: 'structure_change_requests', timestamps: true })
 export class StructureChangeRequest {
-  @Prop({ type: Types.ObjectId, auto: true })
-  _id: Types.ObjectId;
-
+  // _id is automatically handled by Mongoose, no need to explicitly define it
+  
   @Prop({ type: String, required: true, unique: true })
   requestNumber: string;
 

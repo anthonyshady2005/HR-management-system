@@ -20,7 +20,12 @@ import { ProfileAuditLog } from './models/profile-audit-log.schema';
 import { EmployeeSystemRole } from './models/employee-system-role.schema';
 import { Position } from '../organization-structure/models/position.schema';
 import { Department } from '../organization-structure/models/department.schema';
+import { PositionAssignment } from '../organization-structure/models/position-assignment.schema';
 import { AppraisalRecord } from '../performance/models/appraisal-record.schema';
+import { EmployeeQualification } from './models/qualification.schema';
+import { ChangeWorkflowRule } from './workflow-rule.schema';
+import { Notification } from './models/notification.schema';
+import { ProfileSyncService } from './profile-sync.service';
 import {
   EmployeeStatus,
   ProfileChangeStatus,
@@ -137,6 +142,8 @@ describe('Employee Profile Module - Requirements Verification', () => {
   let changeRequestModel: any;
   let auditLogModel: any;
   let systemRoleModel: any;
+  let positionAssignmentModel: any;
+  let positionModel: any;
 
   beforeEach(async () => {
     profileModel = createMockModel(mockEmployee);
@@ -146,6 +153,9 @@ describe('Employee Profile Module - Requirements Verification', () => {
       roles: [SystemRole.HR_ADMIN],
       permissions: [],
     });
+
+    positionAssignmentModel = createMockModel({ positionId: mockPositionId });
+    positionModel = createMockModel([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -167,16 +177,38 @@ describe('Employee Profile Module - Requirements Verification', () => {
           useValue: systemRoleModel,
         },
         {
+          provide: getModelToken(EmployeeQualification.name),
+          useValue: createMockModel([]),
+        },
+        {
           provide: getModelToken(Position.name),
-          useValue: createMockModel({}),
+          useValue: positionModel,
         },
         {
           provide: getModelToken(Department.name),
           useValue: createMockModel({}),
         },
         {
+          provide: getModelToken(PositionAssignment.name),
+          useValue: positionAssignmentModel,
+        },
+        {
           provide: getModelToken(AppraisalRecord.name),
           useValue: createMockModel(null),
+        },
+        {
+          provide: getModelToken(ChangeWorkflowRule.name),
+          useValue: createMockModel([]),
+        },
+        {
+          provide: getModelToken(Notification.name),
+          useValue: createMockModel([]),
+        },
+        {
+          provide: ProfileSyncService,
+          useValue: {
+            emitHierarchyChanged: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -367,15 +399,45 @@ describe('Employee Profile Module - Requirements Verification', () => {
         lean: jest.fn().mockReturnThis(),
         exec: jest.fn().mockResolvedValue(mockManager),
       });
+
+      // Manager current position assignment (org-structure)
+      positionAssignmentModel.findOne = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue({ positionId: mockPositionId }),
+      });
+
+      // No direct-report positions via reporting lines in this unit test (fallback to supervisorPositionId)
+      positionModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      });
     });
 
     describe('US-E4-01: View team members profiles (excluding sensitive info)', () => {
       it('should return team members for manager', async () => {
-        profileModel.find = jest.fn().mockReturnValue({
-          populate: jest.fn().mockReturnThis(),
-          select: jest.fn().mockReturnThis(),
-          lean: jest.fn().mockReturnThis(),
-          exec: jest.fn().mockResolvedValue([mockTeamMember]),
+        profileModel.find = jest.fn().mockImplementation((filter: any) => {
+          // First query: get direct-report IDs by supervisorPositionId
+          if (filter?.supervisorPositionId) {
+            return {
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([{ _id: mockTeamMember._id }]),
+            };
+          }
+
+          // Second query: load profiles by _id list
+          if (filter?._id?.$in) {
+            return {
+              populate: jest.fn().mockReturnThis(),
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([mockTeamMember]),
+            };
+          }
+
+          return createMockModel([]).find(filter);
         });
 
         const result = await service.getTeamMembers(mockManagerId);
@@ -385,23 +447,37 @@ describe('Employee Profile Module - Requirements Verification', () => {
       });
 
       it('should exclude sensitive fields (BR 18b)', async () => {
-        profileModel.find = jest.fn().mockReturnValue({
-          populate: jest.fn().mockReturnThis(),
-          select: jest.fn((fields: string) => {
-            // Verify sensitive fields are NOT selected
-            expect(fields).not.toContain('nationalId');
-            expect(fields).not.toContain('personalEmail');
-            expect(fields).not.toContain('dateOfBirth');
-            expect(fields).not.toContain('maritalStatus');
-            expect(fields).not.toContain('homePhone');
-            expect(fields).not.toContain('address');
+        profileModel.find = jest.fn().mockImplementation((filter: any) => {
+          if (filter?.supervisorPositionId) {
             return {
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([{ _id: mockTeamMember._id }]),
+            };
+          }
+
+          if (filter?._id?.$in) {
+            return {
+              populate: jest.fn().mockReturnThis(),
+              select: jest.fn((fields: string) => {
+                // Verify sensitive fields are NOT selected
+                expect(fields).not.toContain('nationalId');
+                expect(fields).not.toContain('personalEmail');
+                expect(fields).not.toContain('dateOfBirth');
+                expect(fields).not.toContain('maritalStatus');
+                expect(fields).not.toContain('homePhone');
+                expect(fields).not.toContain('address');
+                return {
+                  lean: jest.fn().mockReturnThis(),
+                  exec: jest.fn().mockResolvedValue([mockTeamMember]),
+                };
+              }),
               lean: jest.fn().mockReturnThis(),
               exec: jest.fn().mockResolvedValue([mockTeamMember]),
             };
-          }),
-          lean: jest.fn().mockReturnThis(),
-          exec: jest.fn().mockResolvedValue([mockTeamMember]),
+          }
+
+          return createMockModel([]).find(filter);
         });
 
         await service.getTeamMembers(mockManagerId);
@@ -410,13 +486,23 @@ describe('Employee Profile Module - Requirements Verification', () => {
       it('should only show direct reports (BR 41b)', async () => {
         profileModel.find = jest.fn().mockImplementation((filter: any) => {
           // Verify filter uses supervisorPositionId
-          expect(filter.supervisorPositionId).toBeDefined();
-          return {
-            populate: jest.fn().mockReturnThis(),
-            select: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockReturnThis(),
-            exec: jest.fn().mockResolvedValue([mockTeamMember]),
-          };
+          if (filter?.supervisorPositionId) {
+            expect(filter.supervisorPositionId).toBeDefined();
+            return {
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([{ _id: mockTeamMember._id }]),
+            };
+          }
+          if (filter?._id?.$in) {
+            return {
+              populate: jest.fn().mockReturnThis(),
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([mockTeamMember]),
+            };
+          }
+          return createMockModel([]).find(filter);
         });
 
         await service.getTeamMembers(mockManagerId);
@@ -425,11 +511,33 @@ describe('Employee Profile Module - Requirements Verification', () => {
 
     describe('US-E4-02: Team summary (job titles, departments)', () => {
       it('should return aggregated team summary', async () => {
+        // direct reports ids query
+        profileModel.find = jest.fn().mockImplementation((filter: any) => {
+          if (filter?.supervisorPositionId) {
+            return {
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([{ _id: mockTeamMember._id }]),
+            };
+          }
+          if (filter?._id?.$in) {
+            return {
+              select: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockReturnThis(),
+              exec: jest.fn().mockResolvedValue([
+                { dateOfHire: mockTeamMember.dateOfHire, contractType: 'FULL_TIME_CONTRACT', workType: 'FULL_TIME', status: EmployeeStatus.ACTIVE },
+              ]),
+            };
+          }
+          return createMockModel([]).find(filter);
+        });
+
+        // 3 aggregates in order: byPosition, byDepartment, byStatus
         profileModel.aggregate = jest
           .fn()
-          .mockResolvedValue([
-            { _id: mockPositionId, title: 'Developer', count: 5 },
-          ]);
+          .mockResolvedValueOnce([{ _id: mockPositionId, title: 'Developer', code: 'DEV', count: 1 }])
+          .mockResolvedValueOnce([{ _id: mockDepartmentId, name: 'Engineering', code: 'ENG', count: 1 }])
+          .mockResolvedValueOnce([{ _id: EmployeeStatus.ACTIVE, count: 1 }]);
 
         const result = await service.getTeamSummary(mockManagerId);
 
@@ -454,8 +562,10 @@ describe('Employee Profile Module - Requirements Verification', () => {
 
         const result = await service.searchEmployees({ name: 'John' });
 
-        expect(result.employees).toBeDefined();
-        expect(result.pagination).toBeDefined();
+        expect(result.data).toBeDefined();
+        expect(result.total).toBeDefined();
+        expect(result.page).toBeDefined();
+        expect(result.limit).toBeDefined();
       });
 
       it('should search by department', async () => {
@@ -473,7 +583,7 @@ describe('Employee Profile Module - Requirements Verification', () => {
           departmentId: mockDepartmentId.toString(),
         });
 
-        expect(result.employees).toBeDefined();
+        expect(result.data).toBeDefined();
       });
 
       it('should support pagination', async () => {
@@ -489,8 +599,8 @@ describe('Employee Profile Module - Requirements Verification', () => {
 
         const result = await service.searchEmployees({ page: 2, limit: 10 });
 
-        expect(result.pagination.page).toBe(2);
-        expect(result.pagination.limit).toBe(10);
+        expect(result.page).toBe(2);
+        expect(result.limit).toBe(10);
       });
     });
   });

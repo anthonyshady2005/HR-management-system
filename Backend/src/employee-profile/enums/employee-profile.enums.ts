@@ -106,3 +106,11 @@ export enum ProfileChangeStatus {
   REJECTED = 'REJECTED',
   CANCELED = 'CANCELED',
 }
+
+export enum DeactivationReason {
+  TERMINATION = 'TERMINATION',
+  RESIGNATION = 'RESIGNATION',
+  RETIREMENT = 'RETIREMENT',
+  OTHER = 'OTHER',
+}
+

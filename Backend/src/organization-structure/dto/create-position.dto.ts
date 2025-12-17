@@ -27,4 +27,12 @@ export class CreatePositionDto {
   @IsOptional()
   @IsEnum(['active', 'inactive'])
   status: 'active' | 'inactive' = 'active';
+
+  @ApiPropertyOptional({ 
+    description: 'Pay grade ID associated with this position', 
+    type: String 
+  })
+  @IsOptional()
+  @IsMongoId()
+  payGradeId?: string;
 }

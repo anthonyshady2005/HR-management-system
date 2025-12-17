@@ -14,6 +14,7 @@ import {
   WorkType,
   Gender,
   MaritalStatus,
+  PayGrade,
 } from '../enums/employee-profile.enums';
 
 class AddressDto {
@@ -168,9 +169,9 @@ export class HrUpdateEmployeeProfileDto {
   @IsMongoId()
   supervisorPositionId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ enum: PayGrade })
   @IsOptional()
-  @IsMongoId()
+  @IsEnum(PayGrade)
   payGradeId?: string;
 
   // Reason for change (for audit trail)

@@ -26,6 +26,15 @@ import {
   EmployeeProfile,
   EmployeeProfileSchema,
 } from '../employee-profile/models/employee-profile.schema';
+import {
+  EmployeeSystemRole,
+  EmployeeSystemRoleSchema,
+} from '../employee-profile/models/employee-system-role.schema';
+import {
+  NotificationLog,
+  NotificationLogSchema,
+} from '../time-management/models/notification-log.schema';
+import { Position, PositionSchema } from '../organization-structure/models/position.schema';
 import { AuthModule } from 'src/Auth/auth.module';
 
 @Module({
@@ -37,8 +46,11 @@ import { AuthModule } from 'src/Auth/auth.module';
       { name: AppraisalRecord.name, schema: AppraisalRecordSchema },
       { name: AppraisalDispute.name, schema: AppraisalDisputeSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: EmployeeSystemRole.name, schema: EmployeeSystemRoleSchema },
+      { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: Position.name, schema: PositionSchema }, // <-- add this
     ]),
-    AuthModule
+    AuthModule,
   ],
   controllers: [PerformanceController],
   providers: [PerformanceService],

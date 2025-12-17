@@ -17,13 +17,14 @@ import { UpdateAppraisalRecordDto } from './DTOs/UpdateAppraisalRecord.dto';
 import { AppraisalDispute } from './models/appraisal-dispute.schema';
 import { CreateAppraisalDisputeDTO } from './DTOs/CreateAppraisalDispute.dto';
 import { UpdateAppraisalDisputeDto } from './DTOs/UpdateAppraisalDispute.dto';
+import { Types } from 'mongoose';
 
 @ApiTags('Performance')
 @Controller('performance')
 @UseGuards(JwtAuthGuard, RolesGuard) // Protect all routes in this controller
 export class PerformanceController {
-  constructor(private readonly performanceService: PerformanceService) {}
-  
+  constructor(private readonly performanceService: PerformanceService) { }
+
   // Create a new appraisal template(Req 1)
   @Post('template')
   @Roles(SystemRole.HR_MANAGER) // Only HR Manager/Admin
@@ -45,6 +46,22 @@ export class PerformanceController {
     return this.performanceService.getAllTemplates();
   }
 
+  // Get specific template
+  @Get('templates/:id')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
+  @ApiOperation({ summary: 'Get template by ID' })
+  async getTemplateById(@Param('id') id: string): Promise<AppraisalTemplate> {
+    return this.performanceService.getTemplateById(id);
+  }
+
+  // Get specific assignment
+  @Get('assignments/:id')
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_EMPLOYEE)
+  @ApiOperation({ summary: 'Get assignment by ID' })
+  async getAssignmentById(@Param('id') id: string): Promise<AppraisalAssignment> {
+    return this.performanceService.getAssignmentById(id);
+  }
+
   // Create a new appraisal cycle (Req 2)
   @Post('cycle')
   @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER) // HR Manager & Department Head
@@ -56,16 +73,38 @@ export class PerformanceController {
   ): Promise<AppraisalCycle> {
     return this.performanceService.createCycle(dto);
   }
-
   // Get all appraisal cycles
-  @Get('cycles')
-  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
-  @ApiOperation({ summary: 'Get all appraisal cycles' })
-  @ApiResponse({ status: 200, description: 'Cycles retrieved successfully', type: [AppraisalCycle] })
-  async getAllCycles(): Promise<AppraisalCycle[]> {
-    return this.performanceService.getAllCycles();
+@Get('cycles')
+@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
+@ApiOperation({ summary: 'Get all appraisal cycles' })
+@ApiResponse({ status: 200, description: 'All cycles retrieved successfully', type: [AppraisalCycle] })
+async getAllCycles(): Promise<AppraisalCycle[]> {
+  return this.performanceService.getAllCycles();
+}
+
+  // Get active appraisal cycles
+  @Get('cycles/active')
+@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
+@ApiOperation({ summary: 'Get currently active appraisal cycles' })
+@ApiResponse({ status: 200, description: 'Active cycles retrieved successfully', type: [AppraisalCycle] })
+async getActiveCycles(): Promise<AppraisalCycle[]> {
+  return this.performanceService.getActiveCycles();
+}
+
+  // Update cycle status (close/archive cycles)
+  @Put('cycles/:cycleId/status')
+  @Roles(SystemRole.HR_MANAGER)
+  @ApiOperation({ summary: 'Update appraisal cycle status' })
+  @ApiResponse({ status: 200, description: 'Cycle status updated successfully' })
+  @ApiResponse({ status: 404, description: 'Cycle not found' })
+  async updateCycleStatus(
+    @Param('cycleId') cycleId: string,
+    @Body('status') status: string,
+  ): Promise<AppraisalCycle> {
+    return this.performanceService.updateCycleStatus(cycleId, status);
   }
-   // Assign appraisal template/cycle to employees and managers in bulk (Req 3)
+
+  // Assign appraisal template/cycle to employees and managers in bulk (Req 3)
   @Post('assignments/bulk')
   @Roles(SystemRole.HR_EMPLOYEE) // HR Employee
   @ApiOperation({ summary: 'Assign appraisal templates/cycles to employees and managers in bulk' })
@@ -126,10 +165,10 @@ export class PerformanceController {
   ): Promise<AppraisalRecord> {
     return this.performanceService.updateAppraisalRecord(recordId, dto);
   }
-  
+
   // Dashboard data aggregation (Req 7)
-  @Get('dashboard/:cycleId')
-  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER) // Authorized roles
+  @Get('hr/dashboard/:cycleId')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
   @ApiOperation({ summary: 'Get dashboard data for a specific appraisal cycle' })
   @ApiResponse({ status: 200, description: 'Dashboard data retrieved successfully' })
   @ApiResponse({ status: 400, description: 'Invalid cycle ID' })
@@ -139,17 +178,23 @@ export class PerformanceController {
     return this.performanceService.getDashboard(cycleId);
   }
 
+
   // Monitor appraisal progress and get pending forms (Req 8)
-  @Get('progress/:cycleId')
+  @Get('pending/:cycleId')
   @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
   @ApiOperation({ summary: 'Monitor appraisal progress and get pending forms for a cycle' })
   @ApiResponse({ status: 200, description: 'Appraisal progress retrieved successfully', type: [AppraisalAssignment] })
   @ApiResponse({ status: 400, description: 'Invalid cycle ID' })
-  async getAppraisalProgress(
-    @Param('cycleId') cycleId: string,
-  ): Promise<AppraisalAssignment[]> {
-    return this.performanceService.getAppraisalProgress(cycleId);
-  }
+ async getPendingAppraisals(
+  @Param('cycleId') cycleId: string,
+): Promise<AppraisalAssignment[]> {
+  return this.performanceService.getPendingAppraisals(cycleId);
+}
+@Post('reminder/:assignmentId')
+@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
+async sendReminder(@Param('assignmentId') assignmentId: string) {
+  return this.performanceService.sendReminder(new Types.ObjectId(assignmentId));
+}
 
   // REQ-OD-01: View final ratings, feedback, and development notes (Req 9)
   @Get('employee/:employeeId/appraisals')
