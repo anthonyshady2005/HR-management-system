@@ -12,7 +12,7 @@ import { AppraisalDispute, AppraisalDisputeDocument } from './models/appraisal-d
 import { CreateAppraisalDisputeDTO } from './DTOs/CreateAppraisalDispute.dto';
 import { UpdateAppraisalDisputeDto } from './DTOs/UpdateAppraisalDispute.dto';
 import { EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
-import { AppraisalRecordStatus } from '../performance/enums/performance.enums';
+import { AppraisalRecordStatus } from './enums/performance.enums';
 import { Types } from 'mongoose';
 export declare class PerformanceService {
     private templateModel;
@@ -43,7 +43,7 @@ export declare class PerformanceService {
     generateAppraisalReport(cycleId: string): Promise<{
         cycleId: Types.ObjectId;
         cycleName: string;
-        cycleType: import("../performance/enums/performance.enums").AppraisalTemplateType;
+        cycleType: import("./enums/performance.enums").AppraisalTemplateType;
         startDate: Date;
         endDate: Date;
         totalAppraisals: number;

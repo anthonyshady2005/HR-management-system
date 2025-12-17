@@ -18,7 +18,7 @@ import { AppraisalDispute, AppraisalDisputeDocument } from './models/appraisal-d
 import { CreateAppraisalDisputeDTO } from './DTOs/CreateAppraisalDispute.dto';
 import { UpdateAppraisalDisputeDto } from './DTOs/UpdateAppraisalDispute.dto';
 import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
-import { AppraisalAssignmentStatus, AppraisalRecordStatus, AppraisalDisputeStatus, AppraisalCycleStatus } from '../performance/enums/performance.enums';
+import { AppraisalAssignmentStatus, AppraisalRecordStatus, AppraisalDisputeStatus, AppraisalCycleStatus } from './enums/performance.enums';
 import { Types } from 'mongoose';
 import { Type } from 'class-transformer';
 import { v4 as uuidv4 } from 'uuid';
