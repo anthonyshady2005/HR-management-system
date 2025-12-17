@@ -1,0 +1,71 @@
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { OrganizationStructureController } from './organization-structure.controller';
+import { OrganizationStructureService } from './organization-structure.service';
+import { StructureChangeLogService } from './structure-change-log.service';
+import { Department, DepartmentSchema } from './models/department.schema';
+import { Position, PositionSchema } from './models/position.schema';
+import {
+  PositionAssignment,
+  PositionAssignmentSchema,
+} from './models/position-assignment.schema';
+import {
+  StructureApproval,
+  StructureApprovalSchema,
+} from './models/structure-approval.schema';
+import {
+  StructureChangeLog,
+  StructureChangeLogSchema,
+} from './models/structure-change-log.schema';
+import {
+  StructureChangeRequest,
+  StructureChangeRequestSchema,
+} from './models/structure-change-request.schema';
+import {
+  EmployeeProfile,
+  EmployeeProfileSchema,
+} from '../employee-profile/models/employee-profile.schema';
+import {
+  NotificationLog,
+  NotificationLogSchema,
+} from '../time-management/models/notification-log.schema';
+import { payGrade, payGradeSchema } from '../payroll-configuration/models/payGrades.schema';
+import { CommonModule } from '../common/common.module';
+import { OrganizationStructureValidationService } from './validation/organization-structure-validation.service';
+import { StructureChangeRequestService } from './structure-change-request.service';
+import { StructureApprovalService } from './structure-approval.service';
+import { StructureChangeRequestController } from './structure-change-request.controller';
+import { HierarchyViewService } from './hierarchy-view.service';
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      { name: Department.name, schema: DepartmentSchema },
+      { name: Position.name, schema: PositionSchema },
+      { name: PositionAssignment.name, schema: PositionAssignmentSchema },
+      { name: StructureApproval.name, schema: StructureApprovalSchema },
+      { name: StructureChangeLog.name, schema: StructureChangeLogSchema },
+      {
+        name: StructureChangeRequest.name,
+        schema: StructureChangeRequestSchema,
+      },
+      { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: payGrade.name, schema: payGradeSchema },
+    ]),
+    CommonModule,
+  ],
+  controllers: [
+    OrganizationStructureController,
+    StructureChangeRequestController,
+  ],
+  providers: [
+    OrganizationStructureService,
+    StructureChangeLogService,
+    OrganizationStructureValidationService,
+    StructureChangeRequestService,
+    StructureApprovalService,
+    HierarchyViewService,
+  ],
+})
+export class OrganizationStructureModule {}

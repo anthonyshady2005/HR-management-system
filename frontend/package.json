@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "powershell -Command \"$port=$env:PORT; if (-not $port) { $port=5000 }; npx next dev -p $port\"",
+    "dev": "next dev -p 5001",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -64,6 +64,6 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5"
+    "typescript": "5.9.3"
   }
 }
