@@ -216,7 +216,7 @@ export class PayrollTrackingController {
     ////////////////////////// Refunds //////////////////////////
 
     // Generate dispute refund on approval (Payroll Manager)
-    @Roles('Payroll Manager')
+    @Roles('Finance Staff')
     @Post('refunds/dispute/:id')
     async createRefundForDispute(
         @Param('id') id: string,
@@ -238,6 +238,13 @@ export class PayrollTrackingController {
     async createRefundForClaim(@Param('id') id: string, @Req() req) {
         const staffId = req.user._id;
         return this.payrollTrackingService.createRefundForClaim(id, staffId);
+    }
+
+    // Get all refunds (Finance Staff)
+    @Roles('Finance Staff')
+    @Get('refunds')
+    async getAllRefunds() {
+        return this.payrollTrackingService.getAllRefunds();
     }
 
     ////////////////////////// Operational Reports //////////////////////////

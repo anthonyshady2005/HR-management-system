@@ -164,4 +164,16 @@ export class OrganizationStructureController {
   async getEmployeesByPosition(@Param('id') id: string) {
     return await this.organizationStructureService.getEmployeesByPosition(id);
   }
+
+  @Get('departments')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all active departments' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of all active departments',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized - invalid or missing token' })
+  async getAllDepartments() {
+    return await this.organizationStructureService.getAllDepartments();
+  }
 }
