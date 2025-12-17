@@ -6,11 +6,13 @@ export enum ReportType {
 }
 
 export class ReportPeriodDto {
+    @IsOptional()
     @IsDateString()
-    startDate: string;
+    startDate?: string;
 
+    @IsOptional()
     @IsDateString()
-    endDate: string;
+    endDate?: string;
 }
 
 export class SummaryReportDto {

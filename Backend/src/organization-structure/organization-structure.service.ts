@@ -476,4 +476,8 @@ export class OrganizationStructureService {
 
     return employees;
   }
+  
+  async getAllDepartments(): Promise<DepartmentDocument[]> {
+    return await this.departmentModel.find().exec();
+  }
 }
