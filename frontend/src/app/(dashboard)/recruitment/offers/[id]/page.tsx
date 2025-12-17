@@ -12,6 +12,9 @@ import {
   XCircle,
   Clock,
   User,
+  Download,
+  Mail,
+  Loader,
 } from "lucide-react";
 import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
 
@@ -22,6 +25,9 @@ export default function OfferDetailPage() {
   const [loading, setLoading] = useState(true);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "approval" | "signing">("overview");
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -51,6 +57,37 @@ export default function OfferDetailPage() {
         return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
       default:
         return "bg-gray-500/20 text-gray-300 border-gray-500/30";
+    }
+  };
+
+  const handleGeneratePDF = async () => {
+    try {
+      setGeneratingPDF(true);
+      const result = await recruitmentApi.generateOfferPDF(id);
+      if (result.pdfUrl) {
+        setPdfUrl(result.pdfUrl);
+        // Open PDF in new tab
+        window.open(result.pdfUrl, '_blank');
+      }
+      alert("PDF generated successfully!");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      alert("Failed to generate PDF. Please try again.");
+    } finally {
+      setGeneratingPDF(false);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    try {
+      setSendingEmail(true);
+      const result = await recruitmentApi.sendOfferToCandidate(id);
+      alert("Offer email sent successfully to candidate!");
+    } catch (error) {
+      console.error("Error sending email:", error);
+      alert("Failed to send email. Please try again.");
+    } finally {
+      setSendingEmail(false);
     }
   };
 
@@ -97,6 +134,32 @@ export default function OfferDetailPage() {
                     <p className="text-xs text-slate-400">View offer details</p>
                   </div>
                 </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleGeneratePDF}
+                  disabled={generatingPDF}
+                  className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
+                >
+                  {generatingPDF ? (
+                    <Loader className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  {generatingPDF ? "Generating..." : "Generate PDF"}
+                </button>
+                <button
+                  onClick={handleSendEmail}
+                  disabled={sendingEmail}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
+                >
+                  {sendingEmail ? (
+                    <Loader className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Mail className="w-4 h-4" />
+                  )}
+                  {sendingEmail ? "Sending..." : "Send to Candidate"}
+                </button>
               </div>
             </div>
           </div>
@@ -192,7 +255,7 @@ export default function OfferDetailPage() {
                   </p>
                 </div>
               </div>
-              {offer.benefits && offer.benefits.length > 0 && (
+                {offer.benefits && offer.benefits.length > 0 && (
                 <div className="mt-6">
                   <p className="text-sm text-slate-400 mb-2">Benefits</p>
                   <div className="flex flex-wrap gap-2">
@@ -205,6 +268,20 @@ export default function OfferDetailPage() {
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+              {pdfUrl && (
+                <div className="mt-6 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
+                  <p className="text-green-400 text-sm mb-2">PDF Generated</p>
+                  <a
+                    href={pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download Offer PDF
+                  </a>
                 </div>
               )}
             </div>

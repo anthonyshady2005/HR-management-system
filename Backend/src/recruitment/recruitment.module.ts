@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { RecruitmentController } from './recruitment.controller';
 import { RecruitmentService } from './recruitment.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -15,9 +15,26 @@ import { Document,DocumentSchema } from './models/document.schema';
 import { TerminationRequest,TerminationRequestSchema } from './models/termination-request.schema';
 import { ClearanceChecklist,ClearanceChecklistSchema } from './models/clearance-checklist.schema';
 import { Onboarding, OnboardingSchema } from './models/onboarding.schema';
+import { Consent, ConsentSchema } from './models/consent.schema';
 import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
+import { Candidate, CandidateSchema } from '../employee-profile/models/candidate.schema';
+import { EmployeeProfile, EmployeeProfileSchema } from '../employee-profile/models/employee-profile.schema';
+import { NotificationLog, NotificationLogSchema } from '../time-management/models/notification-log.schema';
+import { employeeSigningBonus, employeeSigningBonusSchema } from '../payroll-execution/models/EmployeeSigningBonus.schema';
+import { signingBonus, signingBonusSchema } from '../payroll-configuration/models/signingBonus.schema';
+import { PayrollExecutionModule } from '../payroll-execution/payroll-execution.module';
+import { LeavesModule } from '../leaves/leaves.module';
+import { NotificationIntegrationService } from './integrations/notification-integration.service';
+import { PayrollIntegrationService } from './integrations/payroll-integration.service';
+import { LeavesIntegrationService } from './integrations/leaves-integration.service';
+import { TimeManagementIntegrationService } from './integrations/time-management-integration.service';
+import { EmailIntegrationService } from './integrations/email-integration.service';
+import { PdfIntegrationService } from './integrations/pdf-integration.service';
+import { CalendarIntegrationService } from './integrations/calendar-integration.service';
+
 @Module({
-  imports:[MongooseModule.forFeature([
+  imports:[
+    MongooseModule.forFeature([
       { name: JobTemplate.name, schema: JobTemplateSchema },
       { name: JobRequisition.name, schema: JobRequisitionSchema },
       { name: Application.name, schema: ApplicationSchema },
@@ -31,10 +48,28 @@ import { EmployeeProfileModule } from '../employee-profile/employee-profile.modu
       { name: Document.name, schema: DocumentSchema },
       { name: TerminationRequest.name, schema: TerminationRequestSchema },
       { name: ClearanceChecklist.name, schema: ClearanceChecklistSchema },
-    ]),EmployeeProfileModule
+      { name: Consent.name, schema: ConsentSchema },
+      { name: Candidate.name, schema: CandidateSchema },
+      { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: employeeSigningBonus.name, schema: employeeSigningBonusSchema },
+      { name: signingBonus.name, schema: signingBonusSchema },
+    ]),
+    EmployeeProfileModule,
+    forwardRef(() => PayrollExecutionModule),
+    forwardRef(() => LeavesModule),
   ],
   controllers: [RecruitmentController],
-  providers: [RecruitmentService],
+  providers: [
+    RecruitmentService,
+    NotificationIntegrationService,
+    PayrollIntegrationService,
+    LeavesIntegrationService,
+    TimeManagementIntegrationService,
+    EmailIntegrationService,
+    PdfIntegrationService,
+    CalendarIntegrationService,
+  ],
   exports:[RecruitmentService]
 
 })

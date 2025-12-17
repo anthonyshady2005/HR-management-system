@@ -76,6 +76,15 @@ import { Candidate, CandidateDocument } from '../employee-profile/models/candida
 import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
 import { EmployeeStatus } from '../employee-profile/enums/employee-profile.enums';
 import { Logger } from '@nestjs/common';
+import { Consent, ConsentDocument } from './models/consent.schema';
+import { NotificationIntegrationService } from './integrations/notification-integration.service';
+import { PayrollIntegrationService } from './integrations/payroll-integration.service';
+import { LeavesIntegrationService } from './integrations/leaves-integration.service';
+import { TimeManagementIntegrationService } from './integrations/time-management-integration.service';
+import { EmailIntegrationService } from './integrations/email-integration.service';
+import { PdfIntegrationService } from './integrations/pdf-integration.service';
+import { CalendarIntegrationService } from './integrations/calendar-integration.service';
+import { CreateConsentDto } from './dto/create-consent.dto';
 
 /**
  * Recruitment Service
@@ -128,9 +137,18 @@ export class RecruitmentService {
     private candidateModel: Model<CandidateDocument>,
     @InjectModel(EmployeeProfile.name)
     private employeeProfileModel: Model<EmployeeProfileDocument>,
+    @InjectModel(Consent.name)
+    private consentModel: Model<ConsentDocument>,
 
     // ========== Service Dependencies ==========
     private employeeProfileService: EmployeeProfileService,
+    private notificationIntegration: NotificationIntegrationService,
+    private payrollIntegration: PayrollIntegrationService,
+    private leavesIntegration: LeavesIntegrationService,
+    private timeManagementIntegration: TimeManagementIntegrationService,
+    private emailIntegration: EmailIntegrationService,
+    private pdfIntegration: PdfIntegrationService,
+    private calendarIntegration: CalendarIntegrationService,
   ) {}
 
   // ============================================================================
@@ -278,8 +296,10 @@ export class RecruitmentService {
   ): Promise<JobRequisitionDocument[]> {
     const query = this.jobRequisitionModel.find().populate('templateId').populate('hiringManagerId');
 
-    if (filters?.publishStatus) {
-      query.where('publishStatus').equals(filters.publishStatus);
+    // Support both 'status' (from frontend) and 'publishStatus' (backend field name)
+    const publishStatus = filters?.publishStatus || filters?.status;
+    if (publishStatus) {
+      query.where('publishStatus').equals(publishStatus);
     }
     if (filters?.hiringManagerId) {
       query.where('hiringManagerId').equals(filters.hiringManagerId);
@@ -289,6 +309,18 @@ export class RecruitmentService {
     }
 
     return await query.exec();
+  }
+
+  /**
+   * Find all published job requisitions (public endpoint)
+   * @returns Array of published job requisition documents
+   */
+  async findPublishedJobRequisitions(): Promise<JobRequisitionDocument[]> {
+    return await this.jobRequisitionModel
+      .find({ publishStatus: 'published' })
+      .populate('templateId')
+      .populate('hiringManagerId')
+      .exec();
   }
 
   /**
@@ -482,6 +514,45 @@ export class RecruitmentService {
   // ============================================================================
 
   /**
+   * Create or find candidate by email
+   * @param candidateData - Candidate information
+   * @returns Candidate document
+   */
+  async createOrFindCandidate(candidateData: {
+    firstName: string;
+    lastName: string;
+    personalEmail: string;
+    nationalId: string;
+    mobilePhone?: string;
+  }): Promise<CandidateDocument> {
+    // Check if candidate already exists by email
+    let candidate = await this.candidateModel
+      .findOne({ personalEmail: candidateData.personalEmail })
+      .exec();
+
+    if (candidate) {
+      return candidate;
+    }
+
+    // Generate candidate number
+    const candidateNumber = `CAND-${Date.now()}`;
+
+    // Create new candidate
+    candidate = new this.candidateModel({
+      candidateNumber,
+      firstName: candidateData.firstName,
+      lastName: candidateData.lastName,
+      fullName: `${candidateData.firstName} ${candidateData.lastName}`,
+      personalEmail: candidateData.personalEmail,
+      nationalId: candidateData.nationalId,
+      mobilePhone: candidateData.mobilePhone,
+      applicationDate: new Date(),
+    });
+
+    return await candidate.save();
+  }
+
+  /**
    * Create a new application
    * @param createDto - Application creation data
    * @returns Created application document
@@ -497,13 +568,27 @@ export class RecruitmentService {
       throw new BadRequestException('Invalid requisition ID');
     }
 
-    // Validate requisition exists
+    // Validate requisition exists and is published
     const requisition = await this.jobRequisitionModel
       .findById(createDto.requisitionId)
       .exec();
     if (!requisition) {
       throw new NotFoundException(
         `Job requisition with ID ${createDto.requisitionId} not found`,
+      );
+    }
+
+    // Only allow applications to published requisitions
+    if (requisition.publishStatus !== 'published') {
+      throw new BadRequestException(
+        'Applications can only be submitted to published job requisitions',
+      );
+    }
+
+    // Check if requisition has expired
+    if (requisition.expiryDate && new Date(requisition.expiryDate) < new Date()) {
+      throw new BadRequestException(
+        'This job requisition has expired and is no longer accepting applications',
       );
     }
 
@@ -691,6 +776,33 @@ export class RecruitmentService {
       application.assignedHr?.toString() || application.candidateId.toString(),
     );
 
+    // Send notification for status update
+    if (oldStatus !== updateDto.status) {
+      const candidate = await this.candidateModel.findById(application.candidateId).exec();
+      if (candidate) {
+        await this.notificationIntegration.notifyApplicationStatusUpdate(
+          candidate._id.toString(),
+          id,
+          updateDto.status,
+          application.currentStage,
+        );
+
+        // Send rejection notification if status is REJECTED
+        if (updateDto.status === ApplicationStatus.REJECTED) {
+          await this.notificationIntegration.notifyRejection(
+            candidate._id.toString(),
+            id,
+          );
+          // Also send email
+          await this.emailIntegration.sendRejectionEmail(
+            candidate.personalEmail || '',
+            candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+            id,
+          );
+        }
+      }
+    }
+
     return updated;
   }
 
@@ -800,31 +912,62 @@ export class RecruitmentService {
    * @param id - Application ID
    * @param consentDto - Consent data
    * @returns Consent record
-   * @note This is a placeholder - consent management may be stored elsewhere
    */
-  async recordConsent(id: string, consentDto: any): Promise<any> {
+  async recordConsent(id: string, consentDto: CreateConsentDto): Promise<ConsentDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid application ID');
     }
 
-    // TODO: Implement consent management
-    // This could be stored in the application document or a separate collection
-    return { applicationId: id, ...consentDto };
+    // Check if application exists
+    const application = await this.applicationModel.findById(id).exec();
+    if (!application) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
+    // Check if consent already exists
+    const existingConsent = await this.consentModel
+      .findOne({ applicationId: new Types.ObjectId(id) })
+      .exec();
+
+    if (existingConsent) {
+      // Update existing consent
+      existingConsent.consentGiven = consentDto.consentGiven;
+      existingConsent.consentType = consentDto.consentType;
+      existingConsent.consentDate = new Date();
+      existingConsent.ipAddress = consentDto.ipAddress;
+      existingConsent.userAgent = consentDto.userAgent;
+      if (!consentDto.consentGiven) {
+        existingConsent.withdrawnAt = new Date();
+      }
+      return await existingConsent.save();
+    }
+
+    // Create new consent
+    const consent = new this.consentModel({
+      applicationId: new Types.ObjectId(id),
+      consentGiven: consentDto.consentGiven,
+      consentType: consentDto.consentType,
+      consentDate: new Date(),
+      ipAddress: consentDto.ipAddress,
+      userAgent: consentDto.userAgent,
+    });
+
+    return await consent.save();
   }
 
   /**
    * Get consent status
    * @param id - Application ID
    * @returns Consent status
-   * @note This is a placeholder - consent management may be stored elsewhere
    */
-  async getConsentStatus(id: string): Promise<any> {
+  async getConsentStatus(id: string): Promise<ConsentDocument | null> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid application ID');
     }
 
-    // TODO: Implement consent status retrieval
-    return { applicationId: id, consentGiven: false };
+    return await this.consentModel
+      .findOne({ applicationId: new Types.ObjectId(id) })
+      .exec();
   }
 
   // ============================================================================
@@ -1084,7 +1227,6 @@ export class RecruitmentService {
    * Send calendar invite for interview
    * @param id - Interview ID
    * @returns Calendar invite information
-   * @note This is a placeholder - calendar integration would be implemented here
    */
   async sendCalendarInvite(id: string): Promise<any> {
     if (!Types.ObjectId.isValid(id)) {
@@ -1101,12 +1243,67 @@ export class RecruitmentService {
       throw new NotFoundException(`Interview with ID ${id} not found`);
     }
 
-    // TODO: Integrate with calendar service (Google Calendar, Outlook, etc.)
-    // This would generate and send calendar invites to panel members and candidate
+    const application = await this.applicationModel
+      .findById(interview.applicationId)
+      .populate('candidateId')
+      .exec();
+
+    if (!application) {
+      throw new NotFoundException('Application not found for interview');
+    }
+
+    const candidate = application.candidateId as any;
+    const endDate = new Date(interview.scheduledDate);
+    endDate.setHours(endDate.getHours() + 1); // 1 hour interview
+
+    // Generate calendar invite
+    const icsContent = await this.calendarIntegration.generateCalendarInvite(
+      `Interview - ${candidate.fullName || `${candidate.firstName} ${candidate.lastName}`}`,
+      `Interview for position. Method: ${interview.method}`,
+      interview.scheduledDate,
+      endDate,
+      interview.videoLink || '', // Use videoLink as location for virtual interviews, empty for in-person
+      [
+        { email: candidate.personalEmail || '', name: candidate.fullName || `${candidate.firstName} ${candidate.lastName}` },
+        ...(interview.panel || []).map((p: any) => ({ email: p.email || '', name: p.fullName || `${p.firstName} ${p.lastName}` })),
+      ],
+    );
+
+    // Send notifications
+    await this.notificationIntegration.notifyInterviewScheduled(
+      candidate._id.toString(),
+      id,
+      interview.scheduledDate,
+      interview.method,
+    );
+
+    // Send email with calendar invite
+    await this.emailIntegration.sendInterviewInviteEmail(
+      candidate.personalEmail || '',
+      candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+      id,
+      interview.scheduledDate,
+      interview.method,
+      interview.videoLink,
+      interview.videoLink || '', // Use videoLink as location for virtual interviews
+    );
+
+    // Notify panel members
+    if (interview.panel && interview.panel.length > 0) {
+      const panelIds = interview.panel.map((p: any) => p._id?.toString() || p.toString());
+      await this.notificationIntegration.notifyPanelMembers(
+        panelIds,
+        id,
+        interview.scheduledDate,
+        candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+      );
+    }
+
     return {
       interviewId: id,
       scheduledDate: interview.scheduledDate,
       calendarEventId: interview.calendarEventId,
+      icsContent,
       message: 'Calendar invite sent successfully',
     };
   }
@@ -1464,7 +1661,6 @@ export class RecruitmentService {
    * Generate offer PDF
    * @param id - Offer ID
    * @returns PDF file data or URL
-   * @note This is a placeholder - PDF generation would be implemented here
    */
   async generateOfferPDF(id: string): Promise<any> {
     if (!Types.ObjectId.isValid(id)) {
@@ -1472,13 +1668,18 @@ export class RecruitmentService {
     }
 
     const offer = await this.findOfferById(id);
+    const candidate = await this.candidateModel.findById(offer.candidateId).exec();
 
-    // TODO: Implement PDF generation using a library like pdfkit or puppeteer
-    // This would generate a formatted PDF from the offer data
+    if (!candidate) {
+      throw new NotFoundException('Candidate not found for offer');
+    }
+
+    const pdfUrl = await this.pdfIntegration.generateOfferPDF(offer, candidate);
+
     return {
       offerId: id,
-      pdfUrl: `/offers/${id}/pdf`,
-      message: 'PDF generation not yet implemented',
+      pdfUrl,
+      message: 'PDF generated successfully',
     };
   }
 
@@ -1486,7 +1687,6 @@ export class RecruitmentService {
    * Send offer to candidate
    * @param id - Offer ID
    * @returns Send confirmation
-   * @note This is a placeholder - email integration would be implemented here
    */
   async sendOfferToCandidate(id: string): Promise<any> {
     if (!Types.ObjectId.isValid(id)) {
@@ -1494,14 +1694,41 @@ export class RecruitmentService {
     }
 
     const offer = await this.findOfferById(id);
+    const candidate = await this.candidateModel.findById(offer.candidateId).exec();
 
-    // TODO: Implement email sending using a service like nodemailer or SendGrid
-    // This would send the offer letter to the candidate's email
+    if (!candidate) {
+      throw new NotFoundException('Candidate not found for offer');
+    }
+
+    // Generate PDF first
+    const pdfUrl = await this.pdfIntegration.generateOfferPDF(offer, candidate);
+
+    // Send email
+    await this.emailIntegration.sendOfferEmail(
+      candidate.personalEmail || '',
+      candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+      id,
+      {
+        role: offer.role,
+        grossSalary: offer.grossSalary,
+        signingBonus: offer.signingBonus,
+        benefits: offer.benefits,
+      },
+      pdfUrl,
+    );
+
+    // Send notification
+    await this.notificationIntegration.notifyOfferSent(
+      candidate._id.toString(),
+      id,
+    );
+
     return {
       offerId: id,
       candidateId: offer.candidateId,
       sent: true,
-      message: 'Offer email sending not yet implemented',
+      pdfUrl,
+      message: 'Offer email sent successfully',
     };
   }
 
@@ -1669,6 +1896,21 @@ export class RecruitmentService {
     await this.createOnboardingForNewEmployee(
       employeeProfile._id.toString(),
       contract._id.toString(),
+    );
+
+    // Process signing bonus if applicable
+    if (contract.signingBonus && contract.signingBonus > 0) {
+      await this.payrollIntegration.processSigningBonus(
+        employeeProfile._id.toString(),
+        contract._id.toString(),
+        contract.signingBonus,
+      );
+    }
+
+    // Trigger payroll initiation
+    await this.payrollIntegration.triggerPayrollInitiation(
+      employeeProfile._id.toString(),
+      dateOfHire,
     );
 
     this.logger.log(
@@ -1844,7 +2086,6 @@ export class RecruitmentService {
    * Generate contract PDF
    * @param id - Contract ID
    * @returns PDF file data or URL
-   * @note This is a placeholder - PDF generation would be implemented here
    */
   async generateContractPDF(id: string): Promise<any> {
     if (!Types.ObjectId.isValid(id)) {
@@ -1852,12 +2093,32 @@ export class RecruitmentService {
     }
 
     const contract = await this.findContractById(id);
+    
+    // Get employee profile
+    const offer = await this.offerModel
+      .findById(contract.offerId)
+      .populate('candidateId')
+      .exec();
+    
+    if (!offer) {
+      throw new NotFoundException('Offer not found for contract');
+    }
 
-    // TODO: Implement PDF generation
+    // Get employee profile (created from candidate)
+    const employee = await this.employeeProfileModel
+      .findById(offer.candidateId)
+      .exec();
+
+    if (!employee) {
+      throw new NotFoundException('Employee profile not found for contract');
+    }
+
+    const pdfUrl = await this.pdfIntegration.generateContractPDF(contract, employee);
+
     return {
       contractId: id,
-      pdfUrl: `/contracts/${id}/pdf`,
-      message: 'PDF generation not yet implemented',
+      pdfUrl,
+      message: 'PDF generated successfully',
     };
   }
 
@@ -2208,32 +2469,31 @@ export class RecruitmentService {
       throw error; // Re-throw as this is critical
     }
 
-    // 2. Process final leave settlement (if LeavesService is available)
-    // Note: This requires LeavesModule to be imported in RecruitmentModule
+    // 2. Process final leave settlement
     try {
-      // Dynamic import to avoid circular dependencies
-      const leavesModule = await import(
-        path.resolve(__dirname, '../leaves/leaves.service')
+      await this.leavesIntegration.processFinalLeaveSettlement(
+        employeeId,
+        terminationDate,
       );
-      // leavesModule.LeavesService is now accessible if you ever need it
-      
-      // This will work if LeavesService is injected, otherwise will be handled gracefully
-      this.logger.log(
-        `Leave settlement processing should be triggered for employee ${employeeId}`,
-      );
-      // TODO: Inject LeavesService via module import to enable this
-      // await leavesService.processFinalSettlementForTerminatedEmployee(employeeId);
     } catch (error) {
       this.logger.warn(
-        `Could not process leave settlement for ${employeeId} - LeavesService not available`,
+        `Could not process leave settlement for ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
       );
     }
 
-    // 3. Process final payroll (termination benefits are handled in payroll execution)
-    // Note: Payroll execution automatically handles termination benefits when processing payroll
-    this.logger.log(
-      `Payroll termination benefits will be processed in next payroll run for employee ${employeeId}`,
-    );
+    // 3. Process final payroll (termination benefits)
+    try {
+      await this.payrollIntegration.processTerminationBenefits(
+        employeeId,
+        terminationDate,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not process termination benefits for ${employeeId}:`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
 
     this.logger.log(
       `Successfully processed termination approved workflow for employee ${employeeId}`,

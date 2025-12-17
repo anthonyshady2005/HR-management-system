@@ -30,6 +30,7 @@ export * from './create-application.dto';
 export * from './update-application-stage.dto';
 export * from './update-application-status.dto';
 export * from './assign-hr.dto';
+export * from './create-consent.dto';
 
 export * from './create-interview.dto';
 export * from './update-interview.dto';

@@ -48,6 +48,7 @@ import {
   UpdateInterviewDto,
   CreateAssessmentResultDto,
   CreateOfferDto,
+  CreateConsentDto,
   UpdateOfferStatusDto,
   UpdateOfferApprovalDto,
   CreateContractDto,
@@ -148,6 +149,14 @@ export class RecruitmentController {
     return this.recruitmentService.findAllJobRequisitions(filters);
   }
 
+  @Get('job-requisitions/public')
+  @Public()
+  @ApiOperation({ summary: 'Get published job requisitions', description: 'Public endpoint to retrieve all published job requisitions for careers page' })
+  @ApiResponse({ status: 200, description: 'List of published job requisitions retrieved successfully' })
+  async getPublicJobRequisitions() {
+    return this.recruitmentService.findPublishedJobRequisitions();
+  }
+
   @Get('job-requisitions/:id')
   @Public()
   @ApiOperation({ summary: 'Get job requisition by ID', description: 'Retrieves a specific job requisition by its ID' })
@@ -212,6 +221,35 @@ export class RecruitmentController {
   }
 
   // ==================== Application Endpoints ====================
+
+  @Post('candidates')
+  @Public()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create candidate profile', description: 'Creates or finds a candidate profile for job applications' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['firstName', 'lastName', 'personalEmail', 'nationalId'],
+      properties: {
+        firstName: { type: 'string' },
+        lastName: { type: 'string' },
+        personalEmail: { type: 'string', format: 'email' },
+        nationalId: { type: 'string' },
+        mobilePhone: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Candidate created or found successfully' })
+  @ApiResponse({ status: 400, description: 'Bad request - validation error' })
+  async createCandidate(@Body() candidateData: {
+    firstName: string;
+    lastName: string;
+    personalEmail: string;
+    nationalId: string;
+    mobilePhone?: string;
+  }) {
+    return this.recruitmentService.createOrFindCandidate(candidateData);
+  }
 
   @Post('applications')
   @Public()
@@ -321,8 +359,7 @@ export class RecruitmentController {
   @ApiResponse({ status: 200, description: 'Consent recorded successfully' })
   @ApiResponse({ status: 404, description: 'Application not found' })
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
-  async recordConsent(@Param('id') id: string, @Body() consentDto: any) {
-    // TODO: Create CreateConsentDto when consent management is implemented
+  async recordConsent(@Param('id') id: string, @Body() consentDto: CreateConsentDto) {
     return this.recruitmentService.recordConsent(id, consentDto);
   }
 
