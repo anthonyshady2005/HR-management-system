@@ -305,7 +305,7 @@ export default function InterviewsPage() {
                           <td className="px-6 py-4">
                             <Link
                               href={`/recruitment/interviews/${interview._id}`}
-                              onClick={(e) => e.stopPropagation()}
+                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
                               className="w-8 h-8 rounded-lg backdrop-blur-xl bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all inline-flex"
                             >
                               <Eye className="w-4 h-4 text-slate-400" />
