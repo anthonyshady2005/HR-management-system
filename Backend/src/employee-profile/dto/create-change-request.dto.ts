@@ -1,16 +1,18 @@
-import { IsString, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsArray, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class FieldChangeDto {
   @ApiProperty({ description: 'Field name to change', example: 'phone' })
   @IsString()
   fieldName: string;
 
-  @ApiProperty({ description: 'Old value' })
+  @ApiPropertyOptional({ description: 'Old value (from profile)', nullable: true })
+  @IsOptional()
   oldValue: any;
 
-  @ApiProperty({ description: 'New value' })
+  @ApiPropertyOptional({ description: 'New value (from form)', nullable: true })
+  @IsOptional()
   newValue: any;
 }
 

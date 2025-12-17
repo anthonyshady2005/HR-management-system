@@ -7,28 +7,28 @@ import { AppraisalAssignmentStatus } from '../enums/performance.enums';
 export class CreateAppraisalAssignmentDTO {
   @ApiProperty()
   @IsString()
-  cycleId: Types.ObjectId;
+  cycleId: string; // keep string here
 
   @ApiProperty()
   @IsString()
-  templateId: Types.ObjectId;
+  templateId: string;
 
   @ApiProperty()
   @IsString()
-  employeeProfileId: Types.ObjectId;
+  employeeProfileId: string;
 
   @ApiProperty()
   @IsString()
-  managerProfileId: Types.ObjectId;
+  managerProfileId: string;
 
   @ApiProperty()
   @IsString()
-  departmentId: Types.ObjectId;
+  departmentId: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  positionId?: Types.ObjectId;
+  positionId?: string;
 
   @ApiPropertyOptional({ enum: AppraisalAssignmentStatus })
   @IsOptional()
@@ -39,24 +39,4 @@ export class CreateAppraisalAssignmentDTO {
   @IsOptional()
   @IsDateString()
   assignedAt?: Date;
-
-  @ApiPropertyOptional({ type: Date })
-  @IsOptional()
-  @IsDateString()
-  dueDate?: Date;
-
-  @ApiPropertyOptional({ type: Date })
-  @IsOptional()
-  @IsDateString()
-  submittedAt?: Date;
-
-  @ApiPropertyOptional({ type: Date })
-  @IsOptional()
-  @IsDateString()
-  publishedAt?: Date;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  latestAppraisalId?: Types.ObjectId;
 }

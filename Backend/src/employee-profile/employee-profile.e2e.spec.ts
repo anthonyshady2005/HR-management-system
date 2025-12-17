@@ -18,6 +18,7 @@ import { Model } from 'mongoose';
 import { ChangeWorkflowRule } from './workflow-rule.schema';
 import { EmployeeProfileModule } from './employee-profile.module';
 import { AuthModule } from '../Auth/auth.module';
+import { EmployeeSystemRole } from './models/employee-system-role.schema';
 import {
   SystemRole,
   EmployeeStatus,
@@ -34,6 +35,95 @@ describe('Employee Profile Module - E2E Tests', () => {
   let hrAdminId: string;
   let changeRequestId: string;
   let workflowRuleModel: Model<ChangeWorkflowRule>;
+  let employeeSystemRoleModel: Model<EmployeeSystemRole>;
+
+  // Helper function to setup test users
+  async function setupTestUsers() {
+    const runId = Date.now();
+
+    const employeeEmail = `john.doe+${runId}@test.com`;
+    const managerEmail = `manager.smith+${runId}@test.com`;
+    const hrAdminEmail = `hr.admin+${runId}@test.com`;
+
+    // Create and authenticate employee
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        firstName: 'John',
+        lastName: 'Doe',
+        nationalId: `NID-JOHN-DOE-${runId}`,
+        personalEmail: employeeEmail,
+        password: 'Test123!',
+      });
+
+    const employeeLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        personalEmail: employeeEmail,
+        password: 'Test123!',
+      });
+
+    employeeToken = employeeLogin.body.token;
+    employeeId = employeeLogin.body.user.id;
+
+    // Create and authenticate manager
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        firstName: 'Manager',
+        lastName: 'Smith',
+        nationalId: `NID-MANAGER-SMITH-${runId}`,
+        personalEmail: managerEmail,
+        password: 'Test123!',
+      });
+
+    const managerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        personalEmail: managerEmail,
+        password: 'Test123!',
+      });
+
+    managerToken = managerLogin.body.token;
+    managerId = managerLogin.body.user.id;
+
+    // Create and authenticate HR Admin
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        firstName: 'HR',
+        lastName: 'Admin',
+        nationalId: `NID-HR-ADMIN-${runId}`,
+        personalEmail: hrAdminEmail,
+        password: 'Test123!',
+      });
+
+    const hrAdminLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        personalEmail: hrAdminEmail,
+        password: 'Test123!',
+      });
+
+    hrAdminToken = hrAdminLogin.body.token;
+    hrAdminId = hrAdminLogin.body.user.id;
+
+    // Seed roles directly so protected endpoints can be exercised.
+    // (JwtStrategy loads roles from DB so tokens don't need to be re-issued.)
+    await employeeSystemRoleModel
+      .updateOne(
+        { employeeProfileId: managerId },
+        { $set: { roles: [SystemRole.DEPARTMENT_HEAD], isActive: true } },
+      )
+      .exec();
+
+    await employeeSystemRoleModel
+      .updateOne(
+        { employeeProfileId: hrAdminId },
+        { $set: { roles: [SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN], isActive: true } },
+      )
+      .exec();
+  }
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -55,93 +145,21 @@ describe('Employee Profile Module - E2E Tests', () => {
     workflowRuleModel = app.get<Model<ChangeWorkflowRule>>(
       getModelToken(ChangeWorkflowRule.name),
     );
+
+    // Access role model to seed roles for protected-route tests
+    employeeSystemRoleModel = app.get<Model<EmployeeSystemRole>>(
+      getModelToken(EmployeeSystemRole.name),
+    );
+
+    // Ensure tokens + roles exist even when running a subset of tests via `-t`.
+    await setupTestUsers();
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  // Helper function to setup test users
-  const setupTestUsers = async () => {
-    // Create and authenticate employee
-    await request(app.getHttpServer()).post('/auth/register').send({
-      firstName: 'John',
-      lastName: 'Doe',
-      personalEmail: 'john.doe@test.com',
-      password: 'Test123!',
-    });
-
-    const employeeLogin = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({
-        personalEmail: 'john.doe@test.com',
-        password: 'Test123!',
-      });
-
-    employeeToken = employeeLogin.body.token;
-    employeeId = employeeLogin.body.user.id;
-
-    // Create and authenticate manager
-    await request(app.getHttpServer()).post('/auth/register').send({
-      firstName: 'Manager',
-      lastName: 'Smith',
-      personalEmail: 'manager.smith@test.com',
-      password: 'Test123!',
-    });
-
-    const managerLogin = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({
-        personalEmail: 'manager.smith@test.com',
-        password: 'Test123!',
-      });
-
-    managerToken = managerLogin.body.token;
-    managerId = managerLogin.body.user.id;
-
-    // Create and authenticate HR Admin
-    await request(app.getHttpServer()).post('/auth/register').send({
-      firstName: 'HR',
-      lastName: 'Admin',
-      personalEmail: 'hr.admin@test.com',
-      password: 'Test123!',
-    });
-
-    const hrAdminLogin = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({
-        personalEmail: 'hr.admin@test.com',
-        password: 'Test123!',
-      });
-
-    hrAdminToken = hrAdminLogin.body.token;
-    hrAdminId = hrAdminLogin.body.user.id;
-
-    // Assign roles
-    await request(app.getHttpServer())
-      .post(`/employee-profile/${managerId}/roles`)
-      .set('Authorization', `Bearer ${hrAdminToken}`)
-      .send({
-        roles: [SystemRole.DEPARTMENT_HEAD],
-        isActive: true,
-        reason: 'Test setup',
-      });
-
-    await request(app.getHttpServer())
-      .post(`/employee-profile/${hrAdminId}/roles`)
-      .set('Authorization', `Bearer ${hrAdminToken}`)
-      .send({
-        roles: [SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN],
-        isActive: true,
-        reason: 'Test setup',
-      });
-  };
-
   describe('REQUIREMENT 1: Employee Self-Service', () => {
-    beforeAll(async () => {
-      await setupTestUsers();
-    });
-
     describe('US-E2-04: View full employee profile', () => {
       it('should allow employee to view their own profile', async () => {
         const response = await request(app.getHttpServer())
@@ -334,9 +352,11 @@ describe('Employee Profile Module - E2E Tests', () => {
           .set('Authorization', `Bearer ${hrAdminToken}`)
           .expect(200);
 
-        expect(response.body).toHaveProperty('employees');
-        expect(response.body).toHaveProperty('pagination');
-        expect(Array.isArray(response.body.employees)).toBe(true);
+        expect(response.body).toHaveProperty('data');
+        expect(response.body).toHaveProperty('total');
+        expect(response.body).toHaveProperty('page');
+        expect(response.body).toHaveProperty('limit');
+        expect(Array.isArray(response.body.data)).toBe(true);
       });
 
       it('should allow HR Admin to search by status', async () => {
@@ -345,7 +365,7 @@ describe('Employee Profile Module - E2E Tests', () => {
           .set('Authorization', `Bearer ${hrAdminToken}`)
           .expect(200);
 
-        expect(response.body.employees).toBeDefined();
+        expect(response.body.data).toBeDefined();
       });
 
       it('should reject search from non-HR roles', async () => {

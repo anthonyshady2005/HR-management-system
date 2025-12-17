@@ -1,34 +1,26 @@
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EmployeeStatus } from '../enums/employee-profile.enums';
+import { DeactivationReason } from '../enums/employee-profile.enums';
 
 /**
- * DTO for deactivating an employee profile (US-EP-05).
- * Used for termination, resignation, retirement, etc.
+ * DTO for deactivating (permanently deleting) an employee profile (US-EP-05).
+ * Used for termination, resignation, retirement, or account removal.
  */
 export class DeactivateEmployeeDto {
   @ApiProperty({
-    enum: [
-      EmployeeStatus.TERMINATED,
-      EmployeeStatus.RETIRED,
-      EmployeeStatus.INACTIVE,
-    ],
-    description: 'New status for the employee',
+    enum: DeactivationReason,
+    description: 'Reason for deactivation/deletion',
   })
-  @IsEnum([
-    EmployeeStatus.TERMINATED,
-    EmployeeStatus.RETIRED,
-    EmployeeStatus.INACTIVE,
-  ])
-  status: EmployeeStatus;
+  @IsEnum(DeactivationReason)
+  deactivationReason: DeactivationReason;
 
-  @ApiPropertyOptional({ description: 'Effective date of the status change' })
+  @ApiPropertyOptional({ description: 'Effective date of the deactivation' })
   @IsOptional()
   @Type(() => Date)
   effectiveDate?: Date;
 
-  @ApiProperty({ description: 'Reason for deactivation' })
+  @ApiProperty({ description: 'Additional notes about the deactivation' })
   @IsString()
-  reason: string;
+  notes: string;
 }

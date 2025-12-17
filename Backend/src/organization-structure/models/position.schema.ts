@@ -20,6 +20,10 @@ export class Position {
   @Prop({ type: Types.ObjectId, ref: 'Position' })
   reportsToPositionId?: Types.ObjectId;
 
+  // added this because we need to link the position to a pay grade
+  @Prop({ type: Types.ObjectId, ref: 'payGrade' })
+  payGradeId?: Types.ObjectId;
+
   @Prop({ type: Boolean, default: true })
   isActive: boolean;
 }
