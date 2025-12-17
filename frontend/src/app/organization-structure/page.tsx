@@ -52,7 +52,7 @@ export default function OrganizationStructurePage() {
   // Ensure active tab is valid
   useEffect(() => {
     if (status === "authenticated" && !canAccessOrganizationStructurePage(currentRole)) {
-      router.push("/dashboard");
+      router.push("/");
       return;
     }
 

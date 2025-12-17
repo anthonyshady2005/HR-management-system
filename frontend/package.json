@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node -e \"const { spawnSync } = require('child_process'); const port = process.env.PORT || '5001'; const res = spawnSync('npx', ['next', 'dev', '-p', port], { stdio: 'inherit', shell: true, env: { ...process.env, PORT: port } }); process.exit(res.status ?? 0);\"",
+    "dev": "next dev -p 5001",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

@@ -95,7 +95,7 @@ export default function EmployeeLeavesPage() {
   const { status, user, currentRole } = useAuth();
   const router = useRouter();
 
-  useRequireRole(ALLOWED_ROLES, "/home");
+  useRequireRole(ALLOWED_ROLES, "/");
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
