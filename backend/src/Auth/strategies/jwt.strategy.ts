@@ -29,10 +29,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         const rolesArray = Array.isArray(payload.roles)
             ? payload.roles
             : payload.role
-              ? [payload.role]
-              : [];
+                ? [payload.role]
+                : [];
         return {
             _id: user._id,
+            sub: user._id.toString(),
             roles: rolesArray,
         };
     }

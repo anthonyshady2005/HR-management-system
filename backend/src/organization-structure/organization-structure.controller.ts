@@ -34,7 +34,7 @@ export class OrganizationStructureController {
   constructor(
     private readonly organizationStructureService: OrganizationStructureService,
     private readonly hierarchyViewService: HierarchyViewService,
-  ) {}
+  ) { }
 
   @Post('departments')
   @Roles('HR Manager', 'System Admin', 'HR Admin')

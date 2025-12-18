@@ -8,7 +8,7 @@ import { AppraisalTemplate, AppraisalTemplateDocument } from './models/appraisal
 import { CreateAppraisalTemplateDto } from './DTOs/CreateAppraisalTemplate.dto';
 import { AppraisalCycle, AppraisalCycleDocument } from './models/appraisal-cycle.schema';
 import { CreateAppraisalCycleDTO } from './DTOs/CreateAppraisalCycle.dto';
-import{PositionDocument,Position} from '../organization-structure/models/position.schema'
+import { PositionDocument, Position } from '../organization-structure/models/position.schema'
 import { AppraisalAssignmentDocument, AppraisalAssignment } from './models/appraisal-assignment.schema';
 import { CreateAppraisalAssignmentDTO } from './DTOs/CreateAppraisalAssignment.dto';
 import { AppraisalRecord, AppraisalRecordDocument } from './models/appraisal-record.schema';
@@ -37,7 +37,7 @@ export class PerformanceService {
     @InjectModel(EmployeeProfile.name) private employeeProfileModel: Model<EmployeeProfileDocument>,
     @InjectModel(EmployeeSystemRole.name) private employeeSystemRoleModel: Model<EmployeeSystemRoleDocument>,
     @InjectModel(NotificationLog.name) private notificationLogModel: Model<any>,
-    @InjectModel(Position.name)private readonly positionModel: Model<PositionDocument>,
+    @InjectModel(Position.name) private readonly positionModel: Model<PositionDocument>,
 
   ) { }
 
@@ -83,18 +83,18 @@ export class PerformanceService {
   }
   //get all cycles
   async getAllCycles(): Promise<AppraisalCycle[]> {
-  return this.cycleModel.find().sort({ startDate: -1 }).exec(); // Optional: sort by startDate descending
-}
+    return this.cycleModel.find().sort({ startDate: -1 }).exec(); // Optional: sort by startDate descending
+  }
 
   // Get active cycles
-async getActiveCycles(): Promise<AppraisalCycle[]> {
-  const now = new Date();
-  return this.cycleModel.find({
-  startDate: { $lte: now },
-  endDate: { $gte: now }
-}).exec();
+  async getActiveCycles(): Promise<AppraisalCycle[]> {
+    const now = new Date();
+    return this.cycleModel.find({
+      startDate: { $lte: now },
+      endDate: { $gte: now }
+    }).exec();
 
-}
+  }
 
   // Update cycle status
   async updateCycleStatus(cycleId: string, status: string): Promise<AppraisalCycle> {
@@ -285,7 +285,7 @@ async getActiveCycles(): Promise<AppraisalCycle[]> {
   }
 
   //Assign appraisal template/cycle to employees and managers in bulk (Req 3)
- async assignAppraisalsBulk(dtos: CreateAppraisalAssignmentDTO[]): Promise<AppraisalAssignment[]> {
+  async assignAppraisalsBulk(dtos: CreateAppraisalAssignmentDTO[]): Promise<AppraisalAssignment[]> {
     const savedAssignments: AppraisalAssignment[] = [];
 
     for (const dto of dtos) {
@@ -362,32 +362,79 @@ async getActiveCycles(): Promise<AppraisalCycle[]> {
     return savedAssignments;
   }
 
-private async getDepartmentHead(departmentId: Types.ObjectId | string): Promise<Types.ObjectId | null> {
-  const deptId = typeof departmentId === 'string' ? new Types.ObjectId(departmentId) : departmentId;
+  private async getDepartmentHead(departmentId: Types.ObjectId | string): Promise<Types.ObjectId | null> {
+    const deptId = typeof departmentId === 'string' ? new Types.ObjectId(departmentId) : departmentId;
 
-  const systemRoleDoc = await this.employeeSystemRoleModel.findOne({
-    roles: SystemRole.DEPARTMENT_HEAD,
-  }).populate('employeeProfileId');
+    // Fix: We need to find the specific department head for THIS department.
+    // The previous implementation used findOne() which might return a head from a different department.
+    const systemRoleDocs = await this.employeeSystemRoleModel.find({
+      roles: SystemRole.DEPARTMENT_HEAD,
+    }).populate('employeeProfileId').exec();
 
-  // Type assertion: tell TypeScript that this is an EmployeeProfile
-  const employeeProfile = systemRoleDoc?.employeeProfileId as EmployeeProfileDocument | undefined;
-
-  if (employeeProfile && employeeProfile.primaryDepartmentId?.toString() === deptId.toString()) {
-    return employeeProfile._id;
+    for (const doc of systemRoleDocs) {
+      const employeeProfile = doc.employeeProfileId as any;
+      // Handle potential data issues like leading/trailing spaces in field names (if they exist in DB)
+      // or missing primaryDepartmentId
+      if (employeeProfile && (employeeProfile.primaryDepartmentId || employeeProfile[' primaryDepartmentId'])) {
+        const profileDeptId = (employeeProfile.primaryDepartmentId || employeeProfile[' primaryDepartmentId']).toString();
+        if (profileDeptId === deptId.toString()) {
+          return employeeProfile._id;
+        }
+      }
+    }
+    return null;
   }
 
-  return null;
-}
 
-
-  // Get all appraisal assignments for a specific manager (Req 4)
   async getAssignmentsForManager(managerId: string): Promise<AppraisalAssignment[]> {
-  return this.assignmentModel
-    .find({ managerProfileId: managerId })
-    .populate('employeeProfileId', 'firstName lastName position')
-    .populate('cycleId', 'name managerDueDate')
-    .exec();
-}
+    console.log(`[PerformanceService] Fetching assignments for manager: ${managerId}`);
+
+    // Fetch requester's profile to identify their department
+    const requester = await this.employeeProfileModel.findById(managerId).lean().exec();
+    if (!requester) {
+      console.warn(`[PerformanceService] Requester profile not found for ID: ${managerId}`);
+      return [];
+    }
+
+    const deptId = requester?.primaryDepartmentId || (requester as any)?.[' primaryDepartmentId'];
+    console.log(`[PerformanceService] Requester Department ID: ${deptId}`);
+
+    // Check if requester has the Department Head role
+    const rolesDoc = await this.employeeSystemRoleModel.findOne({
+      employeeProfileId: new Types.ObjectId(managerId)
+    }).lean().exec();
+
+    const isDeptHead = rolesDoc?.roles?.includes(SystemRole.DEPARTMENT_HEAD);
+    console.log(`[PerformanceService] Is Department Head: ${isDeptHead}, Roles: ${rolesDoc?.roles}`);
+
+    let query: any;
+
+    // Use ObjectId for precise matching
+    const managerObjectId = new Types.ObjectId(managerId);
+
+    if (isDeptHead && deptId) {
+      const deptObjectId = typeof deptId === 'string' ? new Types.ObjectId(deptId) : deptId;
+      query = {
+        $or: [
+          { managerProfileId: managerObjectId },
+          { departmentId: deptObjectId }
+        ]
+      };
+    } else {
+      query = { managerProfileId: managerObjectId };
+    }
+
+    console.log(`[PerformanceService] Assignment query:`, JSON.stringify(query));
+
+    const results = await this.assignmentModel
+      .find(query)
+      .populate('employeeProfileId', 'firstName lastName position fullName')
+      .populate('cycleId', 'name managerDueDate')
+      .exec();
+
+    console.log(`[PerformanceService] Found ${results.length} assignments`);
+    return results;
+  }
 
 
   // Get all appraisal assignments
@@ -410,7 +457,7 @@ private async getDepartmentHead(departmentId: Types.ObjectId | string): Promise<
       }
 
       const savedRecord = await record.save();
-      
+
       // Update Assignment status based on Record status
       if (dto.status === AppraisalRecordStatus.MANAGER_SUBMITTED) {
         await this.assignmentModel.findByIdAndUpdate(dto.assignmentId, {
@@ -460,76 +507,76 @@ private async getDepartmentHead(departmentId: Types.ObjectId | string): Promise<
   }
 
   // Dashboard data aggregation (Req 7)
-async getDashboard(cycleId: string) {
-  return this.assignmentModel.aggregate([
-    { $match: { cycleId: new Types.ObjectId(cycleId) } },
+  async getDashboard(cycleId: string) {
+    return this.assignmentModel.aggregate([
+      { $match: { cycleId: new Types.ObjectId(cycleId) } },
 
-    {
-      $group: {
-        _id: '$departmentId',
-        total: { $sum: 1 },
-        notStarted: { $sum: { $cond: [{ $eq: ['$status', 'NOT_STARTED'] }, 1, 0] } },
-        inProgress: { $sum: { $cond: [{ $eq: ['$status', 'IN_PROGRESS'] }, 1, 0] } },
-        submitted: { $sum: { $cond: [{ $eq: ['$status', 'SUBMITTED'] }, 1, 0] } },
-        acknowledged: { $sum: { $cond: [{ $eq: ['$status', 'ACKNOWLEDGED'] }, 1, 0] } },
-      },
-    },
-    {
-      $lookup: {
-        from: 'departments',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'department',
-      },
-    },
-    { $unwind: '$department' },
-
-    {
-      $project: {
-        _id: 0,
-        departmentId: '$_id',
-        departmentName: '$department.name',
-        total: 1,
-        notStarted: 1,
-        inProgress: 1,
-        submitted: 1,
-        acknowledged: 1,
-        completionRate: {
-          $cond: [
-            { $eq: ['$total', 0] },
-            0,
-            { $multiply: [{ $divide: ['$acknowledged', '$total'] }, 100] },
-          ],
+      {
+        $group: {
+          _id: '$departmentId',
+          total: { $sum: 1 },
+          notStarted: { $sum: { $cond: [{ $eq: ['$status', 'NOT_STARTED'] }, 1, 0] } },
+          inProgress: { $sum: { $cond: [{ $eq: ['$status', 'IN_PROGRESS'] }, 1, 0] } },
+          submitted: { $sum: { $cond: [{ $eq: ['$status', 'SUBMITTED'] }, 1, 0] } },
+          acknowledged: { $sum: { $cond: [{ $eq: ['$status', 'ACKNOWLEDGED'] }, 1, 0] } },
         },
       },
-    },
-  ]);
-}
+      {
+        $lookup: {
+          from: 'departments',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'department',
+        },
+      },
+      { $unwind: '$department' },
+
+      {
+        $project: {
+          _id: 0,
+          departmentId: '$_id',
+          departmentName: '$department.name',
+          total: 1,
+          notStarted: 1,
+          inProgress: 1,
+          submitted: 1,
+          acknowledged: 1,
+          completionRate: {
+            $cond: [
+              { $eq: ['$total', 0] },
+              0,
+              { $multiply: [{ $divide: ['$acknowledged', '$total'] }, 100] },
+            ],
+          },
+        },
+      },
+    ]);
+  }
 
 
   // REQ-AE-06: Monitor appraisal progress and get pending forms (Req 8)
   async getPendingAppraisals(cycleId: string) {
-  return this.assignmentModel
-    .find({
-      cycleId: new Types.ObjectId(cycleId),
-      status: { $in: ['NOT_STARTED', 'IN_PROGRESS'] },
-    })
-    .populate('employeeProfileId', 'fullName email')
-    .populate('departmentId', 'name')
-    .exec();
-}
-async sendReminder(assignmentId: Types.ObjectId) {
-  const assignment = await this.assignmentModel.findById(assignmentId)
-    .populate('employeeProfileId');
+    return this.assignmentModel
+      .find({
+        cycleId: new Types.ObjectId(cycleId),
+        status: { $in: ['NOT_STARTED', 'IN_PROGRESS'] },
+      })
+      .populate('employeeProfileId', 'fullName email')
+      .populate('departmentId', 'name')
+      .exec();
+  }
+  async sendReminder(assignmentId: Types.ObjectId) {
+    const assignment = await this.assignmentModel.findById(assignmentId)
+      .populate('employeeProfileId');
 
-  if (!assignment) return;
+    if (!assignment) return;
 
-  await this.notificationLogModel.create({
-    to: assignment.employeeProfileId._id,
-    type: 'APPRAISAL_REMINDER',
-    message: 'Reminder: Please complete your performance appraisal.',
-  });
-}
+    await this.notificationLogModel.create({
+      to: assignment.employeeProfileId._id,
+      type: 'APPRAISAL_REMINDER',
+      message: 'Reminder: Please complete your performance appraisal.',
+    });
+  }
 
   // REQ-OD-01: View final ratings, feedback, and development notes (Req 9)
   async getEmployeeAppraisals(employeeId: string): Promise<AppraisalRecord[]> {

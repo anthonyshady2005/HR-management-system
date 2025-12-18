@@ -34,14 +34,15 @@ import express from 'express';
 
 @Controller('employee-profile')
 export class EmployeeProfileController {
-  constructor(private readonly profileService: EmployeeProfileService) {}
+  constructor(private readonly profileService: EmployeeProfileService) { }
 
   // ========== SELF-SERVICE ENDPOINTS ==========
 
   @UseGuards(JwtAuthGuard, ActiveEmployeeGuard)
   @Get('me')
   getMe(@Req() req: express.Request) {
-    const userId = (req as any).user?.sub as string; // decoded token payload
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.getMyProfile(userId);
   }
 
@@ -51,7 +52,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: UpdateSelfEmployeeProfileDto,
   ) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.updateSelfProfile(userId, dto);
   }
 
@@ -61,7 +63,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: CreateChangeRequestDto,
   ) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.submitChangeRequest(userId, dto);
   }
 
@@ -72,7 +75,8 @@ export class EmployeeProfileController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.getMyChangeRequests(userId, page || 1, limit || 20);
   }
 
@@ -82,14 +86,15 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Query('unreadOnly') unreadOnly?: boolean,
   ) {
-    const userId = (req as any).user?.sub as string;
-    
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
+
     if (!userId) {
       throw new BadRequestException('User ID not found in token');
     }
 
     console.log(`[Notifications Controller] Fetching notifications for user: ${userId}, unreadOnly: ${unreadOnly}`);
-    
+
     return this.profileService.getNotifications(userId, unreadOnly === true);
   }
 
@@ -99,14 +104,16 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Param('notificationId') notificationId: string,
   ) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.markNotificationAsRead(userId, notificationId);
   }
 
   @UseGuards(JwtAuthGuard, ActiveEmployeeGuard)
   @Patch('me/notifications/read-all')
   markAllNotificationsAsRead(@Req() req: express.Request) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.markAllNotificationsAsRead(userId);
   }
 
@@ -121,7 +128,8 @@ export class EmployeeProfileController {
   @Roles(SystemRole.DEPARTMENT_HEAD)
   @Get('manager/team')
   getTeamMembers(@Req() req: express.Request) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.getTeamMembers(userId);
   }
 
@@ -133,7 +141,8 @@ export class EmployeeProfileController {
   @Roles(SystemRole.DEPARTMENT_HEAD)
   @Get('manager/team/summary')
   getTeamSummary(@Req() req: express.Request) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.getTeamSummary(userId);
   }
 
@@ -148,7 +157,8 @@ export class EmployeeProfileController {
     @Body() dto: AssignEmployeeToTeamDto,
     @Req() req: express.Request,
   ) {
-    const managerId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const managerId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.assignEmployeeToManagerTeam(
       dto.employeeId,
       managerId,
@@ -167,7 +177,8 @@ export class EmployeeProfileController {
     @Param('employeeId') employeeId: string,
     @Req() req: express.Request,
   ) {
-    const managerId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const managerId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.getTeamMemberProfile(managerId, employeeId);
   }
 
@@ -200,11 +211,7 @@ export class EmployeeProfileController {
     @Body() dto: ProcessChangeRequestDto,
   ) {
     const user = (req as any).user;
-    if (!user || !user.sub) {
-      console.error('[ProcessChangeRequest] User not found in request');
-      throw new BadRequestException('User not authenticated properly');
-    }
-    const hrAdminId = user.sub as string;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     console.log(`[ProcessChangeRequest] RequestID: ${requestId}, AdminID: ${hrAdminId}, DTO:`, JSON.stringify(dto));
     return this.profileService.processChangeRequest(requestId, hrAdminId, dto);
   }
@@ -220,7 +227,8 @@ export class EmployeeProfileController {
     @Param('requestId') requestId: string,
     @Req() req: express.Request,
   ) {
-    const userId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.deleteChangeRequest(requestId, userId);
   }
 
@@ -233,7 +241,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: ProcessChangeRequestDto,
   ) {
-    const hrAdminId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.processChangeRequest(requestId, hrAdminId, dto);
   }
 
@@ -259,7 +268,7 @@ export class EmployeeProfileController {
         status = upperStatus as ProfileChangeStatus;
       }
     }
-    
+
     return this.profileService.getAllChangeRequests(page, limit, status);
   }
 
@@ -291,7 +300,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: CreateEmployeeProfileDto,
   ) {
-    const hrAdminId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.createEmployeeProfile(hrAdminId, dto);
   }
 
@@ -319,7 +329,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: HrUpdateEmployeeProfileDto,
   ) {
-    const hrAdminId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.hrUpdateEmployeeProfile(employeeId, hrAdminId, dto);
   }
 
@@ -338,7 +349,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: DeactivateEmployeeDto,
   ) {
-    const hrAdminId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.deactivateEmployee(employeeId, hrAdminId, dto);
   }
 
@@ -354,7 +366,8 @@ export class EmployeeProfileController {
     @Req() req: express.Request,
     @Body() dto: AssignRolesDto,
   ) {
-    const hrAdminId = (req as any).user?.sub as string;
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
     return this.profileService.assignRoles(employeeId, hrAdminId, dto);
   }
 
