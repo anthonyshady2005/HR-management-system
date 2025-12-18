@@ -1,9 +1,10 @@
+
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Users, UserCircle, Mail, Phone, MapPin, Calendar, Building2, Briefcase } from "lucide-react";
+import { ChevronDown, LogOut, Users, UserCircle, Mail, Building2, Briefcase } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import {
   DropdownMenu,

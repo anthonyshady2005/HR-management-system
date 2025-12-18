@@ -74,4 +74,27 @@ export class AuthService {
             },
         };
     }
+
+    /**
+     * Get user roles from database
+     * Returns the roles array for a specific user
+     */
+    async getMyRoles(userId: string): Promise<string[]> {
+        // Verify user exists
+        const user = await this.userModel.findById(userId);
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        // Fetch current roles from database (source of truth)
+        const roleDoc = await this.roleModel.findOne({ employeeProfileId: user._id });
+        return roleDoc?.roles ?? [];
+    }
+
+    /**
+     * Validate and store selected role in HTTP-only cookie
+     */
+    validateRoleSelection(userRoles: string[], selectedRole: string): boolean {
+        return userRoles.includes(selectedRole);
+    }
 }

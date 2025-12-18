@@ -19,33 +19,15 @@ type AuthState = {
 };
 
 type AuthContextValue = AuthState & {
-  hydrateFromLogin: (user: User, roles: string[]) => void;
+  hydrateFromLogin: (user: User, roles: string[]) => Promise<void>;
   refreshRoles: () => Promise<void>;
-  setCurrentRoleSafe: (role: string) => boolean;
-  clearAuth: () => void;
+  setCurrentRoleSafe: (role: string) => Promise<boolean>;
+  clearAuth: () => Promise<void>;
 };
 
-const STORAGE_KEY = "hrhub_auth_state";
 const ROLE_REFRESH_COOLDOWN_MS = 60_000; // prevent hammering backend
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
-
-function loadFromStorage(): Pick<AuthState, "user" | "roles" | "currentRole"> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as Pick<AuthState, "user" | "roles" | "currentRole">;
-  } catch (err) {
-    console.warn("Failed to parse stored auth state", err);
-    return null;
-  }
-}
-
-function persist(state: Pick<AuthState, "user" | "roles" | "currentRole">) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -64,78 +46,141 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [currentRole]);
 
-  // Hydrate from storage on first load.
+  // Hydrate from backend on first load
   useEffect(() => {
-    const stored = loadFromStorage();
-    if (stored) {
-      setUser(stored.user);
-      setRoles(stored.roles || []);
-      setCurrentRole(stored.currentRole || stored.roles?.[0] || null);
-      setStatus(stored.user ? "authenticated" : "unauthenticated");
-    } else {
-      setStatus("unauthenticated");
-    }
+    initializeAuth();
   }, []);
 
-  const hydrateFromLogin = (nextUser: User, nextRoles: string[]) => {
+  async function initializeAuth() {
+    setStatus("loading");
+
+    try {
+      // Fetch user roles from backend (validates JWT cookie)
+      const meRes = await api.get("/auth/me");
+      const backendUser = meRes.data; // { id, roles }
+
+      if (!backendUser?.id || !backendUser?.roles?.length) {
+        // No user or roles from backend
+        setStatus("unauthenticated");
+        return;
+      }
+
+      // Fetch current role from backend cookie
+      const roleRes = await api.get("/auth/current-role");
+      const currentRoleValue = roleRes.data?.currentRole || backendUser.roles[0];
+
+      // Set authenticated state
+      setUser({ id: backendUser.id });
+      setRoles(backendUser.roles);
+      setCurrentRole(currentRoleValue);
+      setStatus("authenticated");
+    } catch (err: any) {
+      // If 401/403, user not authenticated
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setStatus("unauthenticated");
+      } else {
+        // Network error - treat as unauthenticated for safety
+        console.error("Failed to initialize auth:", err);
+        setStatus("unauthenticated");
+      }
+    }
+  }
+
+  const hydrateFromLogin = async (nextUser: User, nextRoles: string[]) => {
     const defaultRole = nextRoles?.[0] || null;
+
+    // Update state (no localStorage)
     setUser(nextUser);
     setRoles(nextRoles);
     setCurrentRole(defaultRole);
     setStatus("authenticated");
-    persist({ user: nextUser, roles: nextRoles, currentRole: defaultRole });
+
+    // Sync current role to backend cookie
+    if (defaultRole) {
+      try {
+        await api.post("/auth/select-role", { role: defaultRole });
+      } catch (err) {
+        console.warn("Failed to sync current role to backend:", err);
+      }
+    }
   };
 
-  const setCurrentRoleSafe = (role: string) => {
+  const setCurrentRoleSafe = async (role: string): Promise<boolean> => {
+    // Quick validation
     if (!roles.includes(role)) return false;
-    setCurrentRole(role);
-    persist({ user, roles, currentRole: role });
-    return true;
+
+    try {
+      // Call backend to store in cookie (validates role)
+      await api.post("/auth/select-role", { role });
+
+      // Only update state if backend accepts
+      setCurrentRole(role);
+      return true;
+    } catch (err: any) {
+      console.error("Failed to set current role:", err);
+      return false;
+    }
   };
 
   const refreshRoles = async () => {
     if (!user?.id) return;
+
     // Throttle to avoid excessive backend requests
     const now = Date.now();
     if (rolesRefreshing) return;
     if (lastRolesFetch && now - lastRolesFetch < ROLE_REFRESH_COOLDOWN_MS) {
       return;
     }
+
     setRolesRefreshing(true);
     setStatus((prev) => (prev === "idle" ? "loading" : prev));
+
     try {
-      // Attempt to re-fetch roles from a protected endpoint.
-      // If access is denied (e.g., user lacks permission), we keep the existing roles.
-      const res = await api.get(`/employee-profile/${user.id}/roles`);
+      // Use new /auth/me endpoint (accessible to all authenticated users)
+      const res = await api.get("/auth/me");
       const backendRoles: string[] = res.data?.roles || [];
+
       if (Array.isArray(backendRoles) && backendRoles.length > 0) {
         setRoles(backendRoles);
-        // Ensure currentRole stays valid.
+
+        // Ensure currentRole stays valid
         if (!backendRoles.includes(currentRole || "")) {
           const fallback = backendRoles[0];
           setCurrentRole(fallback);
-          persist({ user, roles: backendRoles, currentRole: fallback });
-        } else {
-          persist({ user, roles: backendRoles, currentRole: currentRole });
+
+          // Sync to backend cookie
+          try {
+            await api.post("/auth/select-role", { role: fallback });
+          } catch (err) {
+            console.warn("Failed to sync fallback role:", err);
+          }
         }
       }
+
       setLastRolesFetch(now);
       setStatus("authenticated");
     } catch (err) {
-      // If the re-fetch fails (forbidden/not allowed), keep existing roles but stay authenticated.
       setStatus(user ? "authenticated" : "unauthenticated");
-      console.warn("refreshRoles failed; keeping existing roles", err);
+      console.warn("refreshRoles failed", err);
     } finally {
       setRolesRefreshing(false);
     }
   };
 
-  const clearAuth = () => {
+  const clearAuth = async () => {
+    try {
+      // Call backend logout to clear HTTP-only cookies
+      await api.post("/auth/logout");
+    } catch (err) {
+      console.warn("Failed to call logout endpoint:", err);
+      // Continue clearing state even if request fails
+    }
+
+    // Clear state (no localStorage to clear)
     setUser(null);
     setRoles([]);
     setCurrentRole(null);
     setStatus("unauthenticated");
-    persist({ user: null, roles: [], currentRole: null });
   };
 
   const value = useMemo<AuthContextValue>(

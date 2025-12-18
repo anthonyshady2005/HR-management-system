@@ -36,7 +36,7 @@ export default function LoginPage() {
             const loginUser = res?.data?.user;
             const loginRoles: string[] = (loginUser?.roles as string[]) || [];
             if (loginUser?.id) {
-                hydrateFromLogin(
+                await hydrateFromLogin(
                     {
                         id: loginUser.id,
                         fullName: loginUser.fullName,
@@ -45,7 +45,7 @@ export default function LoginPage() {
                     loginRoles
                 );
             }
-            router.push("/");
+            router.push("/home");
         } catch (err: any) {
             setError(err.response?.data?.message || "Login failed. Please check your credentials.");
         } finally {
