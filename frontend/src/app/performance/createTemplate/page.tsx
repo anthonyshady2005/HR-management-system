@@ -60,14 +60,12 @@ const MultiSelect = ({
                 <div
                   key={opt._id}
                   onClick={() => toggleSelection(opt._id)}
-                  className={`p-2 rounded-lg cursor-pointer flex items-center gap-2 transition-colors ${
-                    selectedIds.includes(opt._id) ? "bg-emerald-500/20 text-emerald-400" : "hover:bg-white/5 text-slate-300"
-                  }`}
+                  className={`p-2 rounded-lg cursor-pointer flex items-center gap-2 transition-colors ${selectedIds.includes(opt._id) ? "bg-emerald-500/20 text-emerald-400" : "hover:bg-white/5 text-slate-300"
+                    }`}
                 >
                   <div
-                    className={`w-4 h-4 rounded border flex items-center justify-center ${
-                      selectedIds.includes(opt._id) ? "bg-emerald-500 border-emerald-500" : "border-slate-500"
-                    }`}
+                    className={`w-4 h-4 rounded border flex items-center justify-center ${selectedIds.includes(opt._id) ? "bg-emerald-500 border-emerald-500" : "border-slate-500"
+                      }`}
                   >
                     {selectedIds.includes(opt._id) && <Check className="w-3 h-3 text-slate-900" />}
                   </div>
@@ -105,11 +103,12 @@ export default function CreateAppraisalTemplatePage() {
       try {
         const [depRes, posRes] = await Promise.all([
           api.get("/organization-structure/departments"),
-          api.get("/organization-structure/positions"),
+          api.get("/organization-structure/positions/list"),
         ]);
 
         setDepartments(depRes.data);
-        setPositions(posRes.data);
+        // Map positions to have a 'name' field from 'title'
+        setPositions(posRes.data.map((p: any) => ({ ...p, name: p.title || p.name })));
       } catch (error) {
         console.error("Error fetching departments or positions:", error);
       }
