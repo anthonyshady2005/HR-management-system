@@ -80,6 +80,7 @@ export default function ChangeRequestsPage() {
   const [deleting, setDeleting] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedFields, setSelectedFields] = useState<string[]>([]);
 
   useRequireRole(ALLOWED_ROLES, "/employee/profile");
 
@@ -171,22 +172,54 @@ export default function ChangeRequestsPage() {
       status: decision,
       comments: "",
     });
+    // Initialize with all fields selected for approval
+    if (decision === "APPROVED") {
+      setSelectedFields(request.fieldChanges.map(f => f.fieldName));
+    } else {
+      setSelectedFields([]);
+    }
     setShowProcessDialog(true);
   };
 
   const confirmProcess = async () => {
     if (!selectedRequest) return;
 
+    // Validate for approval
+    if (processData.status === "APPROVED" && selectedFields.length === 0) {
+      toast.error("Please select at least one field to approve");
+      return;
+    }
+
     try {
       setProcessing(true);
       const identifier = selectedRequest.requestId || selectedRequest._id;
-      await processChangeRequest(identifier, processData);
+      
+      // Build payload with selected fields for partial approval
+      const payload: any = {
+        status: processData.status,
+        comments: processData.comments || undefined,
+      };
+
+      // For approvals, include which fields to apply
+      if (processData.status === "APPROVED" && selectedFields.length < selectedRequest.fieldChanges.length) {
+        // Partial approval - only apply selected fields
+        payload.approvedFields = selectedFields;
+      }
+      
+      await processChangeRequest(identifier, payload);
+      
+      const approvedCount = selectedFields.length;
+      const totalCount = selectedRequest.fieldChanges.length;
+      const isPartial = processData.status === "APPROVED" && approvedCount < totalCount;
       
       toast.success(
-        `Change request ${processData.status.toLowerCase()} successfully`
+        isPartial 
+          ? `Partially approved: ${approvedCount}/${totalCount} fields applied`
+          : `Change request ${processData.status.toLowerCase()} successfully`
       );
       setShowProcessDialog(false);
       setSelectedRequest(null);
+      setSelectedFields([]);
       loadRequests();
     } catch (error) {
       console.error("Failed to process change request:", error);
@@ -348,7 +381,35 @@ export default function ChangeRequestsPage() {
                           </span>
                         </div>
                         <CardTitle className="text-base mb-3">
-                          {request.requestDescription}
+                          <div className="space-y-2">
+                            {request.fieldChanges.slice(0, 3).map((change, idx) => (
+                              <div key={idx} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-slate-400 uppercase tracking-wider mb-1.5">
+                                      {formatFieldName(change.fieldName)}
+                                    </p>
+                                    <div className="flex items-center gap-2 text-sm">
+                                      <span className="px-2 py-1 bg-red-500/10 border border-red-500/30 rounded text-red-400 font-medium truncate max-w-[150px]" title={formatFieldValue(change.fieldName, change.oldValue)}>
+                                        {formatFieldValue(change.fieldName, change.oldValue)}
+                                      </span>
+                                      <svg className="w-4 h-4 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                      </svg>
+                                      <span className="px-2 py-1 bg-green-500/10 border border-green-500/30 rounded text-green-400 font-medium truncate max-w-[150px]" title={formatFieldValue(change.fieldName, change.newValue)}>
+                                        {formatFieldValue(change.fieldName, change.newValue)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            {request.fieldChanges.length > 3 && (
+                              <div className="text-xs text-slate-400 italic px-3 py-1.5 bg-slate-800/30 rounded border border-slate-700/30">
+                                +{request.fieldChanges.length - 3} more change{request.fieldChanges.length - 3 > 1 ? 's' : ''} (click to expand)
+                              </div>
+                            )}
+                          </div>
                         </CardTitle>
                         <div className="flex items-center gap-4 text-sm text-slate-400">
                           <span className="flex items-center gap-1.5">
@@ -538,22 +599,90 @@ export default function ChangeRequestsPage() {
               </DialogDescription>
             </DialogHeader>
 
-            {processData.status === "APPROVED" && (
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 my-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
-                  <div className="text-sm text-slate-300">
-                    <p className="font-medium text-blue-300 mb-1">
-                      Approval Impact
-                    </p>
-                    <p>
-                      Approving this request will immediately apply all
-                      requested changes to the employee&apos;s profile. This action
-                      cannot be undone.
-                    </p>
+            {processData.status === "APPROVED" && selectedRequest && (
+              <>
+                <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 my-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm text-slate-300">
+                      <p className="font-medium text-blue-300 mb-1">
+                        Partial Approval
+                      </p>
+                      <p>
+                        Select which fields you want to approve. Unselected fields will be ignored.
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
+
+                {/* Field Selection */}
+                <div className="space-y-2 mb-4">
+                  <Label className="text-slate-300 mb-2 block font-semibold">
+                    Select Fields to Approve ({selectedFields.length}/{selectedRequest.fieldChanges.length})
+                  </Label>
+                  <div className="max-h-[300px] overflow-y-auto space-y-2 pr-2">
+                    {selectedRequest.fieldChanges.map((change, index) => (
+                      <div
+                        key={index}
+                        className={`p-3 rounded-lg border transition-all ${
+                          selectedFields.includes(change.fieldName)
+                            ? 'bg-green-500/10 border-green-500/30'
+                            : 'bg-white/5 border-white/10'
+                        }`}
+                      >
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedFields.includes(change.fieldName)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedFields([...selectedFields, change.fieldName]);
+                              } else {
+                                setSelectedFields(selectedFields.filter(f => f !== change.fieldName));
+                              }
+                            }}
+                            className="mt-1 w-4 h-4 rounded border-white/20 bg-white/5 text-green-600 focus:ring-green-500 focus:ring-offset-slate-900"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-medium mb-1">
+                              {formatFieldName(change.fieldName)}
+                            </p>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="px-2 py-1 bg-red-500/10 border border-red-500/30 rounded text-red-400 truncate max-w-[120px]" title={formatFieldValue(change.fieldName, change.oldValue)}>
+                                {formatFieldValue(change.fieldName, change.oldValue)}
+                              </span>
+                              <span className="text-slate-500">→</span>
+                              <span className="px-2 py-1 bg-green-500/10 border border-green-500/30 rounded text-green-400 truncate max-w-[120px]" title={formatFieldValue(change.fieldName, change.newValue)}>
+                                {formatFieldValue(change.fieldName, change.newValue)}
+                              </span>
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSelectedFields(selectedRequest.fieldChanges.map(f => f.fieldName))}
+                      className="text-xs bg-white/5 border-white/10 text-white hover:bg-white/10"
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSelectedFields([])}
+                      className="text-xs bg-white/5 border-white/10 text-white hover:bg-white/10"
+                    >
+                      Deselect All
+                    </Button>
+                  </div>
+                </div>
+              </>
             )}
 
             <div className="space-y-4">
@@ -586,7 +715,7 @@ export default function ChangeRequestsPage() {
               </Button>
               <Button
                 onClick={confirmProcess}
-                disabled={processing}
+                disabled={processing || (processData.status === "APPROVED" && selectedFields.length === 0)}
                 className={
                   processData.status === "APPROVED"
                     ? "bg-green-600 hover:bg-green-700"
@@ -600,10 +729,10 @@ export default function ChangeRequestsPage() {
                   </>
                 ) : (
                   <>
-                    Confirm{" "}
-                    {processData.status === "APPROVED"
-                      ? "Approval"
-                      : "Rejection"}
+                    {processData.status === "APPROVED" && selectedRequest && selectedFields.length < selectedRequest.fieldChanges.length
+                      ? `Approve ${selectedFields.length}/${selectedRequest.fieldChanges.length} Fields`
+                      : `Confirm ${processData.status === "APPROVED" ? "Approval" : "Rejection"}`
+                    }
                   </>
                 )}
               </Button>

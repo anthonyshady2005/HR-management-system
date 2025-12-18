@@ -1601,9 +1601,14 @@ export class EmployeeProfileService {
       if (dto.status === ProfileChangeStatus.APPROVED && request.fieldChanges?.length > 0) {
         const update: Record<string, unknown> = {};
         const newValues: Record<string, unknown> = {};
-        const currentProfile = await this.profileModel.findById(request.employeeProfileId).lean().exec();
+        const currentProfile = await this.profileModel.findById(request.employeeProfileId).lean().exec() as EmployeeProfileDocument;
 
-        for (const change of request.fieldChanges) {
+        // Determine which fields to apply
+        const fieldsToApply = dto.approvedFields && dto.approvedFields.length > 0
+          ? request.fieldChanges.filter(change => dto.approvedFields!.includes(change.fieldName))
+          : request.fieldChanges;
+
+        for (const change of fieldsToApply) {
           // Skip if newValue is undefined, null, or empty string
           if (change.newValue === undefined || change.newValue === null || change.newValue === '') {
             continue;
@@ -1642,10 +1647,15 @@ export class EmployeeProfileService {
           newValues[change.fieldName] = change.newValue;
         }
 
+        // Log if partial approval
+        if (dto.approvedFields && dto.approvedFields.length < request.fieldChanges.length) {
+          console.log(`[Service] Partial approval: ${dto.approvedFields.length}/${request.fieldChanges.length} fields approved`);
+        }
+
         // Keep fullName in sync when first/last name change
         if (update['firstName'] !== undefined || update['lastName'] !== undefined) {
           const newFirst = (update['firstName'] as string | undefined) ?? currentProfile?.firstName ?? '';
-          const newLast = (update['lastName'] as string | undefined) ?? currentProfile?.lastName ?? '';
+          const newLast = (update['lastName'] as string | undefined) ?? currentProfile?.lastName ?? ''; // currentProfile is guaranteed here
           update['fullName'] = `${newFirst} ${newLast}`.trim();
           newValues['fullName'] = update['fullName'];
         }
