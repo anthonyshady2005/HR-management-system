@@ -421,6 +421,25 @@ export function ChangeRequestDialog({ onSuccess }: ChangeRequestDialogProps) {
                 const newValueStr = newVal === null || newVal === undefined || newVal === "" ? null : String(newVal);
                 
                 if (oldValueStr !== newValueStr) {
+                  // Helper function to get display names for IDs
+                  const getDisplayValue = (value: string | null, fieldName: string): string => {
+                    if (!value) return "—";
+                    
+                    // Convert department ID to name
+                    if (fieldName === "primaryDepartmentId") {
+                      const dept = departments.find(d => d._id === value);
+                      return dept ? dept.name : value;
+                    }
+                    
+                    // Convert position ID to title
+                    if (fieldName === "primaryPositionId") {
+                      const pos = positions.find(p => p._id === value);
+                      return pos ? pos.title : value;
+                    }
+                    
+                    return value;
+                  };
+                  
                   return (
                     <div
                       key={fieldName}
@@ -431,9 +450,9 @@ export function ChangeRequestDialog({ onSuccess }: ChangeRequestDialogProps) {
                           {formatFieldName(fieldName)}
                         </p>
                         <p className="text-xs text-slate-400 mt-1">
-                          <span className="text-red-400">{oldValueStr ?? "—"}</span>
+                          <span className="text-red-400">{getDisplayValue(oldValueStr, fieldName)}</span>
                           {" → "}
-                          <span className="text-green-400">{newValueStr ?? "—"}</span>
+                          <span className="text-green-400">{getDisplayValue(newValueStr, fieldName)}</span>
                         </p>
                       </div>
                     </div>

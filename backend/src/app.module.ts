@@ -25,7 +25,9 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     }),
     MongooseModule.forRootAsync({
       useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGO_URI') || configService.get<string>('MONGODB_URI'),
+        uri:
+          configService.get<string>('MONGO_URI') ||
+          configService.get<string>('MONGODB_URI'),
       }),
       inject: [ConfigService],
     }),
@@ -39,7 +41,8 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     OrganizationStructureModule,
     PerformanceModule,
     AuthModule,
-    CommonModule],
+    CommonModule,
+  ],
   controllers: [AppController],
   providers: [
     AppService,

@@ -295,13 +295,11 @@ export default function EmployeeDetailPage() {
         setEmployeeRoles(rolesToAssign);
       }
 
-      setProfile(updated);
       setEditing(false);
       toast.success("Profile updated successfully");
       
-      // Reload audit logs
-      const auditData = await getAuditHistory(employeeId, 1, 20);
-      setAuditLogs(auditData.data || []);
+      // Reload all employee data to get fresh populated references
+      await loadEmployeeData();
     } catch (error: any) {
       console.error("Failed to update profile:", error);
       toast.error(

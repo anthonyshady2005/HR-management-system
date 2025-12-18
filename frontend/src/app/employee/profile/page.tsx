@@ -966,11 +966,38 @@ export default function EmployeeProfilePage() {
                         {request.fieldChanges && request.fieldChanges.length > 0 && (
                           <div className="text-xs text-slate-400 mt-2 space-y-1">
                             <p className="font-medium">Changes requested:</p>
-                            {request.fieldChanges.map((change, idx) => (
-                              <p key={idx} className="ml-2">
-                                • {change.fieldName}: {String(change.oldValue || "—")} → {String(change.newValue)}
-                              </p>
-                            ))}
+                            {request.fieldChanges.map((change, idx) => {
+                              // Helper to format values for display
+                              const formatValue = (fieldName: string, value: any): string => {
+                                if (!value || value === "—") return "—";
+                                
+                                // Convert department ID to name
+                                if (fieldName === "primaryDepartmentId" && department) {
+                                  // Check if this is the old value (current department)
+                                  const deptId = typeof department === 'object' ? department._id : department;
+                                  if (value === deptId) {
+                                    return typeof department === 'object' ? department.name : String(value);
+                                  }
+                                }
+                                
+                                // Convert position ID to title
+                                if (fieldName === "primaryPositionId" && position) {
+                                  // Check if this is the old value (current position)
+                                  const posId = typeof position === 'object' ? position._id : position;
+                                  if (value === posId) {
+                                    return typeof position === 'object' ? position.title : String(value);
+                                  }
+                                }
+                                
+                                return String(value);
+                              };
+                              
+                              return (
+                                <p key={idx} className="ml-2">
+                                  • {change.fieldName}: {formatValue(change.fieldName, change.oldValue)} → {formatValue(change.fieldName, change.newValue)}
+                                </p>
+                              );
+                            })}
                           </div>
                         )}
                         {request.processingComments && (
