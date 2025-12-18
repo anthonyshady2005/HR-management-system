@@ -45,7 +45,7 @@ export default function LoginPage() {
                     loginRoles
                 );
             }
-            router.push("/home");
+            router.push("/");
         } catch (err: any) {
             setError(err.response?.data?.message || "Login failed. Please check your credentials.");
         } finally {
