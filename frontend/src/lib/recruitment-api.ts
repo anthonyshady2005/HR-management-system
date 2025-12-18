@@ -397,6 +397,27 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  // Get HR Managers for dropdown selection
+  // waiting for the endpoint to be implemented , khalaso it is not implemented yet
+  getHrManagers: async (): Promise<Array<{
+    _id: string;
+    id: string;
+    employeeNumber: string;
+    name: string;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    workEmail?: string;
+  }>> => {
+    try {
+      const response = await api.get(`/employee-profile/hr-managers/list`);
+      return response.data || [];
+    } catch (error) {
+      console.warn('HR Managers endpoint not yet implemented:', error);
+      return [];
+    }
+  },
+
   // Create Job Requisition
   createJobRequisition: async (data: {
     requisitionId: string;

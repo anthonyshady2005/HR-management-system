@@ -23,11 +23,24 @@ interface JobTemplate {
   department?: string;
 }
 
+interface HrManager {
+  _id: string;
+  id: string;
+  employeeNumber: string;
+  name: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  workEmail?: string;
+}
+
 export default function NewJobPostingPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<JobTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [hrManagers, setHrManagers] = useState<HrManager[]>([]);
+  const [loadingHrManagers, setLoadingHrManagers] = useState(true);
   const [formData, setFormData] = useState({
     requisitionId: "",
     templateId: "",
@@ -43,6 +56,7 @@ export default function NewJobPostingPage() {
 
   useEffect(() => {
     loadTemplates();
+    loadHrManagers();
   }, []);
 
   const loadTemplates = async () => {
@@ -54,6 +68,18 @@ export default function NewJobPostingPage() {
       console.error("Error loading templates:", error);
     } finally {
       setLoadingTemplates(false);
+    }
+  };
+
+  const loadHrManagers = async () => {
+    try {
+      setLoadingHrManagers(true);
+      const data = await recruitmentApi.getHrManagers();
+      setHrManagers(data || []);
+    } catch (error) {
+      console.error("Error loading HR Managers:", error);
+    } finally {
+      setLoadingHrManagers(false);
     }
   };
 
@@ -305,13 +331,12 @@ export default function NewJobPostingPage() {
               </h2>
 
               <div className="space-y-4">
-                {/* Hiring Manager ID */}
+                {/* Hiring Manager */}
                 <div>
                   <label className="block text-sm text-slate-300 mb-2">
-                    Hiring Manager ID *
+                    Hiring Manager *
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.hiringManagerId}
                     onChange={(e) =>
                       setFormData({
@@ -319,17 +344,31 @@ export default function NewJobPostingPage() {
                         hiringManagerId: e.target.value,
                       })
                     }
-                    placeholder="Enter hiring manager employee ID"
-                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500/50"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50"
                     required
-                  />
+                    disabled={loadingHrManagers}
+                  >
+                    <option value="">
+                      {loadingHrManagers
+                        ? "Loading HR Managers..."
+                        : "Select a hiring manager"}
+                    </option>
+                    {hrManagers.map((manager) => (
+                      <option key={manager._id} value={manager._id}>
+                        {manager.fullName} ({manager.employeeNumber})
+                        {manager.workEmail ? ` - ${manager.workEmail}` : ""}
+                      </option>
+                    ))}
+                  </select>
                   {errors.hiringManagerId && (
                     <p className="text-red-400 text-xs mt-1">
                       {errors.hiringManagerId}
                     </p>
                   )}
                   <p className="text-xs text-slate-400 mt-1">
-                    Enter the MongoDB ObjectId of the hiring manager
+                    {hrManagers.length === 0 && !loadingHrManagers
+                      ? "No HR Managers found. Please ensure the backend endpoint is implemented."
+                      : "Select an HR Manager from the list"}
                   </p>
                 </div>
 
@@ -466,8 +505,13 @@ export default function NewJobPostingPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400">Hiring Manager ID:</span>{" "}
-                  <span className="text-white">{formData.hiringManagerId || "N/A"}</span>
+                  <span className="text-slate-400">Hiring Manager:</span>{" "}
+                  <span className="text-white">
+                    {formData.hiringManagerId
+                      ? hrManagers.find((m) => m._id === formData.hiringManagerId)
+                          ?.fullName || formData.hiringManagerId
+                      : "N/A"}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-400">Status:</span>{" "}
