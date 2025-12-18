@@ -99,7 +99,7 @@ export function Navbar() {
                 <div className="px-3 py-3 border-b border-white/10">
                   <DropdownMenuLabel className="text-slate-300 text-xs font-normal mb-1">Account</DropdownMenuLabel>
                   <p className="text-sm text-white font-medium">{user.fullName || "User"}</p>
-                  <p className="text-xs text-slate-400 mt-1">{user.email || user.personalEmail}</p>
+                  <p className="text-xs text-slate-400 mt-1">{user.email}</p>
                   {currentRole && (
                     <div className="mt-2">
                       <Badge variant="secondary" className="text-xs">
@@ -149,7 +149,7 @@ export function Navbar() {
               View your account information and profile details
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-6 py-4">
             {/* Profile Header */}
             <div className="flex items-start gap-4 pb-4 border-b border-white/10">
@@ -158,7 +158,7 @@ export function Navbar() {
               </div>
               <div className="flex-1">
                 <h3 className="text-xl font-semibold text-white">{user.fullName || "User"}</h3>
-                <p className="text-sm text-slate-400 mt-1">{user.email || user.personalEmail}</p>
+                <p className="text-sm text-slate-400 mt-1">{user.email}</p>
                 {currentRole && (
                   <div className="mt-2">
                     <Badge variant="secondary" className="text-xs">
@@ -173,13 +173,13 @@ export function Navbar() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-4">
                 <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Personal Information</h4>
-                
+
                 <div className="space-y-3">
                   <div className="flex items-start gap-3">
                     <Mail className="w-4 h-4 text-slate-400 mt-0.5" />
                     <div>
                       <p className="text-xs text-slate-400">Email</p>
-                      <p className="text-sm text-white">{user.email || user.personalEmail || "—"}</p>
+                      <p className="text-sm text-white">{user.email || "—"}</p>
                     </div>
                   </div>
 
@@ -197,7 +197,7 @@ export function Navbar() {
 
               <div className="space-y-4">
                 <h4 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Roles & Permissions</h4>
-                
+
                 <div className="space-y-3">
                   <div className="flex items-start gap-3">
                     <Briefcase className="w-4 h-4 text-slate-400 mt-0.5" />
@@ -214,8 +214,8 @@ export function Navbar() {
                         <p className="text-xs text-slate-400 mb-2">All Roles</p>
                         <div className="flex flex-wrap gap-2">
                           {uniqueRoles.map((role, idx) => (
-                            <Badge 
-                              key={`${role}-${idx}`} 
+                            <Badge
+                              key={`${role}-${idx}`}
                               variant={currentRole === role ? "default" : "secondary"}
                               className="text-xs"
                             >

@@ -43,6 +43,13 @@ interface Assignment {
     employeePosition?: string; // Manually populated
 }
 
+interface AttendanceSummary {
+    daysPresent: number;
+    lateArrivals: number;
+    missedPunches: number;
+    totalWorkMinutes: number;
+}
+
 export default function EvaluateAssignmentPage() {
     const params = useParams();
     const router = useRouter();
@@ -51,15 +58,19 @@ export default function EvaluateAssignmentPage() {
 
     const [assignment, setAssignment] = useState<Assignment | null>(null);
     const [template, setTemplate] = useState<Template | null>(null);
+    const [recordId, setRecordId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isSuccess, setIsSuccess] = useState(false);
+    const [submittedStatus, setSubmittedStatus] = useState<"DRAFT" | "SUBMITTED" | null>(null);
 
     // Form State
     const [ratings, setRatings] = useState<Record<string, { value: number; comment: string }>>({});
     const [managerSummary, setManagerSummary] = useState("");
     const [strengths, setStrengths] = useState("");
     const [improvementAreas, setImprovementAreas] = useState("");
+    const [attendance, setAttendance] = useState<AttendanceSummary | null>(null);
 
     useEffect(() => {
         const loadData = async () => {
@@ -92,7 +103,7 @@ export default function EvaluateAssignmentPage() {
                         empName = empRes.data.fullName || empRes.data.personalInfo?.firstName + " " + empRes.data.personalInfo?.lastName || empName;
                         empPos = empRes.data.position?.title || empPos; // Assuming populated or structured
                     }
-                    if (cycRes.data) return cycName = cycRes.data.name || cycName;
+                    if (cycRes.data) cycName = cycRes.data.name || cycName;
 
                 } catch (innerErr) {
                     console.warn("Details fetch partial failure", innerErr);
@@ -105,12 +116,55 @@ export default function EvaluateAssignmentPage() {
                     cycleName: cycName
                 });
 
-                // Initialize ratings state
-                const initialRatings: Record<string, any> = {};
-                templData.criteria.forEach((c: Criterion) => {
-                    initialRatings[c.key] = { value: 0, comment: "" };
-                });
-                setRatings(initialRatings);
+                // 4. Try to fetch existing record
+                try {
+                    const recordRes = await api.get(`/performance/assignments/${assignmentId}/record`);
+                    if (recordRes.data) {
+                        const rec = recordRes.data;
+                        setRecordId(rec._id);
+                        setManagerSummary(rec.managerSummary || "");
+                        setStrengths(rec.strengths || "");
+                        setImprovementAreas(rec.improvementAreas || "");
+
+                        if (rec.ratings && rec.ratings.length > 0) {
+                            const existingRatings: Record<string, any> = {};
+                            rec.ratings.forEach((r: any) => {
+                                existingRatings[r.key] = { value: r.ratingValue, comment: r.comments || "" };
+                            });
+                            setRatings(existingRatings);
+                        } else {
+                            // Default init if ratings array is empty but record exists
+                            const initialRatings: Record<string, any> = {};
+                            templData.criteria.forEach((c: Criterion) => {
+                                initialRatings[c.key] = { value: 0, comment: "" };
+                            });
+                            setRatings(initialRatings);
+                        }
+                    } else {
+                        // No record exists yet, standard init
+                        const initialRatings: Record<string, any> = {};
+                        templData.criteria.forEach((c: Criterion) => {
+                            initialRatings[c.key] = { value: 0, comment: "" };
+                        });
+                        setRatings(initialRatings);
+                    }
+                } catch (recErr) {
+                    console.warn("No existing record found or error fetching it", recErr);
+                    // Standard init fallback
+                    const initialRatings: Record<string, any> = {};
+                    templData.criteria.forEach((c: Criterion) => {
+                        initialRatings[c.key] = { value: 0, comment: "" };
+                    });
+                    setRatings(initialRatings);
+                }
+
+                // 5. Fetch Attendance Summary
+                try {
+                    const attRes = await api.get(`/performance/assignments/${assignmentId}/attendance`);
+                    setAttendance(attRes.data);
+                } catch (attErr) {
+                    console.warn("Failed to fetch attendance data", attErr);
+                }
 
             } catch (err: any) {
                 console.error("Failed to load evaluation data", err);
@@ -183,8 +237,13 @@ export default function EvaluateAssignmentPage() {
         };
 
         try {
-            await api.post("/performance/record", payload);
-            router.push("/performance/manager/assignments");
+            if (recordId) {
+                await api.put(`/performance/record/${recordId}`, payload);
+            } else {
+                await api.post("/performance/record", payload);
+            }
+            setSubmittedStatus(isDraft ? "DRAFT" : "SUBMITTED");
+            setIsSuccess(true);
         } catch (err: any) {
             console.error("Submission failed", err);
             alert("Failed to submit appraisal. " + (err.response?.data?.message || ""));
@@ -213,6 +272,51 @@ export default function EvaluateAssignmentPage() {
                     </button>
                 </Link>
             </div>
+        );
+    }
+
+    if (isSuccess) {
+        return (
+            <ProtectedRoute allowedRoles={["Department Head", "department head"]}>
+                <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative flex items-center justify-center overflow-hidden">
+                    {/* Background Orbs */}
+                    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                        <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse"></div>
+                        <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+                    </div>
+
+                    <div className="relative z-10 max-w-lg w-full px-6 text-center animate-in fade-in zoom-in duration-500">
+                        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-3xl p-10 shadow-2xl">
+                            <div className="w-20 h-20 bg-green-500/20 rounded-full border border-green-500/30 flex items-center justify-center mx-auto mb-6">
+                                <CheckCircle className="w-10 h-10 text-green-400" />
+                            </div>
+                            <h1 className="text-3xl font-bold text-white mb-4">
+                                {submittedStatus === "DRAFT" ? "Draft Saved!" : "Submission Successful!"}
+                            </h1>
+                            <p className="text-slate-400 mb-8 leading-relaxed">
+                                {submittedStatus === "DRAFT"
+                                    ? `Your progress for ${assignment?.employeeName} has been saved as a draft.`
+                                    : `The performance evaluation for ${assignment?.employeeName} has been successfully recorded.`
+                                }
+                            </p>
+                            <div className="flex flex-col gap-3">
+                                <Link href="/performance/manager/assignments">
+                                    <button className="w-full px-6 py-3 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 transition-all font-medium shadow-lg flex items-center justify-center gap-2">
+                                        <ArrowLeft className="w-5 h-5" />
+                                        Back to My Assignments
+                                    </button>
+                                </Link>
+                                <Link href="/performance/manager/evaluations">
+                                    <button className="w-full px-6 py-3 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all font-medium flex items-center justify-center gap-2">
+                                        <Calendar className="w-5 h-5" />
+                                        View All My Evaluations
+                                    </button>
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </ProtectedRoute>
         );
     }
 
@@ -256,7 +360,7 @@ export default function EvaluateAssignmentPage() {
                             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2 text-sm"
                         >
                             {isSubmitting ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send className="w-4 h-4" />}
-                            Submit Appraisal
+                            {recordId ? "Update Appraisal" : "Submit Appraisal"}
                         </button>
                     </div>
                 </div>
@@ -282,28 +386,40 @@ export default function EvaluateAssignmentPage() {
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div className="text-center p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
-                                <div className="text-2xl font-bold text-green-400 mb-1">--</div>
+                                <div className="text-2xl font-bold text-green-400 mb-1">{attendance?.daysPresent ?? "--"}</div>
                                 <div className="text-sm text-slate-400">Days Present</div>
                             </div>
                             <div className="text-center p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                                <div className="text-2xl font-bold text-blue-400 mb-1">--</div>
-                                <div className="text-sm text-slate-400">Total Working Days</div>
+                                <div className="text-2xl font-bold text-blue-400 mb-1">
+                                    {attendance ? Math.round(attendance.totalWorkMinutes / 60) : "--"}
+                                </div>
+                                <div className="text-sm text-slate-400">Total Hours</div>
                             </div>
                             <div className="text-center p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                                <div className="text-2xl font-bold text-yellow-400 mb-1">--</div>
+                                <div className="text-2xl font-bold text-yellow-400 mb-1">{attendance?.lateArrivals ?? "--"}</div>
                                 <div className="text-sm text-slate-400">Late Arrivals</div>
                             </div>
                             <div className="text-center p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
-                                <div className="text-2xl font-bold text-red-400 mb-1">--</div>
-                                <div className="text-sm text-slate-400">Absent Days</div>
+                                <div className="text-2xl font-bold text-red-400 mb-1">{attendance?.missedPunches ?? "--"}</div>
+                                <div className="text-sm text-slate-400">Missed Punches</div>
                             </div>
                         </div>
-                        <div className="mt-4 p-3 bg-slate-700/30 rounded-lg">
-                            <p className="text-sm text-slate-400 text-center">
-                                <Info className="w-4 h-4 inline mr-1" />
-                                Attendance data integration coming soon. This section will display actual attendance metrics from the Time Management module.
-                            </p>
-                        </div>
+                        {attendance && (
+                            <div className="mt-4 p-3 bg-blue-500/5 rounded-lg border border-blue-500/10">
+                                <p className="text-xs text-slate-400 text-center">
+                                    <Info className="w-3.5 h-3.5 inline mr-1 text-blue-400" />
+                                    This data is automatically synchronized from the Time Management module for the current appraisal cycle.
+                                </p>
+                            </div>
+                        )}
+                        {!attendance && !isLoading && (
+                            <div className="mt-4 p-3 bg-slate-700/30 rounded-lg">
+                                <p className="text-sm text-slate-400 text-center">
+                                    <AlertCircle className="w-4 h-4 inline mr-1 text-yellow-500" />
+                                    No attendance data found for this period.
+                                </p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Evaluation Criteria */}

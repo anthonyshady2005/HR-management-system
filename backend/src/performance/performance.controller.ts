@@ -74,22 +74,22 @@ export class PerformanceController {
     return this.performanceService.createCycle(dto);
   }
   // Get all appraisal cycles
-@Get('cycles')
-@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
-@ApiOperation({ summary: 'Get all appraisal cycles' })
-@ApiResponse({ status: 200, description: 'All cycles retrieved successfully', type: [AppraisalCycle] })
-async getAllCycles(): Promise<AppraisalCycle[]> {
-  return this.performanceService.getAllCycles();
-}
+  @Get('cycles')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
+  @ApiOperation({ summary: 'Get all appraisal cycles' })
+  @ApiResponse({ status: 200, description: 'All cycles retrieved successfully', type: [AppraisalCycle] })
+  async getAllCycles(): Promise<AppraisalCycle[]> {
+    return this.performanceService.getAllCycles();
+  }
 
   // Get active appraisal cycles
   @Get('cycles/active')
-@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
-@ApiOperation({ summary: 'Get currently active appraisal cycles' })
-@ApiResponse({ status: 200, description: 'Active cycles retrieved successfully', type: [AppraisalCycle] })
-async getActiveCycles(): Promise<AppraisalCycle[]> {
-  return this.performanceService.getActiveCycles();
-}
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
+  @ApiOperation({ summary: 'Get currently active appraisal cycles' })
+  @ApiResponse({ status: 200, description: 'Active cycles retrieved successfully', type: [AppraisalCycle] })
+  async getActiveCycles(): Promise<AppraisalCycle[]> {
+    return this.performanceService.getActiveCycles();
+  }
 
   // Update cycle status (close/archive cycles)
   @Put('cycles/:cycleId/status')
@@ -153,6 +153,20 @@ async getActiveCycles(): Promise<AppraisalCycle[]> {
   async getRecords(): Promise<AppraisalRecord[]> {
     return this.performanceService.getRecords();
   }
+
+  @Get('records/manager/:managerId')
+  @Roles(SystemRole.DEPARTMENT_HEAD)
+  @ApiOperation({ summary: 'Get all appraisal records created by a manager' })
+  async getRecordsByManager(@Param('managerId') managerId: string): Promise<AppraisalRecord[]> {
+    return this.performanceService.getRecordsByManager(managerId);
+  }
+
+  @Get('assignments/:assignmentId/record')
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_EMPLOYEE)
+  @ApiOperation({ summary: 'Get appraisal record for a specific assignment' })
+  async getRecordByAssignment(@Param('assignmentId') assignmentId: string): Promise<AppraisalRecord | null> {
+    return this.performanceService.getRecordByAssignment(assignmentId);
+  }
   // REQ-AE-03: Update appraisal record (Req 6)
   @Put('record/:recordId')
   @Roles(SystemRole.DEPARTMENT_HEAD) // Authorized roles
@@ -185,16 +199,16 @@ async getActiveCycles(): Promise<AppraisalCycle[]> {
   @ApiOperation({ summary: 'Monitor appraisal progress and get pending forms for a cycle' })
   @ApiResponse({ status: 200, description: 'Appraisal progress retrieved successfully', type: [AppraisalAssignment] })
   @ApiResponse({ status: 400, description: 'Invalid cycle ID' })
- async getPendingAppraisals(
-  @Param('cycleId') cycleId: string,
-): Promise<AppraisalAssignment[]> {
-  return this.performanceService.getPendingAppraisals(cycleId);
-}
-@Post('reminder/:assignmentId')
-@Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
-async sendReminder(@Param('assignmentId') assignmentId: string) {
-  return this.performanceService.sendReminder(new Types.ObjectId(assignmentId));
-}
+  async getPendingAppraisals(
+    @Param('cycleId') cycleId: string,
+  ): Promise<AppraisalAssignment[]> {
+    return this.performanceService.getPendingAppraisals(cycleId);
+  }
+  @Post('reminder/:assignmentId')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
+  async sendReminder(@Param('assignmentId') assignmentId: string) {
+    return this.performanceService.sendReminder(new Types.ObjectId(assignmentId));
+  }
 
   // REQ-OD-01: View final ratings, feedback, and development notes (Req 9)
   @Get('employee/:employeeId/appraisals')
@@ -277,5 +291,12 @@ async sendReminder(@Param('assignmentId') assignmentId: string) {
     @Param('cycleId') cycleId: string,
   ) {
     return this.performanceService.generateAppraisalReport(cycleId);
+  }
+
+  @Get('assignments/:id/attendance')
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER)
+  @ApiOperation({ summary: 'Get attendance summary for an assignment period' })
+  async getAttendanceForAssignment(@Param('id') id: string) {
+    return this.performanceService.getAttendanceForAssignment(id);
   }
 }

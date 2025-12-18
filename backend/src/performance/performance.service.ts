@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { NotificationLog } from '../time-management/models/notification-log.schema';
 import { EmployeeSystemRole, EmployeeSystemRoleDocument } from '../employee-profile/models/employee-system-role.schema';
 import { EmployeeStatus, SystemRole } from 'src/employee-profile/enums/employee-profile.enums';
+import { TimeManagementService } from '../time-management/time-management.service';
 
 @Injectable()
 export class PerformanceService {
@@ -38,6 +39,7 @@ export class PerformanceService {
     @InjectModel(EmployeeSystemRole.name) private employeeSystemRoleModel: Model<EmployeeSystemRoleDocument>,
     @InjectModel(NotificationLog.name) private notificationLogModel: Model<any>,
     @InjectModel(Position.name) private readonly positionModel: Model<PositionDocument>,
+    private readonly timeManagementService: TimeManagementService,
 
   ) { }
 
@@ -478,6 +480,20 @@ export class PerformanceService {
   async getRecords(): Promise<AppraisalRecord[]> {
     return this.recordModel.find().sort({ createdAt: -1 }).exec();
   }
+
+  async getRecordsByManager(managerId: string): Promise<AppraisalRecord[]> {
+    return this.recordModel.find({ managerProfileId: managerId })
+      .populate('employeeProfileId', 'firstName lastName fullName position')
+      .populate('cycleId', 'name')
+      .populate('assignmentId')
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  async getRecordByAssignment(assignmentId: string): Promise<AppraisalRecord | null> {
+    return this.recordModel.findOne({ assignmentId: new Types.ObjectId(assignmentId) }).exec();
+  }
+
   // REQ-AE-03: Update appraisal record (Req 6)
   async updateAppraisalRecord(recordId: string, dto: UpdateAppraisalRecordDto): Promise<AppraisalRecord> {
     const record = await this.recordModel.findByIdAndUpdate(recordId, dto, { new: true }).exec();
@@ -562,19 +578,22 @@ export class PerformanceService {
         status: { $in: ['NOT_STARTED', 'IN_PROGRESS'] },
       })
       .populate('employeeProfileId', 'fullName email')
+      .populate('managerProfileId', 'fullName email') // Added manager population
       .populate('departmentId', 'name')
       .exec();
   }
   async sendReminder(assignmentId: Types.ObjectId) {
     const assignment = await this.assignmentModel.findById(assignmentId)
-      .populate('employeeProfileId');
+      .populate('employeeProfileId')
+      .populate('managerProfileId');
 
     if (!assignment) return;
 
+    // Send reminder to the manager, not the employee, as they are the reviewer
     await this.notificationLogModel.create({
-      to: assignment.employeeProfileId._id,
+      to: assignment.managerProfileId._id,
       type: 'APPRAISAL_REMINDER',
-      message: 'Reminder: Please complete your performance appraisal.',
+      message: `Reminder: Please complete the performance appraisal for ${assignment.employeeProfileId['fullName'] || 'your direct report'}.`,
     });
   }
 
@@ -591,7 +610,7 @@ export class PerformanceService {
 
   // REQ-AE-07: Flag or raise a concern about a rating (Req 10)
   async createAppraisalDispute(dto: CreateAppraisalDisputeDTO): Promise<AppraisalDispute> {
-    // Validate IDs
+    // Validate ObjectId fields
     const idFields = ['appraisalId', 'assignmentId', 'cycleId', 'raisedByEmployeeId'] as const;
     for (const field of idFields) {
       if (!Types.ObjectId.isValid(dto[field])) {
@@ -601,33 +620,38 @@ export class PerformanceService {
 
     // Find the appraisal record
     const appraisal = await this.recordModel.findById(dto.appraisalId).exec();
-    if (!appraisal || !appraisal.hrPublishedAt) {
-      throw new BadRequestException('Appraisal record or publication date not found');
+    if (!appraisal) {
+      throw new BadRequestException('Appraisal record not found');
+    }
+
+    // Ensure appraisal has been submitted
+    const submissionDate = appraisal.hrPublishedAt || appraisal.managerSubmittedAt;
+    if (!submissionDate) {
+      throw new BadRequestException('Appraisal must be submitted before raising a dispute');
     }
 
     // Check 7-day window
-    const daysSincePublication = Math.floor(
-      (new Date().getTime() - new Date(appraisal.hrPublishedAt).getTime()) / (1000 * 60 * 60 * 24)
+    const daysSinceSubmission = Math.floor(
+      (new Date().getTime() - new Date(submissionDate).getTime()) / (1000 * 60 * 60 * 24)
     );
-    if (daysSincePublication > 7) {
-      throw new BadRequestException('Dispute must be filed within 7 days of appraisal publication');
+    if (daysSinceSubmission > 7) {
+      throw new BadRequestException('Dispute must be filed within 7 days of submission');
     }
 
-    // **Do NOT include _id from DTO**
-
-
+    // Create dispute - _id will automatically be a MongoDB ObjectId
     const dispute = new this.disputeModel({
-      _id: uuidv4(), // manually generate unique id
       appraisalId: new Types.ObjectId(dto.appraisalId),
       assignmentId: new Types.ObjectId(dto.assignmentId),
       cycleId: new Types.ObjectId(dto.cycleId),
       raisedByEmployeeId: new Types.ObjectId(dto.raisedByEmployeeId),
       reason: dto.reason,
-      status: dto.status || 'OPEN',
+      status: dto.status || AppraisalDisputeStatus.OPEN,
     });
 
-    return await dispute.save();
+    return dispute.save();
   }
+
+
 
 
 
@@ -765,5 +789,27 @@ export class PerformanceService {
     const template = await this.templateModel.findById(templateId).exec();
     if (!template) throw new BadRequestException('Template not found');
     return template;
+  }
+
+  async getEmployeeAttendanceData(employeeId: string, startDate: Date, endDate: Date) {
+    return this.timeManagementService.getEmployeeAttendanceSummary(
+      new Types.ObjectId(employeeId),
+      startDate,
+      endDate,
+    );
+  }
+
+  async getAttendanceForAssignment(assignmentId: string) {
+    const assignment = await this.assignmentModel.findById(assignmentId).exec();
+    if (!assignment) throw new BadRequestException('Assignment not found');
+
+    const cycle = await this.cycleModel.findById(assignment.cycleId).exec();
+    if (!cycle) throw new BadRequestException('Cycle not found for this assignment');
+
+    return this.getEmployeeAttendanceData(
+      assignment.employeeProfileId.toString(),
+      cycle.startDate,
+      cycle.endDate,
+    );
   }
 }

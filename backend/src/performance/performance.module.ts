@@ -36,6 +36,7 @@ import {
 } from '../time-management/models/notification-log.schema';
 import { Position, PositionSchema } from '../organization-structure/models/position.schema';
 import { AuthModule } from 'src/Auth/auth.module';
+import { TimeManagementModule } from '../time-management/time-management.module';
 
 @Module({
   imports: [
@@ -51,9 +52,10 @@ import { AuthModule } from 'src/Auth/auth.module';
       { name: Position.name, schema: PositionSchema }, // <-- add this
     ]),
     AuthModule,
+    TimeManagementModule,
   ],
   controllers: [PerformanceController],
   providers: [PerformanceService],
   exports: [PerformanceService],
 })
-export class PerformanceModule {}
+export class PerformanceModule { }
