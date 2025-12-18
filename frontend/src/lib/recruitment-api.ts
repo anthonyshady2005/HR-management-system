@@ -102,6 +102,106 @@ export interface Offer {
   createdAt?: string;
 }
 
+export interface Consent {
+  applicationId: string;
+  consentGiven: boolean;
+  consentType?: string;
+  consentDate?: string;
+  withdrawnAt?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+// Offboarding Types
+export type TerminationStatus = "pending" | "approved" | "rejected" | "completed";
+export type TerminationType = "resignation" | "termination" | "retirement" | "end_of_contract";
+
+export interface TerminationRequest {
+  _id: string;
+  employeeId: any;
+  type: TerminationType;
+  status: TerminationStatus;
+  reason?: string;
+  terminationDate?: string;
+  lastWorkingDay?: string;
+  noticePeriod?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  requestedBy?: any;
+  approvedBy?: any;
+  comments?: string;
+}
+
+export interface TerminationStats {
+  terminationRequests: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    completed: number;
+  };
+  clearanceStatus: {
+    total: number;
+    inProgress: number;
+    completed: number;
+    pendingItems: number;
+    completionRate: number;
+  };
+  terminationTypes: {
+    resignations: number;
+    terminations: number;
+    ratio: number;
+  };
+  averageProcessingTime: {
+    average: number;
+    fastest: number;
+    slowest: number;
+    onTrack: number;
+  };
+}
+
+export interface ClearanceItem {
+  item: string;
+  status: "pending" | "completed" | "not_applicable";
+  completedBy?: string;
+  completedAt?: string;
+  notes?: string;
+}
+
+export interface EquipmentItem {
+  item: string;
+  serialNumber?: string;
+  status: "returned" | "pending" | "lost" | "not_applicable";
+  returnedAt?: string;
+  notes?: string;
+}
+
+export interface ClearanceChecklist {
+  _id: string;
+  terminationRequestId: string;
+  items: ClearanceItem[];
+  equipment: EquipmentItem[];
+  status: "pending" | "in_progress" | "completed";
+  completedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DepartmentTurnover {
+  department: string;
+  totalTerminations: number;
+  resignations: number;
+  terminations: number;
+  turnoverRate: number;
+  averageTenure: number;
+}
+
+export interface TerminationReason {
+  reason: string;
+  count: number;
+  percentage: number;
+}
+
 // API Functions
 export const recruitmentApi = {
   // Dashboard Overview
@@ -297,6 +397,27 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  // Get HR Managers for dropdown selection
+  // waiting for the endpoint to be implemented , khalaso it is not implemented yet
+  getHrManagers: async (): Promise<Array<{
+    _id: string;
+    id: string;
+    employeeNumber: string;
+    name: string;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    workEmail?: string;
+  }>> => {
+    try {
+      const response = await api.get(`/employee-profile/hr-managers/list`);
+      return response.data || [];
+    } catch (error) {
+      console.warn('HR Managers endpoint not yet implemented:', error);
+      return [];
+    }
+  },
+
   // Create Job Requisition
   createJobRequisition: async (data: {
     requisitionId: string;
@@ -373,6 +494,25 @@ export const recruitmentApi = {
 
   getApplicationHistory: async (id: string): Promise<any[]> => {
     const response = await api.get(`/recruitment/applications/${id}/history`);
+    return response.data;
+  },
+
+  // Consent methods
+  getConsentStatus: async (id: string): Promise<Consent | null> => {
+    const response = await api.get(`/recruitment/applications/${id}/consent`);
+    return response.data;
+  },
+
+  recordConsent: async (
+    id: string,
+    data: {
+      consentGiven: boolean;
+      consentType?: string;
+      ipAddress?: string;
+      userAgent?: string;
+    }
+  ): Promise<Consent> => {
+    const response = await api.post(`/recruitment/applications/${id}/consent`, data);
     return response.data;
   },
 
@@ -477,292 +617,71 @@ export const recruitmentApi = {
     });
     return response.data;
   },
-};
 
-// Onboarding Types
-export interface OnboardingTask {
-  _id?: string;
-  name: string;
-  department: string;
-  status: "pending" | "in_progress" | "completed";
-  deadline?: string;
-  completedAt?: string;
-  documentId?: any;
-  notes?: string;
-}
-
-export interface Onboarding {
-  _id: string;
-  employeeId: any;
-  contractId?: any;
-  tasks: OnboardingTask[];
-  completed: boolean;
-  completedAt?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface OnboardingMetrics {
-  activeOnboarding: {
-    total: number;
-    inProgress: number;
-    completedThisMonth: number;
-    overdue: number;
-  };
-  taskCompletion: {
-    total: number;
-    completed: number;
-    pending: number;
-    overdue: number;
-    completionRate: number;
-  };
-  averageCompletionTime: {
-    average: number;
-    fastest: number;
-    slowest: number;
-    onTrack: number;
-  };
-  departmentBreakdown: {
-    topDepartment: string;
-    activeOnboarding: number;
-    completionRate: number;
-  };
-}
-
-// Onboarding API Functions
-export const onboardingApi = {
-  // Get onboarding by employee ID
-  getOnboardingByEmployeeId: async (employeeId: string): Promise<Onboarding> => {
-    const response = await api.get(`/recruitment/onboarding/${employeeId}`);
+  generateOfferPDF: async (id: string): Promise<{ pdfUrl: string }> => {
+    const response = await api.post(`/recruitment/offers/${id}/generate-pdf`);
     return response.data;
   },
 
-  // Get onboarding tasks
-  getOnboardingTasks: async (id: string): Promise<OnboardingTask[]> => {
-    const response = await api.get(`/recruitment/onboarding/${id}/tasks`);
-    return response.data;
-  },
-
-  // Update onboarding task
-  updateOnboardingTask: async (
-    id: string,
-    taskId: string,
-    data: {
-      status?: "pending" | "in_progress" | "completed";
-      completedAt?: string;
-      documentId?: string;
-      notes?: string;
-    }
-  ): Promise<Onboarding> => {
-    const response = await api.patch(
-      `/recruitment/onboarding/${id}/tasks/${taskId}`,
-      data
-    );
-    return response.data;
-  },
-
-  // Mark onboarding as complete
-  completeOnboarding: async (id: string): Promise<Onboarding> => {
-    const response = await api.patch(`/recruitment/onboarding/${id}/complete`);
-    return response.data;
-  },
-
-  // Create onboarding
-  createOnboarding: async (data: {
-    employeeId: string;
-    tasks?: Array<{
-      name: string;
-      department: string;
-      status?: "pending" | "in_progress" | "completed";
-      deadline?: string;
-      completedAt?: string;
-      documentId?: string;
-      notes?: string;
-    }>;
-    completed?: boolean;
-    completedAt?: string;
-  }): Promise<Onboarding> => {
-    const response = await api.post("/recruitment/onboarding", data);
+  sendOfferToCandidate: async (id: string): Promise<any> => {
+    const response = await api.post(`/recruitment/offers/${id}/send-email`);
     return response.data;
   },
 };
-
-// Offboarding/Termination Types
-export type TerminationStatus = "pending" | "approved" | "rejected" | "completed";
-export type TerminationType = "resignation" | "termination";
-export type TerminationInitiator = "employee" | "hr";
-export type ClearanceStatus = "pending" | "in_progress" | "completed" | "blocked";
-export type EquipmentReturnStatus = "returned" | "pending" | "lost";
-export type EquipmentCondition = "good" | "damaged" | "lost";
-
-export interface ClearanceItem {
-  _id?: string;
-  department: string;
-  itemType: string;
-  status: ClearanceStatus;
-  requestedDate?: string;
-  completedDate?: string;
-  assignedTo?: string;
-  comments?: string;
-  updatedBy?: string;
-  updatedAt?: string;
-}
-
-export interface EquipmentItem {
-  _id?: string;
-  name: string;
-  type: string;
-  serialNumber?: string;
-  returnStatus: EquipmentReturnStatus;
-  condition?: EquipmentCondition;
-  returnDate?: string;
-  notes?: string;
-}
-
-export interface ClearanceChecklist {
-  _id?: string;
-  terminationId: string;
-  items: ClearanceItem[];
-  equipmentList: EquipmentItem[];
-  cardReturned: boolean;
-  cardReturnDate?: string;
-  accessRevoked: boolean;
-  accessRevokedDate?: string;
-  overallStatus: ClearanceStatus;
-  completedAt?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface TerminationRequest {
-  _id: string;
-  employeeId: any;
-  type: TerminationType;
-  initiatedBy: TerminationInitiator;
-  reason?: string;
-  requestDate: string;
-  terminationDate: string;
-  status: TerminationStatus;
-  employeeComments?: string;
-  hrComments?: string;
-  clearanceId?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface TerminationStats {
-  terminationRequests: {
-    total: number;
-    pending: number;
-    approved: number;
-    rejected: number;
-    completed: number;
-  };
-  clearanceStatus: {
-    total: number;
-    inProgress: number;
-    completed: number;
-    pendingItems: number;
-    completionRate: number;
-  };
-  terminationTypes: {
-    resignations: number;
-    terminations: number;
-    ratio: number;
-  };
-  averageProcessingTime: {
-    average: number;
-    fastest: number;
-    slowest: number;
-    onTrack: number;
-  };
-}
-
-export interface DepartmentTurnover {
-  department: string;
-  totalTerminations: number;
-  resignations: number;
-  terminations: number;
-  turnoverRate: number;
-  trend: "up" | "down" | "stable";
-}
-
-export interface TerminationReason {
-  reason: string;
-  count: number;
-  type: TerminationType;
-}
 
 // Offboarding API Functions
 export const offboardingApi = {
-  // Get all termination requests
+  // Get termination requests
   getTerminations: async (filters?: {
+    startDate?: string;
+    endDate?: string;
     status?: TerminationStatus;
     type?: TerminationType;
     employeeId?: string;
-    initiator?: TerminationInitiator;
-    startDate?: string;
-    endDate?: string;
     department?: string;
   }): Promise<TerminationRequest[]> => {
     const params = new URLSearchParams();
+    if (filters?.startDate) params.append("startDate", filters.startDate);
+    if (filters?.endDate) params.append("endDate", filters.endDate);
     if (filters?.status) params.append("status", filters.status);
     if (filters?.type) params.append("type", filters.type);
     if (filters?.employeeId) params.append("employeeId", filters.employeeId);
-    if (filters?.initiator) params.append("initiator", filters.initiator);
-    if (filters?.startDate) params.append("startDate", filters.startDate);
-    if (filters?.endDate) params.append("endDate", filters.endDate);
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/terminations?${params.toString()}`
+      `/recruitment/termination-requests?${params.toString()}`
     );
     return response.data;
   },
 
-  // Get termination by ID
+  // Get termination request by ID
   getTerminationById: async (id: string): Promise<TerminationRequest> => {
-    const response = await api.get(`/recruitment/terminations/${id}`);
+    const response = await api.get(`/recruitment/termination-requests/${id}`);
     return response.data;
   },
 
-  // Get clearance checklist
-  getClearanceChecklist: async (id: string): Promise<ClearanceChecklist> => {
-    const response = await api.get(
-      `/recruitment/terminations/${id}/clearance`
-    );
+  // Create termination request
+  createTerminationRequest: async (data: {
+    employeeId: string;
+    type: TerminationType;
+    reason?: string;
+    terminationDate?: string;
+    lastWorkingDay?: string;
+    noticePeriod?: number;
+    comments?: string;
+  }): Promise<TerminationRequest> => {
+    const response = await api.post("/recruitment/termination-requests", data);
     return response.data;
   },
 
   // Update termination status
   updateTerminationStatus: async (
     id: string,
-    status: TerminationStatus,
-    comments?: string
+    status: TerminationStatus
   ): Promise<TerminationRequest> => {
-    const response = await api.patch(`/recruitment/terminations/${id}/status`, {
+    const response = await api.patch(`/recruitment/termination-requests/${id}/status`, {
       status,
-      hrComments: comments,
     });
-    return response.data;
-  },
-
-  // Update clearance checklist
-  updateClearanceChecklist: async (
-    id: string,
-    data: {
-      items?: ClearanceItem[];
-      equipmentList?: EquipmentItem[];
-      cardReturned?: boolean;
-      cardReturnDate?: string;
-      accessRevoked?: boolean;
-      accessRevokedDate?: string;
-    }
-  ): Promise<ClearanceChecklist> => {
-    const response = await api.patch(
-      `/recruitment/terminations/${id}/clearance`,
-      data
-    );
     return response.data;
   },
 
@@ -778,7 +697,7 @@ export const offboardingApi = {
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/terminations/stats?${params.toString()}`
+      `/recruitment/termination-requests/stats?${params.toString()}`
     );
     return response.data;
   },
@@ -787,32 +706,55 @@ export const offboardingApi = {
   getDepartmentTurnover: async (filters?: {
     startDate?: string;
     endDate?: string;
+    department?: string;
   }): Promise<DepartmentTurnover[]> => {
     const params = new URLSearchParams();
     if (filters?.startDate) params.append("startDate", filters.startDate);
     if (filters?.endDate) params.append("endDate", filters.endDate);
+    if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/terminations/turnover?${params.toString()}`
+      `/recruitment/termination-requests/turnover?${params.toString()}`
     );
     return response.data;
   },
 
   // Get termination reasons
   getTerminationReasons: async (filters?: {
-    type?: TerminationType;
     startDate?: string;
     endDate?: string;
+    department?: string;
   }): Promise<TerminationReason[]> => {
     const params = new URLSearchParams();
-    if (filters?.type) params.append("type", filters.type);
     if (filters?.startDate) params.append("startDate", filters.startDate);
     if (filters?.endDate) params.append("endDate", filters.endDate);
+    if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/terminations/reasons?${params.toString()}`
+      `/recruitment/termination-requests/reasons?${params.toString()}`
+    );
+    return response.data;
+  },
+
+  // Get clearance checklist
+  getClearanceChecklist: async (id: string): Promise<ClearanceChecklist | null> => {
+    const response = await api.get(`/recruitment/termination-requests/${id}/clearance`);
+    return response.data;
+  },
+
+  // Update clearance checklist
+  updateClearanceChecklist: async (
+    id: string,
+    data: {
+      items?: ClearanceItem[];
+      equipment?: EquipmentItem[];
+      status?: "pending" | "in_progress" | "completed";
+    }
+  ): Promise<ClearanceChecklist> => {
+    const response = await api.patch(
+      `/recruitment/termination-requests/${id}/clearance`,
+      data
     );
     return response.data;
   },
 };
-

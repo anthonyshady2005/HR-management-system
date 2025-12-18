@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import axios from "axios";
+import { api } from "@/lib/api";
+import { AxiosError } from "axios";
 import {
     Users,
     Search,
@@ -56,16 +57,19 @@ export default function UserManagementPage() {
     const [userRoles, setUserRoles] = useState<SystemRole[]>([]);
     const [rolesLoading, setRolesLoading] = useState(false);
 
-    const API_URL = "http://localhost:3000"; // Should be env var
-
     const fetchUsers = async () => {
         try {
             setLoading(true);
-            const res = await axios.get(`${API_URL}/employee-profile/search`, {
-                params: { name: searchQuery, limit: 50 },
-                withCredentials: true
+            const res = await api.get("/employee-profile/search", {
+                params: { name: searchQuery, limit: 50 }
             });
-            setUsers(res.data.employees);
+            setUsers((res.data.data || []).map((u: any) => ({
+                ...u,
+                id: u._id,
+                name: u.fullName || `${u.firstName} ${u.lastName}`,
+                department: u.primaryDepartmentId,
+                position: u.primaryPositionId
+            })));
         } catch (err: any) {
             console.error("Failed to fetch users", err);
             setError("Failed to load users. Ensure you have admin permissions.");
@@ -76,21 +80,14 @@ export default function UserManagementPage() {
 
     useEffect(() => {
         fetchUsers();
-    }, [searchQuery]); // Debounce usually recommended, keeping simple for now
+    }, [searchQuery]);
 
     const openRoleModal = async (user: User) => {
         setSelectedUser(user);
         setIsRoleModalOpen(true);
         setRolesLoading(true);
         try {
-            const res = await axios.get(`${API_URL}/employee-profile/${user.id}/roles`, {
-                withCredentials: true
-            });
-            // res.data likely returns { roles: [...], ... } or just array? 
-            // Checking service: return this.profileService.getEmployeeRoles(employeeId)
-            // Service returns just the role document usually. 
-            // Wait, getEmployeeRoles service method wasn't shown fully but likely returns role doc.
-            // Let's assume it returns { roles: string[] }
+            const res = await api.get(`/employee-profile/${user.id}/roles`);
             setUserRoles(res.data.roles || []);
         } catch (err) {
             console.error("Failed to fetch roles", err);
@@ -103,26 +100,31 @@ export default function UserManagementPage() {
     const handleSaveRoles = async (newRoles: SystemRole[]) => {
         if (!selectedUser) return;
         try {
-            await axios.post(`${API_URL}/employee-profile/${selectedUser.id}/roles`, {
+            await api.post(`/employee-profile/${selectedUser.id}/roles`, {
                 roles: newRoles
-            }, { withCredentials: true });
+            });
             setIsRoleModalOpen(false);
-            // Optionally show success toast
+            alert("Roles updated successfully");
         } catch (err) {
             console.error("Failed to save roles", err);
-            alert("Failed to update roles");
+            if (err instanceof AxiosError) {
+                alert(`Failed to update roles: ${err.response?.data?.message || err.message}`);
+            } else {
+                alert("Failed to update roles");
+            }
         }
     };
 
     const handleDeactivateUser = async () => {
         if (!selectedUser) return;
         try {
-            await axios.post(`${API_URL}/employee-profile/${selectedUser.id}/deactivate`, {
-                status: "INACTIVE", // or TERMINATED
+            await api.post(`/employee-profile/${selectedUser.id}/deactivate`, {
+                status: "INACTIVE",
                 reason: "Admin action"
-            }, { withCredentials: true });
+            });
             setIsDeactivateModalOpen(false);
-            fetchUsers(); // Refresh list
+            alert("User deactivated successfully");
+            fetchUsers();
         } catch (err) {
             console.error("Failed to deactivate user", err);
             alert("Failed to deactivate user");
@@ -209,7 +211,7 @@ export default function UserManagementPage() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                                                    'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                                                'bg-slate-500/10 text-slate-400 border border-slate-500/20'
                                                 }`}>
                                                 {user.status}
                                             </span>
@@ -262,8 +264,8 @@ export default function UserManagementPage() {
                                 <div className="grid gap-3">
                                     {Object.values(SystemRole).map((role) => (
                                         <label key={role} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${userRoles.includes(role)
-                                                ? 'bg-emerald-500/10 border-emerald-500/50'
-                                                : 'bg-white/5 border-white/10 hover:border-white/20'
+                                            ? 'bg-emerald-500/10 border-emerald-500/50'
+                                            : 'bg-white/5 border-white/10 hover:border-white/20'
                                             }`}>
                                             <span className="text-sm font-medium text-slate-200">{role}</span>
                                             <input

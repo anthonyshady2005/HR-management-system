@@ -177,7 +177,7 @@ export default function LeavesDashboardPage() {
     const { status, user, currentRole } = useAuth();
     const router = useRouter();
 
-    useRequireRole(ALLOWED_ROLES, "/home");
+    useRequireRole(ALLOWED_ROLES, "/");
 
     const normalizedRole = normalizeRole(currentRole);
     const can = (capability: Capability) =>

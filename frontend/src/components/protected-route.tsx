@@ -21,7 +21,7 @@ export default function ProtectedRoute({ children, allowedRoles }: Props) {
                 // Fallback: check if the user has any of the allowed roles in their list
                 const hasAccess = roles.some((r) => allowedRoles.includes(r));
                 if (!hasAccess) {
-                    router.push("/dashboard"); // or unauthorized page
+                    router.push("/"); // or unauthorized page
                 }
             }
         }

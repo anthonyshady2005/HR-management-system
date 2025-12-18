@@ -8,7 +8,7 @@ import { useAuth } from "@/providers/auth-provider";
  * Frontend guard: checks only the selected currentRole (not the whole roles array).
  * If invalid or not allowed, refresh roles once and redirect away.
  */
-export function useRequireRole(allowedRoles: string[], fallbackPath = "/dashboard") {
+export function useRequireRole(allowedRoles: string[], fallbackPath = "/") {
   const { currentRole, roles, status, refreshRoles } = useAuth();
   const router = useRouter();
 

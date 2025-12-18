@@ -1,21 +1,58 @@
-import { Users } from "lucide-react";
+"use client";
 
-export default function Page() {
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/providers/auth-provider";
+import Navbar from "@/components/Navbar";
+
+/**
+ * Main Employee module router
+ * Redirects to appropriate view based on user's current role
+ */
+export default function EmployeePage() {
+  const { status, currentRole } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/auth/login");
+      return;
+    }
+
+    if (status === "authenticated") {
+      // Route based on current role (if user has no role, go to profile)
+      if (!currentRole) {
+        router.replace("/employee/profile");
+        return;
+      }
+
+      switch (currentRole) {
+        case "department head":
+          router.replace("/employee/team");
+          break;
+        case "HR Employee":
+        case "HR Manager":
+        case "HR Admin":
+        case "System Admin":
+          router.replace("/employee/directory");
+          break;
+        default:
+          // All other employees go to their profile
+          router.replace("/employee/profile");
+          break;
+      }
+    }
+  }, [status, currentRole, router]);
+
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden text-white">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000" />
-      </div>
-      <div className="relative z-10 max-w-4xl mx-auto px-6 py-12">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-3xl p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Users className="w-8 h-8 text-slate-400" />
-            <h2 className="text-3xl text-white">Employee Management</h2>
-          </div>
-          <p className="text-slate-300">Employee management features coming soon...</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+      <Navbar />
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-slate-400">Loading...</p>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
