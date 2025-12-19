@@ -102,6 +102,7 @@ export default function EmployeeLeavesPage() {
   const [error, setError] = useState<string | null>(null);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [entitlements, setEntitlements] = useState<LeaveEntitlement[]>([]);
+  const [entitlementDetails, setEntitlementDetails] = useState<LeaveEntitlement | null>(null);
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [policyNote, setPolicyNote] = useState<string | null>(null);
   const [netDays, setNetDays] = useState<NetDaysResponse | null>(null);
@@ -142,6 +143,7 @@ export default function EmployeeLeavesPage() {
     endDate: "",
     sortBy: "createdAt" as "dates.from" | "createdAt",
     sortOrder: "desc" as "asc" | "desc",
+    paid: "all" as "all" | "paid" | "unpaid",
   });
 
   useEffect(() => {
@@ -206,6 +208,26 @@ export default function EmployeeLeavesPage() {
     };
   };
 
+  const getLeaveTypeLabel = (lt: any) => {
+    if (!lt) return "Leave type";
+    const name = lt?.name || "Leave type";
+    const code = lt?.code ? ` (${lt.code})` : "";
+    return `${name}${code}`;
+  };
+
+  const getCategoryName = (lt: any) => {
+    const category = lt?.category || lt?.categoryId;
+    if (!category) return "—";
+    if (typeof category === "string") return category;
+    return category?.name || category?.code || "—";
+  };
+
+  const formatDateLabel = (value?: string | Date) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+  };
+
   const loadData = async (overrideFilters?: Partial<typeof filters>) => {
     if (!user?.id) return;
     setError(null);
@@ -228,6 +250,12 @@ export default function EmployeeLeavesPage() {
           endDate: appliedFilters.endDate || undefined,
           sortBy: appliedFilters.sortBy,
           sortOrder: appliedFilters.sortOrder,
+          paid:
+            appliedFilters.paid === "paid"
+              ? true
+              : appliedFilters.paid === "unpaid"
+                ? false
+                : undefined,
         }),
       ]);
 
@@ -280,7 +308,7 @@ export default function EmployeeLeavesPage() {
     if (!user?.id) return;
     setNotificationsLoading(true);
     try {
-      const data = await fetchNotifications();
+      const data = await fetchNotifications(user.id);
       setNotifications(data || []);
     } catch {
       setNotifications([]);
@@ -707,14 +735,15 @@ export default function EmployeeLeavesPage() {
                         variant="secondary"
                         className="bg-white/10 border-white/20"
                         onClick={() => {
-                          const reset = {
-                            leaveTypeId: "all",
-                            status: "all",
-                            startDate: "",
-                            endDate: "",
-                            sortBy: "createdAt" as "createdAt",
-                            sortOrder: "desc" as "desc",
-                          };
+                            const reset = {
+                              leaveTypeId: "all",
+                              status: "all",
+                              startDate: "",
+                              endDate: "",
+                              sortBy: "createdAt" as "createdAt",
+                              sortOrder: "desc" as "desc",
+                              paid: "all" as "all" | "paid" | "unpaid",
+                            };
                           setFilters(reset as typeof filters);
                           void loadData(reset as Partial<typeof filters>);
                         }}
@@ -762,6 +791,24 @@ export default function EmployeeLeavesPage() {
                           <SelectItem value="approved">Approved</SelectItem>
                           <SelectItem value="rejected">Rejected</SelectItem>
                           <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-slate-400 text-xs">Paid status</Label>
+                      <Select
+                        value={filters.paid}
+                        onValueChange={(value) =>
+                          setFilters((prev) => ({ ...prev, paid: value as typeof filters.paid }))
+                        }
+                      >
+                        <SelectTrigger className="h-9 bg-white/5 border-white/10 text-white text-sm">
+                          <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                          <SelectItem value="all">All</SelectItem>
+                          <SelectItem value="paid">Paid</SelectItem>
+                          <SelectItem value="unpaid">Unpaid</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1175,7 +1222,7 @@ export default function EmployeeLeavesPage() {
                     entitlements.map((ent, idx) => (
                       <div
                         key={ent.id || (ent as any)._id || `ent-${idx}`}
-                        className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between"
+                        className="p-3 rounded-xl bg-white/5 border border-white/10 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
                       >
                         <div>
                           <p className="font-semibold">{ent.leaveType?.name || "Unknown leave type"}</p>
@@ -1183,13 +1230,22 @@ export default function EmployeeLeavesPage() {
                             Yearly {ent.yearlyEntitlement} - Carry forward {ent.carryForward}
                           </p>
                         </div>
-                        <div className="text-right space-y-1">
-                          <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-100">
-                            Remaining: {ent.remaining}
-                          </Badge>
-                          <p className="text-xs text-slate-400">
-                            Taken {ent.taken} - Pending {ent.pending}
-                          </p>
+                        <div className="w-full sm:w-auto flex flex-col sm:flex-row sm:items-center sm:gap-4 sm:justify-end">
+                          <div className="text-left sm:text-right space-y-1 flex-1 sm:flex-none">
+                            <Badge variant="secondary" className="bg-emerald-500/20 text-emerald-100">
+                              Remaining: {ent.remaining}
+                            </Badge>
+                            <p className="text-xs text-slate-400">
+                              Taken {ent.taken} - Pending {ent.pending}
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="border-white/20 text-white mt-2 sm:mt-0"
+                            onClick={() => setEntitlementDetails(ent)}
+                          >
+                            View details
+                          </Button>
                         </div>
                       </div>
                     ))
@@ -1197,6 +1253,95 @@ export default function EmployeeLeavesPage() {
                 </CardContent>
               </Card>
             </div>
+
+            <Dialog
+              open={Boolean(entitlementDetails)}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setEntitlementDetails(null);
+                }
+              }}
+            >
+              <DialogContent className="bg-slate-900 border-white/10 text-white max-w-3xl max-h-[90vh] overflow-y-auto [scrollbar-width:thin] [scrollbar-color:rgba(71,85,105,0.7)_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-700/70 [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-slate-800/70 hover:[&::-webkit-scrollbar-thumb]:bg-slate-600/80">
+                {entitlementDetails ? (() => {
+                  const lt: any = entitlementDetails.leaveType || {};
+                  const leaveLabel = getLeaveTypeLabel(lt);
+                  const paidLabel = lt?.paid === true ? "Paid" : lt?.paid === false ? "Unpaid" : "—";
+                  const deductibleLabel = lt?.deductible === true ? "Yes" : lt?.deductible === false ? "No" : "—";
+                  const requiresAttachmentLabel =
+                    lt?.requiresAttachment === true
+                      ? `Yes${lt?.attachmentType ? ` (${lt.attachmentType})` : ""}`
+                      : lt?.requiresAttachment === false
+                        ? "No"
+                        : "—";
+                  const entitlementStats = [
+                    { label: "Yearly entitlement", value: entitlementDetails.yearlyEntitlement ?? "—" },
+                    { label: "Carry forward", value: entitlementDetails.carryForward ?? "—" },
+                    { label: "Accrued (actual)", value: entitlementDetails.accruedActual ?? "—" },
+                    { label: "Accrued (rounded)", value: entitlementDetails.accruedRounded ?? "—" },
+                    { label: "Taken", value: entitlementDetails.taken ?? "—" },
+                    { label: "Pending", value: entitlementDetails.pending ?? "—" },
+                    { label: "Remaining", value: entitlementDetails.remaining ?? "—" },
+                    { label: "Last accrual", value: formatDateLabel(entitlementDetails.lastAccrualDate as any) },
+                    { label: "Next reset", value: formatDateLabel(entitlementDetails.nextResetDate as any) },
+                  ];
+                  const leaveTypeInfo = [
+                    { label: "Code", value: lt?.code || "—" },
+                    { label: "Category", value: getCategoryName(lt) },
+                    { label: "Paid", value: paidLabel },
+                    { label: "Deductible", value: deductibleLabel },
+                    { label: "Requires attachment", value: requiresAttachmentLabel },
+                    { label: "Attachment type", value: lt?.attachmentType || (lt?.requiresAttachment ? "Not specified" : "—") },
+                    { label: "Min tenure (months)", value: lt?.minTenureMonths ?? "—" },
+                    { label: "Max duration (days)", value: lt?.maxDurationDays ?? "—" },
+                  ];
+
+                  return (
+                    <div className="space-y-5">
+                      <DialogHeader>
+                        <DialogTitle className="text-white flex flex-col gap-1">
+                          Entitlement Details
+                          <span className="text-sm text-slate-300 font-normal">{leaveLabel}</span>
+                        </DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                          Full breakdown of your balance and the underlying leave type rules.
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-3">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Entitlement snapshot</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {entitlementStats.map((item) => (
+                            <div key={item.label} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                              <p className="text-xs text-slate-400">{item.label}</p>
+                              <p className="text-sm font-semibold text-white">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Leave type info</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {leaveTypeInfo.map((item) => (
+                            <div key={item.label} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                              <p className="text-xs text-slate-400">{item.label}</p>
+                              <p className="text-sm font-semibold text-white break-words">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {lt?.description ? (
+                          <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                            <p className="text-xs text-slate-400">Description</p>
+                            <p className="text-sm text-slate-200 leading-relaxed">{lt.description}</p>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })() : null}
+              </DialogContent>
+            </Dialog>
 
             {/* Cancel Confirmation Dialog */}
             <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>

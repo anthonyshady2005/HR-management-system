@@ -143,6 +143,15 @@ export default function LandingPage() {
                                             </div>
                                             <p className="text-sm text-white font-medium">Performance</p>
                                         </ProtectedLink>
+                                        <ProtectedLink
+                                            href="/leaves"
+                                            className="group backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 hover:border-indigo-400/50 transition-all duration-300 hover:scale-105 text-center"
+                                        >
+                                            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                                                <Calendar className="w-5 h-5 text-white" />
+                                            </div>
+                                            <p className="text-sm text-white font-medium">Leaves</p>
+                                        </ProtectedLink>
                                     </>
                                 ) : (
                                     <>

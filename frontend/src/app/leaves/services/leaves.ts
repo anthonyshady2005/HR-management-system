@@ -23,6 +23,9 @@ export type LeaveType = {
     minTenureMonths?: number;
     maxDurationDays?: number;
     category?: LeaveCategory;
+    categoryId?: LeaveCategory | string;
+    createdAt?: string;
+    updatedAt?: string;
 };
 
 export type LeavePolicy = {
@@ -57,6 +60,9 @@ export type LeaveEntitlement = {
     remaining: number;
     lastAccrualDate?: string;
     nextResetDate?: string;
+    leaveTypeId?: string;
+    createdAt?: string;
+    updatedAt?: string;
 };
 
 export async function fetchPositionOptions(): Promise<string[]> {
@@ -83,6 +89,7 @@ export const HOLIDAY_TYPES = ['NATIONAL', 'ORGANIZATIONAL', 'WEEKLY_REST'] as co
 export type LeaveRequest = {
     id: string;
     employeeId: string;
+    employeeDisplayName?: string;
     leaveType: LeaveType;
     dates: { from: string; to: string };
     durationDays: number;
@@ -112,6 +119,7 @@ export type LeaveRequestFilters = {
     endDate?: string;
     sortBy?: "dates.from" | "createdAt";
     sortOrder?: "asc" | "desc";
+    paid?: boolean;
 };
 
 export type AdjustmentPayload = {
@@ -157,6 +165,9 @@ export async function createLeaveType(payload: {
     paid?: boolean;
     deductible?: boolean;
     requiresAttachment?: boolean;
+    attachmentType?: string;
+    minTenureMonths?: number;
+    maxDurationDays?: number;
 }) {
     const res = await api.post("/leaves/types", payload);
     return res.data as LeaveType;
@@ -172,6 +183,9 @@ export async function updateLeaveType(
         paid?: boolean;
         deductible?: boolean;
         requiresAttachment?: boolean;
+        attachmentType?: string;
+        minTenureMonths?: number;
+        maxDurationDays?: number;
     },
 ) {
     const res = await api.patch(`/leaves/types/${id}`, payload);
@@ -239,6 +253,11 @@ export async function updateLeavePolicy(
 
 export async function deleteLeavePolicy(id: string) {
     await api.delete(`/leaves/policies/${id}`);
+}
+
+export async function runStaleEscalations() {
+    const res = await api.post("/leaves/requests/escalations/stale", {});
+    return res.data;
 }
 
 export async function fetchEntitlementsByEmployee(employeeId: string): Promise<LeaveEntitlement[]> {
@@ -382,6 +401,7 @@ export type ApprovalFlowStep = {
     role: string;
     status: "pending" | "approved" | "rejected";
     decidedBy?: string;
+    decidedByName?: string;
     decidedAt?: string;
 };
 
@@ -422,8 +442,8 @@ export type NotificationLog = {
     createdAt?: string;
 };
 
-export async function fetchNotifications(params?: { to?: string }) {
-    const res = await api.get("/leaves/notifications", { params });
+export async function fetchNotifications(to: string) {
+    const res = await api.get("/leaves/notifications", { params: { to } });
     return res.data as NotificationLog[];
 }
 

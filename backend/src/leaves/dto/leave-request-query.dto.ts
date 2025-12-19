@@ -1,4 +1,11 @@
-import { IsOptional, IsMongoId, IsEnum, IsDateString, IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsMongoId,
+  IsEnum,
+  IsDateString,
+  IsIn,
+  IsBooleanString,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { LeaveStatus } from '../enums/leave-status.enum';
 
@@ -62,11 +69,20 @@ export class LeaveRequestQueryDto {
   sortBy?: 'dates.from' | 'createdAt';
 
   @ApiPropertyOptional({
-    description: 'Sort order',
-    example: 'desc',
-    enum: ['asc', 'desc'],
-  })
-  @IsIn(['asc', 'desc'])
-  @IsOptional()
+  description: 'Sort order',
+  example: 'desc',
+  enum: ['asc', 'desc'],
+})
+@IsIn(['asc', 'desc'])
+@IsOptional()
   sortOrder?: 'asc' | 'desc';
+
+  @ApiPropertyOptional({
+    description: 'Filter by paid/unpaid leave type',
+    example: 'true',
+    enum: ['true', 'false'],
+  })
+  @IsBooleanString()
+  @IsOptional()
+  paid?: string;
 }
