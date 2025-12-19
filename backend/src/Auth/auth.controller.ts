@@ -22,15 +22,20 @@ export class AuthController {
 
     @Public()
     @Post('login')
-    async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    async login(
+        @Body() dto: LoginDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response,
+    ) {
         const result = await this.authService.login(dto);
         // Set cookie for 7 days
         // Use secure: true in production (HTTPS), false in development
         const isProduction = process.env.NODE_ENV === 'production';
+        const isHttps = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https';
         res.cookie('auth_token', result.token, {
             httpOnly: true,
-            secure: isProduction, // true for HTTPS in production
-            sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin in production
+            secure: isProduction || isHttps, // true for HTTPS
+            sameSite: (isProduction || isHttps) ? 'none' : 'lax', // 'none' required for cross-origin, but needs secure: true
             maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         });
@@ -98,10 +103,11 @@ export class AuthController {
 
         // Store in HTTP-only cookie (7 days, same as auth_token)
         const isProduction = process.env.NODE_ENV === 'production';
+        const isHttps = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https';
         res.cookie('current_role', dto.role, {
             httpOnly: true,
-            secure: isProduction, // true for HTTPS in production
-            sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin in production
+            secure: isProduction || isHttps, // true for HTTPS
+            sameSite: (isProduction || isHttps) ? 'none' : 'lax', // 'none' required for cross-origin, but needs secure: true
             maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         });
