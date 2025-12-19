@@ -16,6 +16,7 @@ import {
   Loader,
   Copy,
   Link as LinkIcon,
+  RefreshCw,
 } from "lucide-react";
 import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
 import { api } from "@/lib/api";
@@ -47,6 +48,19 @@ export default function OfferDetailPage() {
       setLoading(false);
     }
   }, [id, router]);
+
+  // Auto-refresh offer status every 5 seconds if candidate hasn't signed yet
+  useEffect(() => {
+    if (!offer || offer.candidateSignedAt) {
+      return; // Don't poll if already signed
+    }
+
+    const interval = setInterval(() => {
+      loadOffer();
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [offer?.candidateSignedAt, id]);
 
   const loadOffer = async () => {
     // Double-check the ID is valid
@@ -82,12 +96,26 @@ export default function OfferDetailPage() {
   const handleGenerateSigningLink = async () => {
     try {
       setGeneratingLink(true);
-      const result = await recruitmentApi.generateOfferSigningLink(id, 'candidate', 7);
-      setCandidateSigningLink(result.signingUrl);
-      alert("Signing link generated successfully!");
+      // Try the direct endpoint first
+      try {
+        const result = await recruitmentApi.generateOfferSigningLink(id, 'candidate', 7);
+        setCandidateSigningLink(result.signingUrl);
+        alert("Signing link generated successfully!");
+      } catch (directError: any) {
+        // Fallback: Use sendOfferToCandidate which already generates the signing link
+        // This works even if the new endpoint isn't registered yet
+        console.warn("Direct endpoint failed, using sendOfferToCandidate as fallback:", directError);
+        const result = await recruitmentApi.sendOfferToCandidate(id);
+        if (result.signingUrl) {
+          setCandidateSigningLink(result.signingUrl);
+          alert("Signing link generated! (Note: Email was also sent to candidate. To avoid sending email, please restart your backend server to register the new endpoint.)");
+        } else {
+          throw new Error("No signing URL returned");
+        }
+      }
     } catch (error: any) {
       console.error("Error generating link:", error);
-      alert(`Failed to generate link: ${error.response?.data?.message || error.message}`);
+      alert(`Failed to generate link: ${error.response?.data?.message || error.message || "Please restart the backend server."}`);
     } finally {
       setGeneratingLink(false);
     }
@@ -174,6 +202,14 @@ export default function OfferDetailPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={loadOffer}
+                  className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm"
+                  title="Refresh offer status"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh
+                </button>
                 <button
                   onClick={handleSendEmail}
                   disabled={sendingEmail}

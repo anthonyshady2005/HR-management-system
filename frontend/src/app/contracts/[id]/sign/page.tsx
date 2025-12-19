@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import {
@@ -14,10 +14,11 @@ import {
   Calendar,
 } from "lucide-react";
 
-export default function ContractSignPage({ params }: { params: { id: string } }) {
+export default function ContractSignPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const contractId = params.id;
+  const resolvedParams = use(params);
+  const contractId = resolvedParams.id;
   const token = searchParams.get("token") || "";
   const signerType = searchParams.get("signerType") || "employee";
 
@@ -92,8 +93,12 @@ export default function ContractSignPage({ params }: { params: { id: string } })
 
   if (loading || validating) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden flex items-center justify-center p-4">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center shadow-lg shadow-black/20">
           <Loader className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
           <p className="text-slate-300">Validating signing link...</p>
         </div>
@@ -103,8 +108,12 @@ export default function ContractSignPage({ params }: { params: { id: string } })
 
   if (error && !contract) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full">
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden flex items-center justify-center p-4">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full shadow-lg shadow-black/20">
           <div className="flex items-center gap-3 mb-4">
             <XCircle className="w-8 h-8 text-red-400" />
             <h1 className="text-2xl font-bold text-white">Invalid Link</h1>
@@ -112,7 +121,7 @@ export default function ContractSignPage({ params }: { params: { id: string } })
           <p className="text-slate-300 mb-6">{error}</p>
           <button
             onClick={() => router.push("/")}
-            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            className="w-full px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all"
           >
             Go to Home
           </button>
@@ -123,8 +132,12 @@ export default function ContractSignPage({ params }: { params: { id: string } })
 
   if (success) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden flex items-center justify-center p-4">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center shadow-lg shadow-black/20">
           <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-white mb-2">
             Contract Signed Successfully!
@@ -142,9 +155,14 @@ export default function ContractSignPage({ params }: { params: { id: string } })
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 py-12">
-      <div className="max-w-3xl mx-auto">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 mb-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden p-4 py-12">
+      {/* Animated background orbs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+      </div>
+      <div className="relative z-10 max-w-3xl mx-auto">
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 mb-6 shadow-lg shadow-black/20">
           <div className="flex items-center gap-3 mb-6">
             <FileText className="w-8 h-8 text-blue-400" />
             <h1 className="text-3xl font-bold text-white">
@@ -235,7 +253,7 @@ export default function ContractSignPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 shadow-lg shadow-black/20">
           <h2 className="text-xl font-bold text-white mb-4">Sign Contract</h2>
           <p className="text-slate-300 mb-6">
             By signing below, you acknowledge that you have read and agree to
@@ -266,7 +284,7 @@ export default function ContractSignPage({ params }: { params: { id: string } })
           <button
             onClick={handleSign}
             disabled={signing || !typedName.trim()}
-            className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+            className="w-full px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 disabled:from-slate-600 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-2 shadow-lg shadow-black/20"
           >
             {signing ? (
               <>

@@ -1810,6 +1810,10 @@ export class RecruitmentService {
       updateData.candidateSignedAt = new Date();
       if (typedName) updateData.candidateTypedName = typedName;
       if (ipAddress) updateData.candidateSigningIp = ipAddress;
+      // When candidate signs, also update applicantResponse to ACCEPTED
+      if (offer.applicantResponse === OfferResponseStatus.PENDING) {
+        updateData.applicantResponse = OfferResponseStatus.ACCEPTED;
+      }
       // Clear token after signing
       updateData.candidateSigningToken = undefined;
       updateData.candidateSigningTokenExpiresAt = undefined;
@@ -1841,6 +1845,15 @@ export class RecruitmentService {
       try {
         // Log the signing event
         this.logger.log(`Offer ${id} signed by candidate ${offer.candidateId}`);
+        
+        // Update application status to HIRED if offer was accepted
+        if (updated.applicantResponse === OfferResponseStatus.ACCEPTED) {
+          await this.applicationModel
+            .findByIdAndUpdate(updated.applicationId, {
+              status: ApplicationStatus.HIRED,
+            })
+            .exec();
+        }
         // Email notification can be added here if needed
       } catch (error) {
         this.logger.error('Failed to log offer signed notification', error);
