@@ -186,9 +186,8 @@ export default function ShiftManagementPage() {
     pattern: string;
   } | null>(null);
 
-  const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(
-    null,
-  );
+  const [editingAssignmentId, setEditingAssignmentId] =
+    useState<string | null>(null);
   const [draftAssignment, setDraftAssignment] = useState<{
     shiftId: string;
     scheduleRuleId?: string;
@@ -368,7 +367,9 @@ export default function ShiftManagementPage() {
       await loadAll();
     } catch (e: any) {
       toast.error(
-        e?.response?.data?.message || e?.message || "Failed to create shift type.",
+        e?.response?.data?.message ||
+          e?.message ||
+          "Failed to create shift type.",
       );
     } finally {
       setIsCreatingShiftType(false);
@@ -502,7 +503,9 @@ export default function ShiftManagementPage() {
           { duration: 6000 },
         );
       } else {
-        toast.error(errorData?.message || e?.message || "Failed to assign shift.");
+        toast.error(
+          errorData?.message || e?.message || "Failed to assign shift.",
+        );
       }
     } finally {
       setIsAssigning(false);
@@ -784,1254 +787,1382 @@ export default function ShiftManagementPage() {
   /* ===================== RENDER ===================== */
 
   return (
-    <div className="space-y-10 p-6 max-w-7xl mx-auto">
-      <div>
-        <h1 className="text-3xl font-bold">Shift Management</h1>
-        <p className="text-muted-foreground mt-2">
-          Manage shift types, shifts, schedule rules, and assignments with inline
-          editing.
-        </p>
-      </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="space-y-10 px-6 py-8 max-w-7xl mx-auto">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-100">
+            Shift Management
+          </h1>
+          <p className="text-muted-foreground mt-2 text-slate-400">
+            Manage shift types, shifts, schedule rules, and assignments with
+            inline editing.
+          </p>
+        </div>
 
-      {loadError && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{loadError}</AlertDescription>
-        </Alert>
-      )}
+        {loadError && (
+          <Alert variant="destructive" className="bg-red-950/60 border-red-700">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        )}
 
-      {/* ===================== CREATE SHIFT TYPE ===================== */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Create Shift Type</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            placeholder="e.g., Normal, Night Shift"
-            value={shiftTypeName}
-            onChange={(e) => setShiftTypeName(e.target.value)}
-            disabled={isCreatingShiftType}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !isCreatingShiftType) {
-                void handleCreateShiftType();
-              }
-            }}
-          />
-          <Button
-            onClick={() => void handleCreateShiftType()}
-            disabled={isCreatingShiftType || !shiftTypeName.trim()}
-            className="w-full sm:w-auto"
-          >
-            {isCreatingShiftType && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Create Shift Type
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ===================== SHIFT TYPES TABLE ===================== */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Shift Types</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoadingAll ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading...
-            </div>
-          ) : shiftTypes.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No shift types.</div>
-          ) : (
-            <div className="w-full overflow-auto">
-              <table className="w-full border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="p-2 text-left">Name</th>
-                    <th className="p-2 text-left w-28">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shiftTypes.map((t) => {
-                    const isEditing = editingShiftTypeId === t._id;
-                    return (
-                      <tr key={t._id} className="border-t">
-                        <td className="p-2">
-                          {isEditing ? (
-                            <Input
-                              value={draftShiftTypeName}
-                              onChange={(e) =>
-                                setDraftShiftTypeName(e.target.value)
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            t.name
-                          )}
-                        </td>
-                        <td className="p-2">
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Button
-                                size="icon"
-                                onClick={() => void saveEditShiftType(t._id)}
-                                disabled={isSavingRow}
-                                title="Save"
-                              >
-                                {isSavingRow ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Save className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={cancelEditShiftType}
-                                disabled={isSavingRow}
-                                title="Cancel"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              onClick={() => startEditShiftType(t)}
-                              disabled={
-                                isSavingRow ||
-                                !!editingShiftId ||
-                                !!editingRuleId ||
-                                !!editingAssignmentId
-                              }
-                              title="Edit"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ===================== CREATE SHIFT ===================== */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Create Shift</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            placeholder="Shift name (e.g., Morning Shift)"
-            value={shiftName}
-            onChange={(e) => setShiftName(e.target.value)}
-            disabled={isCreatingShift}
-          />
-
-          <Select
-            value={createShiftTypeId}
-            onValueChange={setCreateShiftTypeId}
-            disabled={isCreatingShift}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select shift type" />
-            </SelectTrigger>
-            <SelectContent>
-              {shiftTypes.length === 0 ? (
-                <SelectItem value="__NONE__" disabled>
-                  No shift types available
-                </SelectItem>
-              ) : (
-                shiftTypes.map((t) => (
-                  <SelectItem key={t._id} value={t._id}>
-                    {t.name}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Start Time *
-              </label>
-              <Input
-                type="time"
-                value={createStartTime}
-                onChange={(e) => setCreateStartTime(e.target.value)}
-                disabled={isCreatingShift}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">End Time *</label>
-              <Input
-                type="time"
-                value={createEndTime}
-                onChange={(e) => setCreateEndTime(e.target.value)}
-                disabled={isCreatingShift}
-              />
-            </div>
-          </div>
-
-          {/* Grace minutes */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Grace In Minutes
-              </label>
-              <Input
-                type="number"
-                min={0}
-                value={createGraceInMinutes}
-                onChange={(e) => setCreateGraceInMinutes(e.target.value)}
-                disabled={isCreatingShift}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Grace Out Minutes
-              </label>
-              <Input
-                type="number"
-                min={0}
-                value={createGraceOutMinutes}
-                onChange={(e) => setCreateGraceOutMinutes(e.target.value)}
-                disabled={isCreatingShift}
-              />
-            </div>
-          </div>
-
-          <Button
-            onClick={() => void handleCreateShift()}
-            disabled={isCreatingShift}
-            className="w-full sm:w-auto"
-          >
-            {isCreatingShift && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Create Shift
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ===================== SHIFTS TABLE ===================== */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Shifts</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoadingAll ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading...
-            </div>
-          ) : shifts.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No shifts.</div>
-          ) : (
-            <div className="w-full overflow-auto">
-              <table className="w-full border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="p-2 text-left">Name</th>
-                    <th className="p-2 text-left">Shift Type</th>
-                    <th className="p-2 text-left">Start Time</th>
-                    <th className="p-2 text-left">End Time</th>
-                    <th className="p-2 text-left">Grace In</th>
-                    <th className="p-2 text-left">Grace Out</th>
-                    <th className="p-2 text-left">Duration</th>
-                    <th className="p-2 text-left w-28">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shifts.map((s: any) => {
-                    const isEditing = editingShiftId === s._id;
-                    const stId = shiftTypeIdFromShift(s);
-
-                    // Use computed fields from backend
-                    const isOvernight = s.isOvernight || false;
-                    const duration = s.durationHours || 0;
-
-                    const graceIn = toSafeMinutesNumber(s.graceInMinutes);
-                    const graceOut = toSafeMinutesNumber(s.graceOutMinutes);
-
-                    return (
-                      <tr key={s._id} className="border-t">
-                        {/* NAME COLUMN */}
-                        <td className="p-2">
-                          {isEditing && draftShift ? (
-                            <Input
-                              value={draftShift.name}
-                              onChange={(e) =>
-                                setDraftShift({
-                                  ...draftShift,
-                                  name: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span>{s.name}</span>
-                              {isOvernight && (
-                                <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded font-medium">
-                                  Overnight
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* SHIFT TYPE COLUMN */}
-                        <td className="p-2 min-w-[220px]">
-                          {isEditing && draftShift ? (
-                            <Select
-                              value={draftShift.shiftTypeId}
-                              onValueChange={(v) =>
-                                setDraftShift({ ...draftShift, shiftTypeId: v })
-                              }
-                              disabled={isSavingRow}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select shift type" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {shiftTypes.map((t) => (
-                                  <SelectItem key={t._id} value={t._id}>
-                                    {t.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <span>{shiftTypeNameById(stId)}</span>
-                          )}
-                        </td>
-
-                        {/* START TIME COLUMN */}
-                        <td className="p-2">
-                          {isEditing && draftShift ? (
-                            <Input
-                              type="time"
-                              value={draftShift.startTime}
-                              onChange={(e) =>
-                                setDraftShift({
-                                  ...draftShift,
-                                  startTime: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            s.startTime
-                          )}
-                        </td>
-
-                        {/* END TIME COLUMN */}
-                        <td className="p-2">
-                          {isEditing && draftShift ? (
-                            <Input
-                              type="time"
-                              value={draftShift.endTime}
-                              onChange={(e) =>
-                                setDraftShift({
-                                  ...draftShift,
-                                  endTime: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            s.endTime
-                          )}
-                        </td>
-
-                        {/* GRACE IN COLUMN */}
-                        <td className="p-2">
-                          {isEditing && draftShift ? (
-                            <Input
-                              type="number"
-                              min={0}
-                              value={draftShift.graceInMinutes}
-                              onChange={(e) =>
-                                setDraftShift({
-                                  ...draftShift,
-                                  graceInMinutes: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            <span className="text-muted-foreground">
-                              {graceIn}m
-                            </span>
-                          )}
-                        </td>
-
-                        {/* GRACE OUT COLUMN */}
-                        <td className="p-2">
-                          {isEditing && draftShift ? (
-                            <Input
-                              type="number"
-                              min={0}
-                              value={draftShift.graceOutMinutes}
-                              onChange={(e) =>
-                                setDraftShift({
-                                  ...draftShift,
-                                  graceOutMinutes: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            <span className="text-muted-foreground">
-                              {graceOut}m
-                            </span>
-                          )}
-                        </td>
-
-                        {/* DURATION COLUMN */}
-                        <td className="p-2">
-                          <span className="text-muted-foreground">
-                            {Number(duration).toFixed(1)}h
-                          </span>
-                        </td>
-
-                        {/* ACTIONS COLUMN */}
-                        <td className="p-2">
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Button
-                                size="icon"
-                                onClick={() => void saveEditShift(s._id)}
-                                disabled={isSavingRow}
-                                title="Save"
-                              >
-                                {isSavingRow ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Save className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={cancelEditShift}
-                                disabled={isSavingRow}
-                                title="Cancel"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              onClick={() => startEditShift(s)}
-                              disabled={
-                                isSavingRow ||
-                                !!editingShiftTypeId ||
-                                !!editingRuleId ||
-                                !!editingAssignmentId
-                              }
-                              title="Edit"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ===================== SCHEDULE RULES SECTION ===================== */}
-
-      {/* Pattern Guide */}
-      <Card className="border-blue-200 bg-blue-50/50">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-blue-600" />
-            Supported Pattern Formats
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <p className="font-semibold text-blue-900">Rotation Pattern:</p>
-              <code className="bg-blue-100 px-2 py-1 rounded text-xs">
-                4on-3off
-              </code>
-              <p className="text-muted-foreground text-xs mt-1">
-                4 days on, 3 days off
-              </p>
-            </div>
-
-            <div>
-              <p className="font-semibold text-blue-900">Weekly Specific Days:</p>
-              <code className="bg-blue-100 px-2 py-1 rounded text-xs">
-                Mon,Wed,Fri
-              </code>
-              <p className="text-muted-foreground text-xs mt-1">
-                Work on Monday, Wednesday, Friday
-              </p>
-            </div>
-
-            <div>
-              <p className="font-semibold text-blue-900">Flexible Hours:</p>
-              <code className="bg-blue-100 px-2 py-1 rounded text-xs">
-                Flex(08:00-10:00,16:00-18:00)
-              </code>
-              <p className="text-muted-foreground text-xs mt-1">
-                Flex in: 8-10 AM, Flex out: 4-6 PM
-              </p>
-            </div>
-
-            <div>
-              <p className="font-semibold text-blue-900">Compressed Week:</p>
-              <code className="bg-blue-100 px-2 py-1 rounded text-xs">
-                Compressed(10h x 4d)
-              </code>
-              <p className="text-muted-foreground text-xs mt-1">
-                10 hours × 4 days
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Create Schedule Rule */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Create Schedule Rule</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Rule Name *</label>
+        {/* ===================== CREATE SHIFT TYPE ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Create Shift Type</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
             <Input
-              placeholder="e.g., 4-3 Rotation, Flex Hours"
-              value={newRuleName}
-              onChange={(e) => setNewRuleName(e.target.value)}
-              disabled={isCreatingRule}
+              placeholder="e.g., Normal, Night Shift"
+              value={shiftTypeName}
+              onChange={(e) => setShiftTypeName(e.target.value)}
+              disabled={isCreatingShiftType}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isCreatingShiftType) {
+                  void handleCreateShiftType();
+                }
+              }}
+              className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
             />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Pattern *</label>
-            <Input
-              placeholder="e.g., 4on-3off"
-              value={newRulePattern}
-              onChange={(e) => setNewRulePattern(e.target.value)}
-              disabled={isCreatingRule}
-            />
-            <div className="flex flex-wrap gap-2 mt-2">
-              <span className="text-xs text-muted-foreground">Quick examples:</span>
-              {patternExamples.map((ex) => (
-                <Button
-                  key={ex.value}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyPatternExample(ex.value)}
-                  disabled={isCreatingRule}
-                  className="text-xs h-7"
-                  title={ex.value}
-                >
-                  {ex.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <Button
-            onClick={() => void handleCreateScheduleRule()}
-            disabled={
-              isCreatingRule || !newRuleName.trim() || !newRulePattern.trim()
-            }
-            className="w-full sm:w-auto"
-          >
-            {isCreatingRule && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Create Schedule Rule
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Schedule Rules Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Schedule Rules</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoadingAll ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading...
-            </div>
-          ) : scheduleRules.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No schedule rules created yet.
-            </div>
-          ) : (
-            <div className="w-full overflow-auto">
-              <table className="w-full border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="p-2 text-left">Name</th>
-                    <th className="p-2 text-left">Pattern</th>
-                    <th className="p-2 text-left">Status</th>
-                    <th className="p-2 text-left w-28">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scheduleRules.map((rule) => {
-                    const isEditing = editingRuleId === rule._id;
-                    return (
-                      <tr key={rule._id} className="border-t">
-                        <td className="p-2">
-                          {isEditing && draftRule ? (
-                            <Input
-                              value={draftRule.name}
-                              onChange={(e) =>
-                                setDraftRule({
-                                  ...draftRule,
-                                  name: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            rule.name
-                          )}
-                        </td>
-
-                        <td className="p-2">
-                          {isEditing && draftRule ? (
-                            <Input
-                              value={draftRule.pattern}
-                              onChange={(e) =>
-                                setDraftRule({
-                                  ...draftRule,
-                                  pattern: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            <code className="bg-muted px-2 py-1 rounded text-xs">
-                              {rule.pattern || "—"}
-                            </code>
-                          )}
-                        </td>
-
-                        <td className="p-2">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              rule.active
-                                ? "bg-green-100 text-green-800"
-                                : "bg-gray-100 text-gray-800"
-                            }`}
-                          >
-                            {rule.active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-
-                        <td className="p-2">
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Button
-                                size="icon"
-                                onClick={() => void saveEditScheduleRule(rule._id)}
-                                disabled={isSavingRow}
-                                title="Save"
-                              >
-                                {isSavingRow ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Save className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={cancelEditScheduleRule}
-                                disabled={isSavingRow}
-                                title="Cancel"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              onClick={() => startEditScheduleRule(rule)}
-                              disabled={
-                                isSavingRow ||
-                                !!editingShiftTypeId ||
-                                !!editingShiftId ||
-                                !!editingAssignmentId
-                              }
-                              title="Edit"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ===================== ASSIGN SHIFT FORM ===================== */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Assign Shift</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Select
-            value={scope}
-            onValueChange={(v) => setScope(v as AssignmentScope)}
-            disabled={isAssigning}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="EMPLOYEE">Assign to Employee</SelectItem>
-              <SelectItem value="DEPARTMENT">Assign to Department</SelectItem>
-              <SelectItem value="POSITION">Assign to Position</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={targetId}
-            onValueChange={setTargetId}
-            disabled={isAssigning || isLoadingTargets}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={`Select ${targetLabel.toLowerCase()}`} />
-            </SelectTrigger>
-            <SelectContent>
-              {isLoadingTargets ? (
-                <SelectItem value="__LOADING__" disabled>
-                  <Loader2 className="inline mr-2 h-4 w-4 animate-spin" />
-                  Loading...
-                </SelectItem>
-              ) : targetOptions.length === 0 ? (
-                <SelectItem value="__NONE__" disabled>
-                  No {targetLabel.toLowerCase()}s available
-                </SelectItem>
-              ) : (
-                targetOptions.map((item) => (
-                  <SelectItem key={item._id} value={item._id}>
-                    {targetDisplay(item)}
-                  </SelectItem>
-                ))
+            <Button
+              onClick={() => void handleCreateShiftType()}
+              disabled={isCreatingShiftType || !shiftTypeName.trim()}
+              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 text-white"
+            >
+              {isCreatingShiftType && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-            </SelectContent>
-          </Select>
+              Create Shift Type
+            </Button>
+          </CardContent>
+        </Card>
 
-          <Select
-            value={selectedShiftId}
-            onValueChange={setSelectedShiftId}
-            disabled={isAssigning || isLoadingAll}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select shift" />
-            </SelectTrigger>
-            <SelectContent>
-              {shifts.length === 0 ? (
-                <SelectItem value="__NONE__" disabled>
-                  No shifts available
-                </SelectItem>
-              ) : (
-                shifts.map((s: any) => (
-                  <SelectItem key={s._id} value={s._id}>
-                    {s.name} ({s.startTime} - {s.endTime})
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-
-          {/* Select schedule rule to apply (optional) */}
-          <Select
-            value={selectedScheduleRuleId || "__NONE__"}
-            onValueChange={(v) =>
-              setSelectedScheduleRuleId(v === "__NONE__" ? "" : v)
-            }
-            disabled={isAssigning || isLoadingAll}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select schedule rule (optional)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__NONE__">No rule (none)</SelectItem>
-              {scheduleRules.length === 0 ? (
-                <SelectItem value="__NO_RULES__" disabled>
-                  No schedule rules available
-                </SelectItem>
-              ) : (
-                scheduleRules.map((rule: any) => (
-                  <SelectItem key={rule._id} value={rule._id}>
-                    {rule.name}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Start Date *
-              </label>
-              <Input
-                type="date"
-                value={assignStartDate}
-                onChange={(e) => setAssignStartDate(e.target.value)}
-                disabled={isAssigning}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                End Date (optional)
-              </label>
-              <Input
-                type="date"
-                value={assignEndDate}
-                onChange={(e) => setAssignEndDate(e.target.value)}
-                disabled={isAssigning}
-                min={assignStartDate}
-              />
-            </div>
-          </div>
-
-          <Button
-            onClick={() => void handleAssignShift()}
-            disabled={isAssigning}
-            className="w-full sm:w-auto"
-          >
-            {isAssigning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Assign Shift
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ===================== ASSIGNMENTS TABLE ===================== */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Assigned Shifts</CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowFilters(!showFilters)}
-          >
-            <Filter className="h-4 w-4 mr-2" />
-            {showFilters ? "Hide Filters" : "Show Filters"}
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {showFilters && (
-            <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 border rounded-lg bg-muted/50">
-              <div className="space-y-2">
-                <label className="text-sm font-medium mb-1 block">
-                  Filter by Status
-                </label>
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={filterStatus || "ALL"}
-                    onValueChange={(v) => setFilterStatus(v === "ALL" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="All statuses" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">All statuses</SelectItem>
-                      <SelectItem value="PENDING">Pending</SelectItem>
-                      <SelectItem value="APPROVED">Approved</SelectItem>
-                      <SelectItem value="EXPIRED">Expired</SelectItem>
-                      <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {filterStatus && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setFilterStatus("")}
-                      className="shrink-0"
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
+        {/* ===================== SHIFT TYPES TABLE ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Shift Types</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingAll ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading...
               </div>
+            ) : shiftTypes.length === 0 ? (
+              <div className="text-sm text-slate-400">No shift types.</div>
+            ) : (
+              <div className="w-full overflow-auto">
+                <table className="w-full border border-slate-800 text-sm">
+                  <thead className="bg-slate-900/80">
+                    <tr>
+                      <th className="p-2 text-left text-slate-300">Name</th>
+                      <th className="p-2 text-left w-28 text-slate-300">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shiftTypes.map((t) => {
+                      const isEditing = editingShiftTypeId === t._id;
+                      return (
+                        <tr
+                          key={t._id}
+                          className="border-t border-slate-800 hover:bg-slate-900/80"
+                        >
+                          <td className="p-2 text-slate-100">
+                            {isEditing ? (
+                              <Input
+                                value={draftShiftTypeName}
+                                onChange={(e) =>
+                                  setDraftShiftTypeName(e.target.value)
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              t.name
+                            )}
+                          </td>
+                          <td className="p-2">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Button
+                                  size="icon"
+                                  onClick={() => void saveEditShiftType(t._id)}
+                                  disabled={isSavingRow}
+                                  title="Save"
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                                >
+                                  {isSavingRow ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={cancelEditShiftType}
+                                  disabled={isSavingRow}
+                                  title="Cancel"
+                                  className="bg-slate-800 border border-slate-600 text-slate-100 hover:bg-slate-700"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                size="icon"
+                                variant="destructive"
+                                onClick={() => startEditShiftType(t)}
+                                disabled={
+                                  isSavingRow ||
+                                  !!editingShiftId ||
+                                  !!editingRuleId ||
+                                  !!editingAssignmentId
+                                }
+                                title="Edit"
+                                className="bg-red-600 hover:bg-red-500 text-white border-none"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium mb-1 block">
-                  Filter by Employee
+        {/* ===================== CREATE SHIFT ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Create Shift</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              placeholder="Shift name (e.g., Morning Shift)"
+              value={shiftName}
+              onChange={(e) => setShiftName(e.target.value)}
+              disabled={isCreatingShift}
+              className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
+            />
+
+            <Select
+              value={createShiftTypeId}
+              onValueChange={setCreateShiftTypeId}
+              disabled={isCreatingShift}
+            >
+              <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                <SelectValue placeholder="Select shift type" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                {shiftTypes.length === 0 ? (
+                  <SelectItem value="__NONE__" disabled>
+                    No shift types available
+                  </SelectItem>
+                ) : (
+                  shiftTypes.map((t) => (
+                    <SelectItem key={t._id} value={t._id}>
+                      {t.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  Start Time *
                 </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="Search by email..."
-                    value={filterEmployee}
-                    onChange={(e) => setFilterEmployee(e.target.value)}
-                  />
-                  {filterEmployee && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setFilterEmployee("")}
-                      className="shrink-0"
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
+                <Input
+                  type="time"
+                  value={createStartTime}
+                  onChange={(e) => setCreateStartTime(e.target.value)}
+                  disabled={isCreatingShift}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  End Time *
+                </label>
+                <Input
+                  type="time"
+                  value={createEndTime}
+                  onChange={(e) => setCreateEndTime(e.target.value)}
+                  disabled={isCreatingShift}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
               </div>
             </div>
-          )}
 
-          {isLoadingAll ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading...
+            {/* Grace minutes */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  Grace In Minutes
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={createGraceInMinutes}
+                  onChange={(e) => setCreateGraceInMinutes(e.target.value)}
+                  disabled={isCreatingShift}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  Grace Out Minutes
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={createGraceOutMinutes}
+                  onChange={(e) => setCreateGraceOutMinutes(e.target.value)}
+                  disabled={isCreatingShift}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
+              </div>
             </div>
-          ) : filteredAssignments.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              {filterStatus || filterEmployee
-                ? "No assignments match your filters."
-                : "No assignments found."}
-            </div>
-          ) : (
-            <div className="w-full overflow-auto">
-              <table className="w-full border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="p-2 text-left whitespace-nowrap">
-                      Employee Email
-                    </th>
-                    <th className="p-2 text-left whitespace-nowrap">Department</th>
-                    <th className="p-2 text-left whitespace-nowrap">Position</th>
-                    <th className="p-2 text-left whitespace-nowrap">Shift Type</th>
-                    <th className="p-2 text-left whitespace-nowrap">Shift</th>
-                    {/* Schedule rule column */}
-                    <th className="p-2 text-left whitespace-nowrap">
-                      Schedule Rule
-                    </th>
-                    <th className="p-2 text-left whitespace-nowrap">Start</th>
-                    <th className="p-2 text-left whitespace-nowrap">End</th>
-                    <th className="p-2 text-left whitespace-nowrap">Status</th>
-                    <th className="p-2 text-left whitespace-nowrap">Actions</th>
-                  </tr>
-                </thead>
 
-                <tbody>
-                  {filteredAssignments.map((a: any) => {
-                    const id = a?._id || a?.id;
-                    const isEditing = editingAssignmentId === id;
+            <Button
+              onClick={() => void handleCreateShift()}
+              disabled={isCreatingShift}
+              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 text-white"
+            >
+              {isCreatingShift && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Create Shift
+            </Button>
+          </CardContent>
+        </Card>
 
-                    const empEmail = getEmployeeEmailFromAssignment(a);
-                    const dep = getDepartmentNameFromAssignment(a);
-                    const pos = getPositionNameFromAssignment(a);
+        {/* ===================== SHIFTS TABLE ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Shifts</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingAll ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading...
+              </div>
+            ) : shifts.length === 0 ? (
+              <div className="text-sm text-slate-400">No shifts.</div>
+            ) : (
+              <div className="w-full overflow-auto">
+                <table className="w-full border border-slate-800 text-sm">
+                  <thead className="bg-slate-900/80">
+                    <tr>
+                      <th className="p-2 text-left text-slate-300">Name</th>
+                      <th className="p-2 text-left text-slate-300">
+                        Shift Type
+                      </th>
+                      <th className="p-2 text-left text-slate-300">
+                        Start Time
+                      </th>
+                      <th className="p-2 text-left text-slate-300">
+                        End Time
+                      </th>
+                      <th className="p-2 text-left text-slate-300">
+                        Grace In
+                      </th>
+                      <th className="p-2 text-left text-slate-300">
+                        Grace Out
+                      </th>
+                      <th className="p-2 text-left text-slate-300">
+                        Duration
+                      </th>
+                      <th className="p-2 text-left w-28 text-slate-300">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shifts.map((s: any) => {
+                      const isEditing = editingShiftId === s._id;
+                      const stId = shiftTypeIdFromShift(s);
 
-                    const shiftName = getShiftNameFromAssignment(a);
-                    const shiftTypeName = getShiftTypeNameFromAssignment(a);
+                      // Use computed fields from backend
+                      const isOvernight = s.isOvernight || false;
+                      const duration = s.durationHours || 0;
 
-                    const displayShiftName =
-                      isEditing && draftAssignment
-                        ? shifts.find((s) => s._id === draftAssignment.shiftId)
-                            ?.name || "—"
-                        : shiftName;
+                      const graceIn = toSafeMinutesNumber(s.graceInMinutes);
+                      const graceOut = toSafeMinutesNumber(s.graceOutMinutes);
 
-                    const displayShiftType =
-                      isEditing && draftAssignment
-                        ? shiftTypeNameById(
-                            shiftTypeIdFromShift(
-                              shifts.find((s) => s._id === draftAssignment.shiftId),
-                            ),
-                          )
-                        : shiftTypeName;
+                      return (
+                        <tr
+                          key={s._id}
+                          className="border-t border-slate-800 hover:bg-slate-900/80"
+                        >
+                          {/* NAME COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Input
+                                value={draftShift.name}
+                                onChange={(e) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    name: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span>{s.name}</span>
+                                {isOvernight && (
+                                  <span className="px-2 py-0.5 bg-blue-900 text-blue-100 text-xs rounded font-medium">
+                                    Overnight
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
 
-                    const scheduleRuleId = getScheduleRuleIdFromAssignment(a);
-                    const displayScheduleRuleName =
-                      isEditing && draftAssignment
-                        ? scheduleRuleNameById(
-                            draftAssignment.scheduleRuleId || "",
-                          )
-                        : scheduleRuleNameById(scheduleRuleId);
-
-                    const isCancelled = a?.status === "CANCELLED";
-                    const isExpired = a?.status === "EXPIRED";
-                    const isDisabled = isCancelled || isExpired;
-
-                    return (
-                      <tr key={id} className="border-t">
-                        <td className="p-2 whitespace-nowrap">{empEmail}</td>
-                        <td className="p-2 whitespace-nowrap">{dep}</td>
-                        <td className="p-2 whitespace-nowrap">{pos}</td>
-                        <td className="p-2 whitespace-nowrap">
-                          {displayShiftType}
-                        </td>
-
-                        <td className="p-2 min-w-[260px]">
-                          {isEditing && draftAssignment ? (
-                            <Select
-                              value={draftAssignment.shiftId}
-                              onValueChange={(v) =>
-                                setDraftAssignment({
-                                  ...draftAssignment,
-                                  shiftId: v,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select shift" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {shifts.map((s: any) => (
-                                  <SelectItem key={s._id} value={s._id}>
-                                    {s.name} ({s.startTime} - {s.endTime})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <span className="whitespace-nowrap">
-                              {displayShiftName}
-                            </span>
-                          )}
-                        </td>
-
-                        {/* schedule rule cell */}
-                        <td className="p-2 whitespace-nowrap min-w-[220px]">
-                          {isEditing && draftAssignment ? (
-                            <Select
-                              value={draftAssignment.scheduleRuleId || "__NONE__"}
-                              onValueChange={(v) =>
-                                setDraftAssignment({
-                                  ...draftAssignment,
-                                  scheduleRuleId:
-                                    v === "__NONE__" ? undefined : v,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="No rule (none)" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__NONE__">
-                                  No rule (none)
-                                </SelectItem>
-                                {scheduleRules.length === 0 ? (
-                                  <SelectItem value="__NO_RULES__" disabled>
-                                    No schedule rules available
-                                  </SelectItem>
-                                ) : (
-                                  scheduleRules.map((rule: any) => (
-                                    <SelectItem key={rule._id} value={rule._id}>
-                                      {rule.name}
+                          {/* SHIFT TYPE COLUMN */}
+                          <td className="p-2 min-w-[220px] text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Select
+                                value={draftShift.shiftTypeId}
+                                onValueChange={(v) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    shiftTypeId: v,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                              >
+                                <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                                  <SelectValue placeholder="Select shift type" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                                  {shiftTypes.map((t) => (
+                                    <SelectItem key={t._id} value={t._id}>
+                                      {t.name}
                                     </SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <span className="whitespace-nowrap">
-                              {scheduleRuleId
-                                ? displayScheduleRuleName
-                                : "—"}
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span>{shiftTypeNameById(stId)}</span>
+                            )}
+                          </td>
+
+                          {/* START TIME COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Input
+                                type="time"
+                                value={draftShift.startTime}
+                                onChange={(e) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    startTime: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              s.startTime
+                            )}
+                          </td>
+
+                          {/* END TIME COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Input
+                                type="time"
+                                value={draftShift.endTime}
+                                onChange={(e) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    endTime: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              s.endTime
+                            )}
+                          </td>
+
+                          {/* GRACE IN COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Input
+                                type="number"
+                                min={0}
+                                value={draftShift.graceInMinutes}
+                                onChange={(e) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    graceInMinutes: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              <span className="text-slate-400">
+                                {graceIn}m
+                              </span>
+                            )}
+                          </td>
+
+                          {/* GRACE OUT COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftShift ? (
+                              <Input
+                                type="number"
+                                min={0}
+                                value={draftShift.graceOutMinutes}
+                                onChange={(e) =>
+                                  setDraftShift({
+                                    ...draftShift,
+                                    graceOutMinutes: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              <span className="text-slate-400">
+                                {graceOut}m
+                              </span>
+                            )}
+                          </td>
+
+                          {/* DURATION COLUMN */}
+                          <td className="p-2 text-slate-100">
+                            <span className="text-slate-400">
+                              {Number(duration).toFixed(1)}h
                             </span>
-                          )}
-                        </td>
+                          </td>
 
-                        <td className="p-2 whitespace-nowrap">
-                          {isEditing && draftAssignment ? (
-                            <Input
-                              type="date"
-                              value={draftAssignment.startDate}
-                              onChange={(e) =>
-                                setDraftAssignment({
-                                  ...draftAssignment,
-                                  startDate: e.target.value,
-                                })
-                              }
-                              disabled={isSavingRow}
-                            />
-                          ) : (
-                            toDateOnly(a?.startDate) || "—"
-                          )}
-                        </td>
-
-                        <td className="p-2 whitespace-nowrap">
-                          {isEditing && draftAssignment ? (
-                            <Input
-                              type="date"
-                              value={draftAssignment.endDate ?? ""}
-                              onChange={(e) =>
-                                setDraftAssignment({
-                                  ...draftAssignment,
-                                  endDate: e.target.value || undefined,
-                                })
-                              }
-                              disabled={isSavingRow}
-                              min={draftAssignment.startDate}
-                            />
-                          ) : (
-                            toDateOnly(a?.endDate) || "—"
-                          )}
-                        </td>
-
-                        <td className="p-2 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              a?.status === "APPROVED"
-                                ? "bg-green-100 text-green-800"
-                                : a?.status === "PENDING"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : a?.status === "EXPIRED"
-                                    ? "bg-gray-100 text-gray-800"
-                                    : a?.status === "CANCELLED"
-                                      ? "bg-red-100 text-red-800"
-                                      : "bg-blue-100 text-blue-800"
-                            }`}
-                          >
-                            {a?.status || "—"}
-                          </span>
-                        </td>
-
-                        <td className="p-2 whitespace-nowrap">
-                          {isEditing && draftAssignment ? (
-                            <div className="flex items-center gap-2">
+                          {/* ACTIONS COLUMN */}
+                          <td className="p-2">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Button
+                                  size="icon"
+                                  onClick={() => void saveEditShift(s._id)}
+                                  disabled={isSavingRow}
+                                  title="Save"
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                                >
+                                  {isSavingRow ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={cancelEditShift}
+                                  disabled={isSavingRow}
+                                  title="Cancel"
+                                  className="bg-slate-800 border border-slate-600 text-slate-100 hover:bg-slate-700"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
                               <Button
                                 size="icon"
-                                onClick={() => void saveEditAssignment(id)}
-                                disabled={isSavingRow}
-                                title="Save"
+                                variant="destructive"
+                                onClick={() => startEditShift(s)}
+                                disabled={
+                                  isSavingRow ||
+                                  !!editingShiftTypeId ||
+                                  !!editingRuleId ||
+                                  !!editingAssignmentId
+                                }
+                                title="Edit"
+                                className="bg-red-600 hover:bg-red-500 text-white border-none"
                               >
-                                {isSavingRow ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Save className="h-4 w-4" />
-                                )}
+                                <Pencil className="h-4 w-4" />
                               </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={cancelEditAssignment}
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ===================== SCHEDULE RULES SECTION ===================== */}
+
+        {/* Pattern Guide */}
+        <Card className="border border-sky-800 bg-sky-950/40">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2 text-sky-100">
+              <AlertCircle className="h-5 w-5 text-sky-400" />
+              Supported Pattern Formats
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-sky-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <p className="font-semibold text-sky-100">Rotation Pattern:</p>
+                <code className="bg-sky-900 px-2 py-1 rounded text-xs">
+                  4on-3off
+                </code>
+                <p className="text-sky-300 text-xs mt-1">
+                  4 days on, 3 days off
+                </p>
+              </div>
+
+              <div>
+                <p className="font-semibold text-sky-100">
+                  Weekly Specific Days:
+                </p>
+                <code className="bg-sky-900 px-2 py-1 rounded text-xs">
+                  Mon,Wed,Fri
+                </code>
+                <p className="text-sky-300 text-xs mt-1">
+                  Work on Monday, Wednesday, Friday
+                </p>
+              </div>
+
+              <div>
+                <p className="font-semibold text-sky-100">Flexible Hours:</p>
+                <code className="bg-sky-900 px-2 py-1 rounded text-xs">
+                  Flex(08:00-10:00,16:00-18:00)
+                </code>
+                <p className="text-sky-300 text-xs mt-1">
+                  Flex in: 8-10 AM, Flex out: 4-6 PM
+                </p>
+              </div>
+
+              <div>
+                <p className="font-semibold text-sky-100">Compressed Week:</p>
+                <code className="bg-sky-900 px-2 py-1 rounded text-xs">
+                  Compressed(10h x 4d)
+                </code>
+                <p className="text-sky-300 text-xs mt-1">
+                  10 hours × 4 days
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Create Schedule Rule */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Create Schedule Rule</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-200">
+                Rule Name *
+              </label>
+              <Input
+                placeholder="e.g., 4-3 Rotation, Flex Hours"
+                value={newRuleName}
+                onChange={(e) => setNewRuleName(e.target.value)}
+                disabled={isCreatingRule}
+                className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-200">
+                Pattern *
+              </label>
+              <Input
+                placeholder="e.g., 4on-3off"
+                value={newRulePattern}
+                onChange={(e) => setNewRulePattern(e.target.value)}
+                disabled={isCreatingRule}
+                className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
+              />
+              <div className="flex flex-wrap gap-2 mt-2">
+                <span className="text-xs text-slate-400">
+                  Quick examples:
+                </span>
+                {patternExamples.map((ex) => (
+                  <Button
+                    key={ex.value}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyPatternExample(ex.value)}
+                    disabled={isCreatingRule}
+                    className="text-xs h-7 bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
+                    title={ex.value}
+                  >
+                    {ex.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <Button
+              onClick={() => void handleCreateScheduleRule()}
+              disabled={
+                isCreatingRule || !newRuleName.trim() || !newRulePattern.trim()
+              }
+              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 text-white"
+            >
+              {isCreatingRule && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Create Schedule Rule
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Schedule Rules Table */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Schedule Rules</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingAll ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading...
+              </div>
+            ) : scheduleRules.length === 0 ? (
+              <div className="text-sm text-slate-400">
+                No schedule rules created yet.
+              </div>
+            ) : (
+              <div className="w-full overflow-auto">
+                <table className="w-full border border-slate-800 text-sm">
+                  <thead className="bg-slate-900/80">
+                    <tr>
+                      <th className="p-2 text-left text-slate-300">Name</th>
+                      <th className="p-2 text-left text-slate-300">Pattern</th>
+                      <th className="p-2 text-left text-slate-300">Status</th>
+                      <th className="p-2 text-left w-28 text-slate-300">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scheduleRules.map((rule) => {
+                      const isEditing = editingRuleId === rule._id;
+                      return (
+                        <tr
+                          key={rule._id}
+                          className="border-t border-slate-800 hover:bg-slate-900/80"
+                        >
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftRule ? (
+                              <Input
+                                value={draftRule.name}
+                                onChange={(e) =>
+                                  setDraftRule({
+                                    ...draftRule,
+                                    name: e.target.value,
+                                  })
+                                }
                                 disabled={isSavingRow}
-                                title="Cancel"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex gap-2">
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              rule.name
+                            )}
+                          </td>
+
+                          <td className="p-2 text-slate-100">
+                            {isEditing && draftRule ? (
+                              <Input
+                                value={draftRule.pattern}
+                                onChange={(e) =>
+                                  setDraftRule({
+                                    ...draftRule,
+                                    pattern: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              <code className="bg-slate-800 px-2 py-1 rounded text-xs text-slate-100">
+                                {rule.pattern || "—"}
+                              </code>
+                            )}
+                          </td>
+
+                          <td className="p-2 text-slate-100">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                rule.active
+                                  ? "bg-emerald-900/70 text-emerald-200"
+                                  : "bg-slate-800 text-slate-200"
+                              }`}
+                            >
+                              {rule.active ? "Active" : "Inactive"}
+                            </span>
+                          </td>
+
+                          <td className="p-2">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Button
+                                  size="icon"
+                                  onClick={() =>
+                                    void saveEditScheduleRule(rule._id)
+                                  }
+                                  disabled={isSavingRow}
+                                  title="Save"
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                                >
+                                  {isSavingRow ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={cancelEditScheduleRule}
+                                  disabled={isSavingRow}
+                                  title="Cancel"
+                                  className="bg-slate-800 border border-slate-600 text-slate-100 hover:bg-slate-700"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
                               <Button
                                 size="icon"
-                                variant="outline"
-                                onClick={() => startEditAssignment(a)}
+                                variant="destructive"
+                                onClick={() => startEditScheduleRule(rule)}
                                 disabled={
                                   isSavingRow ||
                                   !!editingShiftTypeId ||
                                   !!editingShiftId ||
-                                  !!editingRuleId ||
-                                  isDisabled
+                                  !!editingAssignmentId
                                 }
-                                title={
-                                  isCancelled
-                                    ? "Cannot edit cancelled assignment"
-                                    : isExpired
-                                      ? "Cannot edit expired assignment"
-                                      : "Edit"
-                                }
+                                title="Edit"
+                                className="bg-red-600 hover:bg-red-500 text-white border-none"
                               >
                                 <Pencil className="h-4 w-4" />
                               </Button>
-                              <Button
-                                size="icon"
-                                variant="destructive"
-                                onClick={() =>
-                                  openRevokeDialog(
-                                    "assignment",
-                                    id,
-                                    `${empEmail}'s assignment`,
-                                  )
-                                }
-                                disabled={isSavingRow || isDisabled}
-                                title={
-                                  isCancelled
-                                    ? "Already cancelled"
-                                    : isExpired
-                                      ? "Cannot revoke expired assignment"
-                                      : "Revoke Assignment"
-                                }
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-              <div className="text-xs text-muted-foreground mt-2">
-                Showing {filteredAssignments.length} of {assignments.length} assignments
+        {/* ===================== ASSIGN SHIFT FORM ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader>
+            <CardTitle className="text-slate-100">Assign Shift</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Select
+              value={scope}
+              onValueChange={(v) => setScope(v as AssignmentScope)}
+              disabled={isAssigning}
+            >
+              <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                <SelectItem value="EMPLOYEE">Assign to Employee</SelectItem>
+                <SelectItem value="DEPARTMENT">Assign to Department</SelectItem>
+                <SelectItem value="POSITION">Assign to Position</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={targetId}
+              onValueChange={setTargetId}
+              disabled={isAssigning || isLoadingTargets}
+            >
+              <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                <SelectValue placeholder={`Select ${targetLabel.toLowerCase()}`} />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                {isLoadingTargets ? (
+                  <SelectItem value="__LOADING__" disabled>
+                    <Loader2 className="inline mr-2 h-4 w-4 animate-spin" />
+                    Loading...
+                  </SelectItem>
+                ) : targetOptions.length === 0 ? (
+                  <SelectItem value="__NONE__" disabled>
+                    No {targetLabel.toLowerCase()}s available
+                  </SelectItem>
+                ) : (
+                  targetOptions.map((item) => (
+                    <SelectItem key={item._id} value={item._id}>
+                      {targetDisplay(item)}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={selectedShiftId}
+              onValueChange={setSelectedShiftId}
+              disabled={isAssigning || isLoadingAll}
+            >
+              <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                <SelectValue placeholder="Select shift" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                {shifts.length === 0 ? (
+                  <SelectItem value="__NONE__" disabled>
+                    No shifts available
+                  </SelectItem>
+                ) : (
+                  shifts.map((s: any) => (
+                    <SelectItem key={s._id} value={s._id}>
+                      {s.name} ({s.startTime} - {s.endTime})
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            {/* Select schedule rule to apply (optional) */}
+            <Select
+              value={selectedScheduleRuleId || "__NONE__"}
+              onValueChange={(v) =>
+                setSelectedScheduleRuleId(v === "__NONE__" ? "" : v)
+              }
+              disabled={isAssigning || isLoadingAll}
+            >
+              <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                <SelectValue placeholder="Select schedule rule (optional)" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                <SelectItem value="__NONE__">No rule (none)</SelectItem>
+                {scheduleRules.length === 0 ? (
+                  <SelectItem value="__NO_RULES__" disabled>
+                    No schedule rules available
+                  </SelectItem>
+                ) : (
+                  scheduleRules.map((rule: any) => (
+                    <SelectItem key={rule._id} value={rule._id}>
+                      {rule.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  Start Date *
+                </label>
+                <Input
+                  type="date"
+                  value={assignStartDate}
+                  onChange={(e) => setAssignStartDate(e.target.value)}
+                  disabled={isAssigning}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-slate-200">
+                  End Date (optional)
+                </label>
+                <Input
+                  type="date"
+                  value={assignEndDate}
+                  onChange={(e) => setAssignEndDate(e.target.value)}
+                  disabled={isAssigning}
+                  min={assignStartDate}
+                  className="bg-slate-900 border-slate-700 text-slate-100"
+                />
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
 
-      {/* ===================== REVOKE CONFIRMATION DIALOG ===================== */}
-      <AlertDialog
-        open={revokeDialog.open}
-        onOpenChange={(open) => !open && closeRevokeDialog()}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Shift Assignment?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will revoke the shift assignment for "{revokeDialog.name}".
-              The assignment will be marked as CANCELLED and cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isRevoking}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmRevoke}
-              disabled={isRevoking}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            <Button
+              onClick={() => void handleAssignShift()}
+              disabled={isAssigning}
+              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-500 text-white"
             >
-              {isRevoking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Revoke Assignment
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              {isAssigning && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Assign Shift
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* ===================== ASSIGNMENTS TABLE ===================== */}
+        <Card className="border border-slate-800 bg-slate-900/70 shadow-lg shadow-slate-950/40">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-slate-100">Assigned Shifts</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+              className="border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              {showFilters ? "Hide Filters" : "Show Filters"}
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {showFilters && (
+              <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 border rounded-lg bg-slate-900/80 border-slate-700">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium mb-1 block text-slate-200">
+                    Filter by Status
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={filterStatus || "ALL"}
+                      onValueChange={(v) =>
+                        setFilterStatus(v === "ALL" ? "" : v)
+                      }
+                    >
+                      <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                        <SelectItem value="ALL">All statuses</SelectItem>
+                        <SelectItem value="PENDING">Pending</SelectItem>
+                        <SelectItem value="APPROVED">Approved</SelectItem>
+                        <SelectItem value="EXPIRED">Expired</SelectItem>
+                        <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {filterStatus && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setFilterStatus("")}
+                        className="shrink-0 text-slate-200 hover:bg-slate-800"
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium mb-1 block text-slate-200">
+                    Filter by Employee
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Search by email..."
+                      value={filterEmployee}
+                      onChange={(e) => setFilterEmployee(e.target.value)}
+                      className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
+                    />
+                    {filterEmployee && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setFilterEmployee("")}
+                        className="shrink-0 text-slate-200 hover:bg-slate-800"
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isLoadingAll ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading...
+              </div>
+            ) : filteredAssignments.length === 0 ? (
+              <div className="text-sm text-slate-400">
+                {filterStatus || filterEmployee
+                  ? "No assignments match your filters."
+                  : "No assignments found."}
+              </div>
+            ) : (
+              <div className="w-full overflow-auto">
+                <table className="w-full border border-slate-800 text-sm">
+                  <thead className="bg-slate-900/80">
+                    <tr>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Employee Email
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Department
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Position
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Shift Type
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Shift
+                      </th>
+                      {/* Schedule rule column */}
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Schedule Rule
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Start
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        End
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Status
+                      </th>
+                      <th className="p-2 text-left whitespace-nowrap text-slate-300">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredAssignments.map((a: any) => {
+                      const id = a?._id || a?.id;
+                      const isEditing = editingAssignmentId === id;
+
+                      const empEmail = getEmployeeEmailFromAssignment(a);
+                      const dep = getDepartmentNameFromAssignment(a);
+                      const pos = getPositionNameFromAssignment(a);
+
+                      const shiftName = getShiftNameFromAssignment(a);
+                      const shiftTypeName = getShiftTypeNameFromAssignment(a);
+
+                      const displayShiftName =
+                        isEditing && draftAssignment
+                          ? shifts.find((s) => s._id === draftAssignment.shiftId)
+                              ?.name || "—"
+                          : shiftName;
+
+                      const displayShiftType =
+                        isEditing && draftAssignment
+                          ? shiftTypeNameById(
+                              shiftTypeIdFromShift(
+                                shifts.find(
+                                  (s) => s._id === draftAssignment.shiftId,
+                                ),
+                              ),
+                            )
+                          : shiftTypeName;
+
+                      const scheduleRuleId = getScheduleRuleIdFromAssignment(a);
+                      const displayScheduleRuleName =
+                        isEditing && draftAssignment
+                          ? scheduleRuleNameById(
+                              draftAssignment.scheduleRuleId || "",
+                            )
+                          : scheduleRuleNameById(scheduleRuleId);
+
+                      const isCancelled = a?.status === "CANCELLED";
+                      const isExpired = a?.status === "EXPIRED";
+                      const isDisabled = isCancelled || isExpired;
+
+                      return (
+                        <tr
+                          key={id}
+                          className="border-t border-slate-800 hover:bg-slate-900/80"
+                        >
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {empEmail}
+                          </td>
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {dep}
+                          </td>
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {pos}
+                          </td>
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {displayShiftType}
+                          </td>
+
+                          <td className="p-2 min-w-[260px] text-slate-100">
+                            {isEditing && draftAssignment ? (
+                              <Select
+                                value={draftAssignment.shiftId}
+                                onValueChange={(v) =>
+                                  setDraftAssignment({
+                                    ...draftAssignment,
+                                    shiftId: v,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                              >
+                                <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                                  <SelectValue placeholder="Select shift" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                                  {shifts.map((s: any) => (
+                                    <SelectItem key={s._id} value={s._id}>
+                                      {s.name} ({s.startTime} - {s.endTime})
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="whitespace-nowrap">
+                                {displayShiftName}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* schedule rule cell */}
+                          <td className="p-2 whitespace-nowrap min-w-[220px] text-slate-100">
+                            {isEditing && draftAssignment ? (
+                              <Select
+                                value={
+                                  draftAssignment.scheduleRuleId || "__NONE__"
+                                }
+                                onValueChange={(v) =>
+                                  setDraftAssignment({
+                                    ...draftAssignment,
+                                    scheduleRuleId:
+                                      v === "__NONE__" ? undefined : v,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                              >
+                                <SelectTrigger className="bg-slate-900 border-slate-700 text-slate-100">
+                                  <SelectValue placeholder="No rule (none)" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-slate-900 text-slate-100 border-slate-700">
+                                  <SelectItem value="__NONE__">
+                                    No rule (none)
+                                  </SelectItem>
+                                  {scheduleRules.length === 0 ? (
+                                    <SelectItem
+                                      value="__NO_RULES__"
+                                      disabled
+                                    >
+                                      No schedule rules available
+                                    </SelectItem>
+                                  ) : (
+                                    scheduleRules.map((rule: any) => (
+                                      <SelectItem
+                                        key={rule._id}
+                                        value={rule._id}
+                                      >
+                                        {rule.name}
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="whitespace-nowrap">
+                                {scheduleRuleId
+                                  ? displayScheduleRuleName
+                                  : "—"}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {isEditing && draftAssignment ? (
+                              <Input
+                                type="date"
+                                value={draftAssignment.startDate}
+                                onChange={(e) =>
+                                  setDraftAssignment({
+                                    ...draftAssignment,
+                                    startDate: e.target.value,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              toDateOnly(a?.startDate) || "—"
+                            )}
+                          </td>
+
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            {isEditing && draftAssignment ? (
+                              <Input
+                                type="date"
+                                value={draftAssignment.endDate ?? ""}
+                                onChange={(e) =>
+                                  setDraftAssignment({
+                                    ...draftAssignment,
+                                    endDate: e.target.value || undefined,
+                                  })
+                                }
+                                disabled={isSavingRow}
+                                min={draftAssignment.startDate}
+                                className="bg-slate-900 border-slate-700 text-slate-100"
+                              />
+                            ) : (
+                              toDateOnly(a?.endDate) || "—"
+                            )}
+                          </td>
+
+                          <td className="p-2 whitespace-nowrap text-slate-100">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                a?.status === "APPROVED"
+                                  ? "bg-emerald-900/70 text-emerald-200"
+                                  : a?.status === "PENDING"
+                                    ? "bg-amber-900/70 text-amber-200"
+                                    : a?.status === "EXPIRED"
+                                      ? "bg-slate-800 text-slate-200"
+                                      : a?.status === "CANCELLED"
+                                        ? "bg-red-900/70 text-red-200"
+                                        : "bg-blue-900/70 text-blue-200"
+                              }`}
+                            >
+                              {a?.status || "—"}
+                            </span>
+                          </td>
+
+                          <td className="p-2 whitespace-nowrap">
+                            {isEditing && draftAssignment ? (
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="icon"
+                                  onClick={() => void saveEditAssignment(id)}
+                                  disabled={isSavingRow}
+                                  title="Save"
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                                >
+                                  {isSavingRow ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={cancelEditAssignment}
+                                  disabled={isSavingRow}
+                                  title="Cancel"
+                                  className="bg-slate-800 border border-slate-600 text-slate-100 hover:bg-slate-700"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <Button
+                                  size="icon"
+                                  variant="destructive"
+                                  onClick={() => startEditAssignment(a)}
+                                  disabled={
+                                    isSavingRow ||
+                                    !!editingShiftTypeId ||
+                                    !!editingShiftId ||
+                                    !!editingRuleId ||
+                                    isDisabled
+                                  }
+                                  title={
+                                    isCancelled
+                                      ? "Cannot edit cancelled assignment"
+                                      : isExpired
+                                        ? "Cannot edit expired assignment"
+                                        : "Edit"
+                                  }
+                                  className="bg-red-600 hover:bg-red-500 text-white border-none"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="destructive"
+                                  onClick={() =>
+                                    openRevokeDialog(
+                                      "assignment",
+                                      id,
+                                      `${empEmail}'s assignment`,
+                                    )
+                                  }
+                                  disabled={isSavingRow || isDisabled}
+                                  title={
+                                    isCancelled
+                                      ? "Already cancelled"
+                                      : isExpired
+                                        ? "Cannot revoke expired assignment"
+                                        : "Revoke Assignment"
+                                  }
+                                  className="bg-red-800 hover:bg-red-700 text-white"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <div className="text-xs text-slate-500 mt-2">
+                  Showing {filteredAssignments.length} of {assignments.length}{" "}
+                  assignments
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ===================== REVOKE CONFIRMATION DIALOG ===================== */}
+        <AlertDialog
+          open={revokeDialog.open}
+          onOpenChange={(open) => !open && closeRevokeDialog()}
+        >
+          <AlertDialogContent className="bg-slate-900 border border-slate-700 text-slate-100">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Revoke Shift Assignment?</AlertDialogTitle>
+              <AlertDialogDescription className="text-slate-300">
+                This will revoke the shift assignment for "{revokeDialog.name}".
+                The assignment will be marked as CANCELLED and cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                disabled={isRevoking}
+                className="bg-slate-800 text-slate-100 hover:bg-slate-700 border-slate-600"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmRevoke}
+                disabled={isRevoking}
+                className="bg-red-700 text-white hover:bg-red-600"
+              >
+                {isRevoking && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Revoke Assignment
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     </div>
   );
 }

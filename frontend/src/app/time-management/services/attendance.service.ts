@@ -274,7 +274,53 @@ async getPendingPermissions(): Promise<TimeException[]> {
   );
   return res.data;
 }
+/**
+ * US18 — Manually trigger escalation for current month
+ */
+async escalateForCurrentMonth(): Promise<{
+  message: string;
+  correctionRequestsEscalated: number;
+  timeExceptionsEscalated: number;
+}> {
+  const response = await api.post(
+    `/time-management/escalations/payroll/current-month`
+  );
+  return response.data;
+}
 
+/**
+ * US18 — Get pending requests that need escalation
+ */
+async getPendingEscalations(cutoff?: string): Promise<{
+  cutoffDate: string;
+  pendingCorrections: number;
+  pendingExceptions: number;
+  totalPending: number;
+  corrections: any[];
+  exceptions: any[];
+}> {
+  const response = await api.get(`${this.baseUrl}/escalations/pending`, {
+    params: { cutoff },
+  });
+  return response.data;
+}
+
+/**
+ * US18 — Get escalation history
+ */
+async getEscalationHistory(params?: {
+  startDate?: string;
+  endDate?: string;
+}): Promise<{
+  totalEscalated: number;
+  corrections: any[];
+  exceptions: any[];
+}> {
+  const response = await api.get(`${this.baseUrl}/escalations/history`, {
+    params,
+  });
+  return response.data;
+}
 
   /**
    * Rebuilds REPEATED lateness notifications
