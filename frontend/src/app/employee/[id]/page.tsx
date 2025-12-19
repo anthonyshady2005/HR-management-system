@@ -109,11 +109,34 @@ export default function EmployeeDetailPage() {
     lastName: "",
   });
   
+  // Helper functions to convert between mm/dd/yyyy and ISO format
+  const formatDateToMMDDYYYY = (isoDate: string): string => {
+    if (!isoDate) return "";
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) return "";
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${month}/${day}/${year}`;
+  };
+
+  const parseMMDDYYYYToISO = (mmddyyyy: string): string => {
+    if (!mmddyyyy) return "";
+    const parts = mmddyyyy.split("/");
+    if (parts.length !== 3) return "";
+    const month = parseInt(parts[0], 10) - 1; // JS months are 0-indexed
+    const day = parseInt(parts[1], 10);
+    const year = parseInt(parts[2], 10);
+    const date = new Date(year, month, day);
+    if (isNaN(date.getTime())) return "";
+    return date.toISOString().split("T")[0];
+  };
+
   // Deactivation state
   const [deactivateData, setDeactivateData] = useState({
     reason: "" as DeactivationReason | "",
     notes: "",
-    effectiveDate: new Date().toISOString().split("T")[0],
+    effectiveDate: formatDateToMMDDYYYY(new Date().toISOString()),
   });
 
   // Role assignment state
@@ -304,15 +327,32 @@ export default function EmployeeDetailPage() {
         ? "Employee retirement"
         : "Employee resignation";
 
+      // Prepare termination date - convert from mm/dd/yyyy to ISO format if provided
+      let terminationDate: string | undefined;
+      if (deactivateData.effectiveDate) {
+        const isoDate = parseMMDDYYYYToISO(deactivateData.effectiveDate);
+        if (isoDate) {
+          // Convert YYYY-MM-DD to ISO string
+          const date = new Date(isoDate + "T00:00:00");
+          if (!isNaN(date.getTime())) {
+            terminationDate = date.toISOString();
+          }
+        }
+      }
+
       // Create termination request (OFF-001) - this will automatically create clearance checklist (OFF-006)
-      await offboardingApi.createTerminationRequest({
+      const requestPayload = {
         employeeId,
         // offerId is optional - backend will find it from employee's onboarding record
-        initiator: "hr", // HR Manager initiating from employee profile
+        initiator: "hr" as const, // HR Manager initiating from employee profile
         reason: terminationReason,
         hrComments: deactivateData.notes,
-        terminationDate: deactivateData.effectiveDate,
-      });
+        ...(terminationDate && { terminationDate }),
+      };
+
+      console.log("Creating termination request with payload:", requestPayload);
+      
+      await offboardingApi.createTerminationRequest(requestPayload);
       
       toast.success("Termination/Offboarding workflow initiated successfully");
       setShowDeactivateDialog(false);
@@ -321,9 +361,16 @@ export default function EmployeeDetailPage() {
       router.push("/offboarding");
     } catch (error: any) {
       console.error("Failed to initiate offboarding:", error);
-      toast.error(
-        error.response?.data?.message || "Failed to initiate offboarding workflow"
-      );
+      console.error("Error response:", error.response?.data);
+      
+      // Show detailed error message if available
+      const errorMessage = error.response?.data?.message 
+        || error.response?.data?.error
+        || (Array.isArray(error.response?.data?.message) 
+            ? error.response.data.message.join(", ") 
+            : "Failed to initiate offboarding workflow");
+      
+      toast.error(errorMessage);
     }
   };
 
@@ -1056,17 +1103,53 @@ export default function EmployeeDetailPage() {
               </div>
               <div>
                 <Label className="text-slate-300 mb-2 block">
-                  Effective Date
+                  Effective Date (MM/DD/YYYY)
                 </Label>
                 <Input
-                  type="date"
+                  type="text"
+                  placeholder="MM/DD/YYYY"
                   value={deactivateData.effectiveDate}
-                  onChange={(e) =>
-                    setDeactivateData({
-                      ...deactivateData,
-                      effectiveDate: e.target.value,
-                    })
-                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    // Allow typing mm/dd/yyyy format
+                    // Remove any non-digit or slash characters
+                    const cleaned = value.replace(/[^\d/]/g, "");
+                    // Auto-format as user types
+                    let formatted = cleaned;
+                    if (cleaned.length >= 3 && !cleaned.includes("/")) {
+                      formatted = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
+                    }
+                    if (cleaned.length >= 6 && cleaned.split("/").length === 2) {
+                      formatted = cleaned.slice(0, 5) + "/" + cleaned.slice(5);
+                    }
+                    // Limit to mm/dd/yyyy format (10 chars max)
+                    if (formatted.length <= 10) {
+                      setDeactivateData({
+                        ...deactivateData,
+                        effectiveDate: formatted,
+                      });
+                    }
+                  }}
+                  onBlur={(e) => {
+                    // Validate format on blur
+                    const value = e.target.value;
+                    if (value && !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+                      // Invalid format, try to fix or clear
+                      const isoDate = parseMMDDYYYYToISO(value);
+                      if (isoDate) {
+                        setDeactivateData({
+                          ...deactivateData,
+                          effectiveDate: formatDateToMMDDYYYY(isoDate),
+                        });
+                      } else {
+                        // Invalid date, reset to today
+                        setDeactivateData({
+                          ...deactivateData,
+                          effectiveDate: formatDateToMMDDYYYY(new Date().toISOString()),
+                        });
+                      }
+                    }
+                  }}
                   className="bg-white/5 border-white/10 text-white"
                 />
               </div>
