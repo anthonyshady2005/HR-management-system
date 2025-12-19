@@ -180,19 +180,18 @@ export default function OfferDetailPage() {
 
     const userFullName = currentUserProfile.fullName || `${currentUserProfile.firstName || ''} ${currentUserProfile.lastName || ''}`.trim();
     
-    // Check if user has HR roles
-    const hasHrRole = roles.some(role => 
-      role === 'HR_MANAGER' || 
-      role === 'HR_ADMIN' || 
-      role === 'HR_EMPLOYEE' ||
-      role === 'SYSTEM_ADMIN'
-    );
+    // Use currentRole if available, otherwise check all roles
+    const activeRole = currentRole || roles[0];
+    
+    // Check if current role is an HR role (using actual backend enum values)
+    const hasHrRole = activeRole === 'HR Manager' || 
+      activeRole === 'HR Admin' || 
+      activeRole === 'HR Employee' ||
+      activeRole === 'System Admin';
 
-    // Check if user has Manager role
-    const hasManagerRole = roles.some(role => 
-      role === 'DEPARTMENT_HEAD' ||
-      role === 'SYSTEM_ADMIN'
-    );
+    // Check if current role is a Manager role (using actual backend enum values)
+    const hasManagerRole = activeRole === 'department head' ||
+      activeRole === 'System Admin';
 
     // Determine which signature they can provide
     if (hasHrRole && !offer?.hrSignedAt) {

@@ -146,6 +146,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Only update state if backend accepts
       setCurrentRole(role);
+      
+      // Move selected role to index 0 in the roles array
+      const reorderedRoles = [role, ...roles.filter(r => r !== role)];
+      setRoles(reorderedRoles);
+      
       return true;
     } catch (err: any) {
       console.error("Failed to set current role:", err);
