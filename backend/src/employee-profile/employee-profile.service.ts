@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/restrict-template-expressions */
 /* eslint-disable no-self-assign */
 /* eslint-disable @typescript-eslint/no-base-to-string */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
@@ -654,53 +655,38 @@ export class EmployeeProfileService {
   // ========== MANAGER TEAM VIEW (US-E4-01, US-E4-02) ==========
 
   /**
-   * Get team members for a department head (US-E4-01).
-   * Returns employees in the same department with "Department Employee" role.
-   * Excludes sensitive fields per BR 18b (privacy restrictions for line managers).
+   * Get team members reporting to the current manager (US-E4-01).
+   * BR 41b: Direct managers see their direct reports via supervisorPositionId.
+   * BR 18b: Privacy restrictions applied - sensitive fields (nationalId, payGrade, etc) excluded.
    */
   async getTeamMembers(managerId: string) {
     if (!Types.ObjectId.isValid(managerId)) {
       throw new BadRequestException('Invalid manager id');
     }
 
-    // Get manager's profile to find their department
-    const manager = await this.profileModel
-      .findById(managerId)
-      .select('primaryDepartmentId')
-      .lean()
-      .exec();
+    // Get manager's current position
+    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
 
-    if (!manager) {
-      throw new NotFoundException('Manager profile not found');
-    }
-
-    if (!manager.primaryDepartmentId) {
+    if (!managerPositionId) {
       return { teamMembers: [], count: 0 };
     }
 
-    // Find all employees with "Department Employee" role
-    const departmentEmployeeRoles = await this.systemRoleModel
-      .find({
-        roles: SystemRole.DEPARTMENT_EMPLOYEE,
-        isActive: true,
-      })
-      .select('employeeProfileId')
-      .lean()
-      .exec();
+    // Get direct report employee IDs using the helper method
+    const directReportIds = await this.getDirectReportEmployeeIds(managerPositionId);
 
-    const departmentEmployeeIds = departmentEmployeeRoles.map(
-      (r) => r.employeeProfileId,
+    if (directReportIds.length === 0) {
+      return { teamMembers: [], count: 0 };
+    }
+
+    // Convert string IDs to ObjectIds
+    const directReportObjectIds = directReportIds.map(
+      (id) => new Types.ObjectId(id),
     );
 
-    if (departmentEmployeeIds.length === 0) {
-      return { teamMembers: [], count: 0 };
-    }
-
-    // Get employees in the same department with "Department Employee" role (excluding the manager)
+    // Get employees who are direct reports
     const teamMembers = await this.profileModel
       .find({
-        _id: { $in: departmentEmployeeIds, $ne: new Types.ObjectId(managerId) },
-        primaryDepartmentId: manager.primaryDepartmentId,
+        _id: { $in: directReportObjectIds },
       })
       .populate('primaryPositionId', 'code title')
       .populate('primaryDepartmentId', 'code name')
@@ -734,7 +720,7 @@ export class EmployeeProfileService {
 
   /**
    * Get summary of team's job titles and departments (US-E4-02).
-   * Returns summary for employees in the same department with "Department Employee" role.
+   * Returns summary for direct reports via supervisorPositionId.
    * Aggregated view without individual employee details.
    */
   async getTeamSummary(managerId: string) {
@@ -753,33 +739,10 @@ export class EmployeeProfileService {
       throw new NotFoundException('Manager profile not found');
     }
 
-    if (!manager.primaryDepartmentId) {
-      return {
-        managerDepartment: null,
-        totalTeamMembers: 0,
-        byPosition: [],
-        byDepartment: [],
-        byStatus: [],
-        totalCount: 0,
-        department: null,
-      };
-    }
+    // Get manager's current position
+    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
 
-    // Find all employees with "Department Employee" role
-    const departmentEmployeeRoles = await this.systemRoleModel
-      .find({
-        roles: SystemRole.DEPARTMENT_EMPLOYEE,
-        isActive: true,
-      })
-      .select('employeeProfileId')
-      .lean()
-      .exec();
-
-    const departmentEmployeeIds = departmentEmployeeRoles.map(
-      (r) => r.employeeProfileId,
-    );
-
-    if (departmentEmployeeIds.length === 0) {
+    if (!managerPositionId) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -791,22 +754,31 @@ export class EmployeeProfileService {
       };
     }
 
-    // Get team member IDs (same department + Department Employee role, excluding manager)
-    const teamMemberObjectIds = departmentEmployeeIds.filter(
-      (id) => id.toString() !== managerId,
+    // Get direct report employee IDs using the helper method
+    const directReportIds = await this.getDirectReportEmployeeIds(managerPositionId);
+
+    console.log('[getTeamSummary] Manager ID:', managerId);
+    console.log('[getTeamSummary] Manager Position ID:', managerPositionId.toString());
+    console.log('[getTeamSummary] Direct Report IDs:', directReportIds);
+
+    if (directReportIds.length === 0) {
+      return {
+        managerDepartment: manager.primaryDepartmentId || null,
+        totalTeamMembers: 0,
+        byPosition: [],
+        byDepartment: [],
+        byStatus: [],
+        totalCount: 0,
+        department: manager.primaryDepartmentId ? (manager.primaryDepartmentId as any).name : null,
+      };
+    }
+
+    // Convert string IDs to ObjectIds
+    const filteredTeamMemberIds = directReportIds.map(
+      (id) => new Types.ObjectId(id),
     );
 
-    // Filter to only those in the same department
-    const teamMembersInDept = await this.profileModel
-      .find({
-        _id: { $in: teamMemberObjectIds },
-        primaryDepartmentId: manager.primaryDepartmentId,
-      })
-      .select('_id')
-      .lean()
-      .exec();
-
-    const filteredTeamMemberIds = teamMembersInDept.map((m) => m._id);
+    console.log('[getTeamSummary] Filtered Team Member ObjectIds:', filteredTeamMemberIds.map(id => id.toString()));
 
     if (filteredTeamMemberIds.length === 0) {
       return {
@@ -879,6 +851,11 @@ export class EmployeeProfileService {
     ]);
 
     const totalTeamMembers = byStatus.reduce((sum, s) => sum + s.count, 0);
+
+    console.log('[getTeamSummary] byPosition:', byPosition);
+    console.log('[getTeamSummary] byDepartment:', byDepartment);
+    console.log('[getTeamSummary] byStatus:', byStatus);
+    console.log('[getTeamSummary] totalTeamMembers:', totalTeamMembers);
 
     // Get team members for additional analytics
     const teamMembersForAnalytics = await this.profileModel
