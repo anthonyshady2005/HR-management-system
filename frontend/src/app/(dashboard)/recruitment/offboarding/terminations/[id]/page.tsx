@@ -62,14 +62,14 @@ export default function TerminationDetailPage() {
 
   const getStatusBadge = (status: TerminationStatus) => {
     switch (status) {
-      case "PENDING":
+      case "pending":
         return { label: "Pending", color: "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" };
-      case "APPROVED":
+      case "approved":
         return { label: "Approved", color: "bg-green-500/20 text-green-300 border border-green-500/30" };
-      case "REJECTED":
+      case "rejected":
         return { label: "Rejected", color: "bg-red-500/20 text-red-300 border border-red-500/30" };
-      case "CANCELLED":
-        return { label: "Cancelled", color: "bg-gray-500/20 text-gray-300 border border-gray-500/30" };
+      case "completed":
+        return { label: "Completed", color: "bg-gray-500/20 text-gray-300 border border-gray-500/30" };
       default:
         return { label: "Unknown", color: "bg-gray-500/20 text-gray-300 border border-gray-500/30" };
     }
@@ -77,11 +77,11 @@ export default function TerminationDetailPage() {
 
   const getClearanceStatusBadge = (status: string) => {
     switch (status) {
-      case "APPROVED":
-        return { label: "Approved", color: "bg-green-500/20 text-green-300 border border-green-500/30" };
-      case "REJECTED":
-        return { label: "Rejected", color: "bg-red-500/20 text-red-300 border border-red-500/30" };
-      case "PENDING":
+      case "completed":
+        return { label: "Completed", color: "bg-green-500/20 text-green-300 border border-green-500/30" };
+      case "not_applicable":
+        return { label: "Not Applicable", color: "bg-gray-500/20 text-gray-300 border border-gray-500/30" };
+      case "pending":
       default:
         return { label: "Pending", color: "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" };
     }
@@ -347,11 +347,11 @@ export default function TerminationDetailPage() {
                             className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10"
                           >
                             <div className="flex items-center gap-3">
-                              {getDepartmentIcon(item.department)}
+                              {getDepartmentIcon(item.item)}
                               <div>
-                                <p className="text-white font-medium">{item.department}</p>
-                                {item.comments && (
-                                  <p className="text-slate-400 text-sm mt-1">{item.comments}</p>
+                                <p className="text-white font-medium">{item.item}</p>
+                                {item.notes && (
+                                  <p className="text-slate-400 text-sm mt-1">{item.notes}</p>
                                 )}
                               </div>
                             </div>
@@ -367,30 +367,30 @@ export default function TerminationDetailPage() {
                   </div>
                 </div>
 
-                {clearance.equipmentList && clearance.equipmentList.length > 0 && (
+                {clearance.equipment && clearance.equipment.length > 0 && (
                   <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
                     <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                       <Laptop className="w-5 h-5" />
                       Equipment Return
                     </h2>
                     <div className="space-y-2">
-                      {clearance.equipmentList.map((equipment, index) => (
+                      {clearance.equipment.map((equipment, index) => (
                         <div
                           key={index}
                           className="flex items-center justify-between p-3 bg-white/5 rounded-lg"
                         >
                           <div>
-                            <p className="text-white font-medium">{equipment.name}</p>
-                            {equipment.description && (
-                              <p className="text-slate-400 text-sm">{equipment.description}</p>
+                            <p className="text-white font-medium">{equipment.item}</p>
+                            {equipment.notes && (
+                              <p className="text-slate-400 text-sm">{equipment.notes}</p>
                             )}
                           </div>
                           <span className={`px-3 py-1 rounded-full text-sm ${
-                            equipment.returned
+                            equipment.status === "returned"
                               ? "bg-green-500/20 text-green-300"
                               : "bg-yellow-500/20 text-yellow-300"
                           }`}>
-                            {equipment.returned ? "Returned" : "Pending"}
+                            {equipment.status === "returned" ? "Returned" : "Pending"}
                           </span>
                         </div>
                       ))}
@@ -398,22 +398,29 @@ export default function TerminationDetailPage() {
                   </div>
                 )}
 
-                <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
-                  <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                    <Key className="w-5 h-5" />
-                    Access Card
-                  </h2>
-                  <div className="flex items-center justify-between">
-                    <p className="text-white">Access Card Returned</p>
-                    <span className={`px-3 py-1 rounded-full text-sm ${
-                      clearance.cardReturned
-                        ? "bg-green-500/20 text-green-300"
-                        : "bg-yellow-500/20 text-yellow-300"
-                    }`}>
-                      {clearance.cardReturned ? "Yes" : "No"}
-                    </span>
+                {clearance.items && clearance.items.some(item => item.item.toLowerCase().includes('card') || item.item.toLowerCase().includes('access')) && (
+                  <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
+                    <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                      <Key className="w-5 h-5" />
+                      Access Card
+                    </h2>
+                    <div className="space-y-4">
+                      {clearance.items
+                        .filter(item => item.item.toLowerCase().includes('card') || item.item.toLowerCase().includes('access'))
+                        .map((item, index) => {
+                          const statusBadge = getClearanceStatusBadge(item.status);
+                          return (
+                            <div key={index} className="flex items-center justify-between">
+                              <p className="text-white">{item.item}</p>
+                              <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusBadge.color}`}>
+                                {statusBadge.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             ) : (
               <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
