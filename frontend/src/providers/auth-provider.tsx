@@ -118,6 +118,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return true;
     } catch (err: any) {
       console.error("Failed to set current role:", err);
+      console.error("Error details:", {
+        message: err.response?.data?.message || err.message,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+      });
       return false;
     }
   };

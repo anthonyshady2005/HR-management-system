@@ -11,7 +11,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         super({
             // Extract JWT from cookie `auth_token` or Authorization header
             jwtFromRequest: ExtractJwt.fromExtractors([
-                (req) => req?.cookies?.auth_token,
+                (req) => {
+                    // Debug logging for cookie extraction
+                    const token = req?.cookies?.auth_token;
+                    if (process.env.NODE_ENV === 'production') {
+                        console.log('[JwtStrategy] Cookie extraction:', {
+                            hasCookies: !!req?.cookies,
+                            cookieKeys: req?.cookies ? Object.keys(req.cookies) : [],
+                            hasAuthToken: !!token,
+                            tokenLength: token?.length || 0,
+                        });
+                    }
+                    return token;
+                },
                 ExtractJwt.fromAuthHeaderAsBearerToken(),
             ]),
             ignoreExpiration: false,
@@ -20,10 +32,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     async validate(payload: any) {
+        // Validate payload has required fields
+        if (!payload || !payload.sub) {
+            console.error('[JwtStrategy] Invalid payload:', payload);
+            throw new UnauthorizedException('Invalid token payload');
+        }
+
         const user = await this.userModel.findById(payload.sub).exec();
         if (!user) {
+            console.error('[JwtStrategy] User not found for ID:', payload.sub);
             throw new UnauthorizedException('User not found');
         }
+
         // Attach only the required properties to request.user
         // Ensure roles array is always present on request.user
         const rolesArray = Array.isArray(payload.roles)
@@ -31,10 +51,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             : payload.role
                 ? [payload.role]
                 : [];
-        return {
+
+        // Ensure we always return an array for roles (even if empty)
+        const result = {
             _id: user._id,
             sub: user._id.toString(),
-            roles: rolesArray,
+            roles: rolesArray.length > 0 ? rolesArray : [],
         };
+
+        // Log in production if roles are empty (for debugging)
+        if (process.env.NODE_ENV === 'production' && result.roles.length === 0) {
+            console.warn('[JwtStrategy] User has no roles:', user._id);
+        }
+
+        return result;
     }
 }
