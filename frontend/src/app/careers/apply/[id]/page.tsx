@@ -110,13 +110,9 @@ export default function ApplyPage() {
         candidateId,
         requisitionId: requisitionIdStr,
       });
-<<<<<<< HEAD
-      const applicationId = String(applicationResponse._id);
-=======
       const applicationId = typeof applicationResponse._id === 'string'
         ? applicationResponse._id
         : (applicationResponse._id ? (applicationResponse._id as unknown as { toString: () => string }).toString() : String(applicationResponse._id));
->>>>>>> 575388f3cfded2debf383191bf83a52fae26c354
 
       // Step 3: Upload resume if provided (now we can link it to the application)
       if (formData.resume) {
