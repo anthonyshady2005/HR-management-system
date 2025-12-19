@@ -655,9 +655,7 @@ export class EmployeeProfileService {
 
   /**
    * Get team members for a department head (US-E4-01).
-   * Includes:
-   * 1. Employees who report to the manager's position (via reportsToPositionId or supervisorPositionId)
-   * 2. Employees in the manager's department (for department heads)
+   * Returns employees in the same department with "Department Employee" role.
    * Excludes sensitive fields per BR 18b (privacy restrictions for line managers).
    */
   async getTeamMembers(managerId: string) {
@@ -668,7 +666,7 @@ export class EmployeeProfileService {
     // Get manager's profile to find their department
     const manager = await this.profileModel
       .findById(managerId)
-      .select('primaryDepartmentId primaryPositionId')
+      .select('primaryDepartmentId')
       .lean()
       .exec();
 
@@ -676,38 +674,34 @@ export class EmployeeProfileService {
       throw new NotFoundException('Manager profile not found');
     }
 
-    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    
-    // Build query to find team members
-    // For department heads: include all employees in their department
-    // Also include direct reports via position hierarchy
-    const queryConditions: any[] = [];
-
-    // Condition 1: Employees in the same department (excluding the manager themselves)
-    if (manager.primaryDepartmentId) {
-      queryConditions.push({
-        primaryDepartmentId: manager.primaryDepartmentId,
-        _id: { $ne: new Types.ObjectId(managerId) },
-      });
-    }
-
-    // Condition 2: Direct reports via position reporting lines or supervisorPositionId
-    if (managerPositionId) {
-      const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-      if (directReportEmployeeIds.length > 0) {
-        queryConditions.push({
-          _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) },
-        });
-      }
-    }
-
-    // If no conditions, return empty
-    if (queryConditions.length === 0) {
+    if (!manager.primaryDepartmentId) {
       return { teamMembers: [], count: 0 };
     }
 
+    // Find all employees with "Department Employee" role
+    const departmentEmployeeRoles = await this.systemRoleModel
+      .find({
+        roles: SystemRole.DEPARTMENT_EMPLOYEE,
+        isActive: true,
+      })
+      .select('employeeProfileId')
+      .lean()
+      .exec();
+
+    const departmentEmployeeIds = departmentEmployeeRoles.map(
+      (r) => r.employeeProfileId,
+    );
+
+    if (departmentEmployeeIds.length === 0) {
+      return { teamMembers: [], count: 0 };
+    }
+
+    // Get employees in the same department with "Department Employee" role (excluding the manager)
     const teamMembers = await this.profileModel
-      .find({ $or: queryConditions })
+      .find({
+        _id: { $in: departmentEmployeeIds, $ne: new Types.ObjectId(managerId) },
+        primaryDepartmentId: manager.primaryDepartmentId,
+      })
       .populate('primaryPositionId', 'code title')
       .populate('primaryDepartmentId', 'code name')
       .select(
@@ -717,13 +711,8 @@ export class EmployeeProfileService {
       .lean()
       .exec();
 
-    // Deduplicate by _id (in case an employee matches multiple conditions)
-    const uniqueMembers = Array.from(
-      new Map(teamMembers.map((m) => [m._id.toString(), m])).values()
-    );
-
     return {
-      teamMembers: uniqueMembers.map((member) => ({
+      teamMembers: teamMembers.map((member) => ({
         _id: member._id,
         id: member._id,
         employeeId: member.employeeNumber,
@@ -739,13 +728,13 @@ export class EmployeeProfileService {
         workEmail: member.workEmail,
         profilePictureUrl: member.profilePictureUrl,
       })),
-      count: uniqueMembers.length,
+      count: teamMembers.length,
     };
   }
 
   /**
    * Get summary of team's job titles and departments (US-E4-02).
-   * Includes employees in the manager's department + direct reports.
+   * Returns summary for employees in the same department with "Department Employee" role.
    * Aggregated view without individual employee details.
    */
   async getTeamSummary(managerId: string) {
@@ -764,31 +753,33 @@ export class EmployeeProfileService {
       throw new NotFoundException('Manager profile not found');
     }
 
-    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    
-    // Build query conditions for team members (same logic as getTeamMembers)
-    const queryConditions: any[] = [];
-
-    // Condition 1: Employees in the same department (excluding the manager themselves)
-    if (manager.primaryDepartmentId) {
-      queryConditions.push({
-        primaryDepartmentId: manager.primaryDepartmentId,
-        _id: { $ne: new Types.ObjectId(managerId) },
-      });
+    if (!manager.primaryDepartmentId) {
+      return {
+        managerDepartment: null,
+        totalTeamMembers: 0,
+        byPosition: [],
+        byDepartment: [],
+        byStatus: [],
+        totalCount: 0,
+        department: null,
+      };
     }
 
-    // Condition 2: Direct reports via position reporting lines or supervisorPositionId
-    if (managerPositionId) {
-      const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-      if (directReportEmployeeIds.length > 0) {
-        queryConditions.push({
-          _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) },
-        });
-      }
-    }
+    // Find all employees with "Department Employee" role
+    const departmentEmployeeRoles = await this.systemRoleModel
+      .find({
+        roles: SystemRole.DEPARTMENT_EMPLOYEE,
+        isActive: true,
+      })
+      .select('employeeProfileId')
+      .lean()
+      .exec();
 
-    // If no conditions, return empty summary
-    if (queryConditions.length === 0) {
+    const departmentEmployeeIds = departmentEmployeeRoles.map(
+      (r) => r.employeeProfileId,
+    );
+
+    if (departmentEmployeeIds.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -800,18 +791,24 @@ export class EmployeeProfileService {
       };
     }
 
-    // Get unique team member IDs
-    const allTeamMembers = await this.profileModel
-      .find({ $or: queryConditions })
+    // Get team member IDs (same department + Department Employee role, excluding manager)
+    const teamMemberObjectIds = departmentEmployeeIds.filter(
+      (id) => id.toString() !== managerId,
+    );
+
+    // Filter to only those in the same department
+    const teamMembersInDept = await this.profileModel
+      .find({
+        _id: { $in: teamMemberObjectIds },
+        primaryDepartmentId: manager.primaryDepartmentId,
+      })
       .select('_id')
       .lean()
       .exec();
 
-    const teamMemberObjectIds = Array.from(
-      new Set(allTeamMembers.map((m) => m._id.toString()))
-    ).map((id) => new Types.ObjectId(id));
+    const filteredTeamMemberIds = teamMembersInDept.map((m) => m._id);
 
-    if (teamMemberObjectIds.length === 0) {
+    if (filteredTeamMemberIds.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -825,7 +822,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by position
     const byPosition = await this.profileModel.aggregate([
-      { $match: { _id: { $in: teamMemberObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $lookup: {
           from: 'positions',
@@ -848,7 +845,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by department
     const byDepartment = await this.profileModel.aggregate([
-      { $match: { _id: { $in: teamMemberObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $lookup: {
           from: 'departments',
@@ -871,7 +868,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by status
     const byStatus = await this.profileModel.aggregate([
-      { $match: { _id: { $in: teamMemberObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $group: {
           _id: '$status',
@@ -885,7 +882,7 @@ export class EmployeeProfileService {
 
     // Get team members for additional analytics
     const teamMembersForAnalytics = await this.profileModel
-      .find({ _id: { $in: teamMemberObjectIds } })
+      .find({ _id: { $in: filteredTeamMemberIds } })
       .select('dateOfHire contractType workType status')
       .lean()
       .exec();
