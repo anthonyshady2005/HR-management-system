@@ -3226,7 +3226,7 @@ export class RecruitmentService {
     }
 
     // Try to find existing checklist
-    let checklist = await this.clearanceChecklistModel
+    let checklist: ClearanceChecklistDocument | null = await this.clearanceChecklistModel
       .findOne({ terminationId: new Types.ObjectId(id) })
       .populate('items.updatedBy')
       .exec();
@@ -3235,7 +3235,15 @@ export class RecruitmentService {
     if (!checklist) {
       this.logger.log(`Clearance checklist not found for termination ${id}, initializing...`);
       try {
-        checklist = await this.initializeClearanceChecklist(id);
+        const initializedChecklist = await this.initializeClearanceChecklist(id);
+        // Populate the initialized checklist to match the query result type
+        checklist = await this.clearanceChecklistModel
+          .findById(initializedChecklist._id)
+          .populate('items.updatedBy')
+          .exec();
+        if (!checklist) {
+          throw new BadRequestException('Failed to retrieve initialized clearance checklist');
+        }
         this.logger.log(`Successfully initialized clearance checklist for termination ${id}`);
       } catch (error) {
         this.logger.error(
