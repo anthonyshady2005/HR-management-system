@@ -83,9 +83,9 @@ export function canDeactivateDepartment(role: string | null | undefined): boolea
   const normalizedRole = role.toLowerCase();
   return (
     normalizedRole === 'system admin' ||
-    normalizedRole === 'hr manager'
+    normalizedRole === 'hr manager' ||
+    normalizedRole === 'hr admin'
   );
-  // Note: HR Admin cannot deactivate (only System Admin and HR Manager)
 }
 
 /**
@@ -158,7 +158,8 @@ export function canDeactivatePosition(role: string | null | undefined): boolean 
   const normalizedRole = role.toLowerCase();
   return (
     normalizedRole === 'system admin' ||
-    normalizedRole === 'hr manager'
+    normalizedRole === 'hr manager' ||
+    normalizedRole === 'hr admin'
   );
 }
 
@@ -172,7 +173,8 @@ export function canApproveChangeRequests(role: string | null | undefined): boole
   const normalizedRole = role.toLowerCase();
   return (
     normalizedRole === 'system admin' ||
-    normalizedRole === 'hr manager'
+    normalizedRole === 'hr manager' ||
+    normalizedRole === 'hr admin'
   );
 }
 

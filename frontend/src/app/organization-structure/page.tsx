@@ -139,29 +139,37 @@ export default function OrganizationStructurePage() {
             )}
           </TabsList>
 
-          <TabsContent value="chart" className="mt-6">
-            <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
-              <OrgChart />
-            </div>
-          </TabsContent>
+          {canViewOrgChart(currentRole) && (
+            <TabsContent value="chart" className="mt-6">
+              <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
+                <OrgChart />
+              </div>
+            </TabsContent>
+          )}
 
-          <TabsContent value="departments" className="mt-6">
-            <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
-              <Departments />
-            </div>
-          </TabsContent>
+          {canViewAllDepartments(currentRole) && (
+            <TabsContent value="departments" className="mt-6">
+              <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
+                <Departments />
+              </div>
+            </TabsContent>
+          )}
 
-          <TabsContent value="requests" className="mt-6">
-            <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
-              <ChangeRequests />
-            </div>
-          </TabsContent>
+          {canViewChangeRequestsTab(currentRole) && (
+            <TabsContent value="requests" className="mt-6">
+              <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
+                <ChangeRequests />
+              </div>
+            </TabsContent>
+          )}
 
-          <TabsContent value="approvals" className="mt-6">
-            <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
-              <Approvals />
-            </div>
-          </TabsContent>
+          {canApproveChangeRequests(currentRole) && (
+            <TabsContent value="approvals" className="mt-6">
+              <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8">
+                <Approvals />
+              </div>
+            </TabsContent>
+          )}
 
           {isSystemAdmin(currentRole) && (
             <TabsContent value="positions" className="mt-6">

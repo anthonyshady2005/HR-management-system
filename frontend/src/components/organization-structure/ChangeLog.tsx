@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useAuth } from "@/providers/auth-provider";
+import { isSystemAdmin } from "@/lib/organization-role-utils";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +42,17 @@ interface ChangeRequest {
 }
 
 export function ChangeLog() {
+  const { currentRole } = useAuth();
+
+  // Security: Early return if user doesn't have permission
+  if (!isSystemAdmin(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. Only System Administrators can view the change log.</p>
+      </div>
+    );
+  }
+
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

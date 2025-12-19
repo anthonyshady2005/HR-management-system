@@ -164,7 +164,7 @@ export class OrganizationStructureController {
   }
 
   @Patch('positions/:id/deactivate')
-  @Roles('HR Manager', 'System Admin')
+  @Roles('HR Manager', 'System Admin', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Deactivate a position (delimiting - preserves history)',
@@ -181,7 +181,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires HR Manager or System Admin role',
+    description: 'Forbidden - requires HR Manager, System Admin, or HR Admin role',
   })
   @ApiResponse({ status: 404, description: 'Position not found' })
   async deactivatePosition(@Param('id') id: string) {
@@ -189,7 +189,7 @@ export class OrganizationStructureController {
   }
 
   @Patch('positions/:id/freeze')
-  @Roles('HR Manager', 'System Admin')
+  @Roles('HR Manager', 'System Admin', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -209,7 +209,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires HR Manager or System Admin role',
+    description: 'Forbidden - requires HR Manager, System Admin, or HR Admin role',
   })
   @ApiResponse({ status: 404, description: 'Position not found' })
   async freezePosition(@Param('id') id: string) {
@@ -217,7 +217,7 @@ export class OrganizationStructureController {
   }
 
   @Patch('positions/:id/unfreeze')
-  @Roles('HR Manager', 'System Admin')
+  @Roles('HR Manager', 'System Admin', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Unfreeze a position' })
   @ApiResponse({
@@ -234,7 +234,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires HR Manager or System Admin role',
+    description: 'Forbidden - requires HR Manager, System Admin, or HR Admin role',
   })
   @ApiResponse({ status: 404, description: 'Position not found' })
   async unfreezePosition(@Param('id') id: string) {
@@ -242,7 +242,7 @@ export class OrganizationStructureController {
   }
 
   @Patch('departments/:id/deactivate')
-  @Roles('HR Manager', 'System Admin')
+  @Roles('HR Manager', 'System Admin', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate a department' })
   @ApiResponse({
@@ -259,7 +259,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires HR Manager or System Admin role',
+    description: 'Forbidden - requires HR Manager, System Admin, or HR Admin role',
   })
   @ApiResponse({ status: 404, description: 'Department not found' })
   async deactivateDepartment(@Param('id') id: string) {
@@ -371,10 +371,10 @@ export class OrganizationStructureController {
   }
 
   @Get('hierarchy')
-  @Roles('System Admin', 'HR Manager')
+  @Roles('System Admin', 'HR Manager', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Get full organizational hierarchy (System Admin/HR Manager only)',
+    summary: 'Get full organizational hierarchy (System Admin/HR Manager/HR Admin only)',
   })
   @ApiResponse({
     status: 200,
@@ -386,7 +386,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin or HR Manager role',
+    description: 'Forbidden - requires System Admin, HR Manager, or HR Admin role',
   })
   async getFullHierarchy() {
     return await this.hierarchyViewService.getFullOrganizationalHierarchy();
@@ -486,7 +486,7 @@ export class OrganizationStructureController {
   }
 
   @Get('hierarchy/chart')
-  @Roles('System Admin', 'HR Manager')
+  @Roles('System Admin', 'HR Manager', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Get organizational hierarchy in chart format (for visualization)',
@@ -502,7 +502,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin or HR Manager role',
+    description: 'Forbidden - requires System Admin, HR Manager, or HR Admin role',
   })
   async getHierarchyChart() {
     const hierarchy =

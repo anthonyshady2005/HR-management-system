@@ -151,10 +151,10 @@ export class StructureChangeRequestController {
   }
 
   @Get('pending')
-  @Roles('System Admin', 'HR Manager')
+  @Roles('System Admin', 'HR Manager', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Get all pending change requests (for System Admin/HR Manager)',
+    summary: 'Get all pending change requests (for System Admin/HR Manager/HR Admin)',
   })
   @ApiResponse({
     status: 200,
@@ -166,14 +166,14 @@ export class StructureChangeRequestController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin or HR Manager role',
+    description: 'Forbidden - requires System Admin, HR Manager, or HR Admin role',
   })
   async getPendingChangeRequests() {
     return await this.approvalService.getPendingApprovals();
   }
 
   @Post(':id/approve')
-  @Roles('System Admin', 'HR Manager')
+  @Roles('System Admin', 'HR Manager', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Approve a change request' })
   @ApiParam({ name: 'id', description: 'Change request ID' })
@@ -191,7 +191,7 @@ export class StructureChangeRequestController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin or HR Manager role, or cannot approve own request',
+    description: 'Forbidden - requires System Admin, HR Manager, or HR Admin role, or cannot approve own request',
   })
   @ApiResponse({
     status: 404,
@@ -211,7 +211,7 @@ export class StructureChangeRequestController {
   }
 
   @Post(':id/reject')
-  @Roles('System Admin', 'HR Manager')
+  @Roles('System Admin', 'HR Manager', 'HR Admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reject a change request' })
   @ApiParam({ name: 'id', description: 'Change request ID' })
@@ -229,7 +229,7 @@ export class StructureChangeRequestController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin or HR Manager role, or cannot reject own request',
+    description: 'Forbidden - requires System Admin, HR Manager, or HR Admin role, or cannot reject own request',
   })
   @ApiResponse({
     status: 404,
