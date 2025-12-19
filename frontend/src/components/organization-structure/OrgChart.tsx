@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/providers/auth-provider";
 import { api } from "@/lib/api";
 import {
+  canViewOrgChart,
   canViewAllDepartments,
   canViewOwnDepartmentOnly,
 } from "@/lib/organization-role-utils";
@@ -70,6 +71,15 @@ export function OrgChart() {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [userDepartmentId, setUserDepartmentId] = useState<string | null>(null);
+
+  // Security: Early return if user doesn't have permission
+  if (!canViewOrgChart(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. You do not have permission to view the organization chart.</p>
+      </div>
+    );
+  }
 
   // Fetch user's department if they can only view own department
   useEffect(() => {
