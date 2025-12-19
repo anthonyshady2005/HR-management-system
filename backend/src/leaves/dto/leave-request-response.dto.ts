@@ -21,6 +21,12 @@ class ApprovalFlowItemDto {
   decidedBy?: string;
 
   @ApiPropertyOptional({
+    description: 'Name of user who decided',
+    example: 'John Doe',
+  })
+  decidedByName?: string;
+
+  @ApiPropertyOptional({
     description: 'Decision timestamp',
     example: '2024-11-16T14:30:00Z',
   })
@@ -39,6 +45,12 @@ export class LeaveRequestResponseDto {
     example: '507f1f77bcf86cd799439012',
   })
   employeeId: string;
+
+  @ApiPropertyOptional({
+    description: 'Employee display name',
+    example: 'John Doe',
+  })
+  employeeDisplayName?: string;
 
   @ApiProperty({
     description: 'Leave type details',

@@ -70,3 +70,7 @@ export class LeaveRequest {
 
 export const LeaveRequestSchema =
     SchemaFactory.createForClass(LeaveRequest);
+
+// Indexes for query performance
+LeaveRequestSchema.index({ employeeId: 1, status: 1 });
+LeaveRequestSchema.index({ employeeId: 1, 'dates.from': 1, 'dates.to': 1 });
