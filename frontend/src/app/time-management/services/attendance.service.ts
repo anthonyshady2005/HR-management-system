@@ -304,7 +304,19 @@ async getPendingEscalations(cutoff?: string): Promise<{
   });
   return response.data;
 }
+async getDepartmentAttendanceRecords(params?: {
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const res = await api.get(
+    "/time-management/attendance/department",
+    { params }
+  );
 
+  return res.data;
+}
 /**
  * US18 — Get escalation history
  */
@@ -415,6 +427,7 @@ async getUnfinalizedAttendance(params?: {
           text: "text-green-400",
         };
   }
+
 
   downloadSampleTemplate() {
     const rows = [
