@@ -9,10 +9,12 @@ import {
   Query,
   UseGuards,
   BadRequestException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 
 import { TimeManagementService } from './time-management.service';
-
+import * as XLSX from 'xlsx';
 // Guards & Decorators
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -20,6 +22,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 
 // System Roles Enum
 import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
+import { PunchType, ShiftAssignmentStatus, TimeExceptionType } from './models/enums';
 
 // DTOs
 import { AttendanceRecordCreateDTO } from './dto/attendance-record-create.dto';
@@ -54,16 +57,55 @@ import { HolidayUpdateDTO } from './dto/holiday-update.dto';
 
 import { NotificationLogCreateDTO } from './dto/notification-log-create.dto';
 import { NotificationLogUpdateDTO } from './dto/notification-log-update.dto';
-
+import { Req } from '@nestjs/common/decorators';
 import { Types } from 'mongoose';
 import { CorrectionRequestStatus, TimeExceptionStatus } from './models/enums';
-
+import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtAuthGuard } from 'src/common/guards';
 @Controller('time-management')
 export class TimeManagementController {
   constructor(
     private readonly timeManagementService: TimeManagementService,
   ) {}
+// ================================================
+// LOOKUP ENDPOINTS — GET EMPLOYEES, DEPARTMENTS, POSITIONS
+// ================================================
 
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_ADMIN,
+)
+@Get('lookup/employees')
+getAllEmployees() {
+  return this.timeManagementService.getAllEmployees();
+}
+
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_ADMIN,
+)
+@Get('lookup/departments')
+getAllDepartments() {
+  return this.timeManagementService.getAllDepartments();
+}
+
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_ADMIN,
+)
+@Get('lookup/positions')
+getAllPositions() {
+  return this.timeManagementService.getAllPositions();
+}
   // ================================================
   // USER STORY 1 — SHIFT ASSIGNMENT MANAGEMENT
   // ================================================
@@ -133,121 +175,209 @@ export class TimeManagementController {
     return this.timeManagementService.updateShiftAssignment(id, dto);
   }
 
+
+
   @UseGuards(RolesGuard)
   @Roles(SystemRole.SYSTEM_ADMIN)
   @Post('shift-assignments/expire')
   expireShiftAssignmentsAutomatically() {
     return this.timeManagementService.expireShiftAssignmentsAutomatically();
   }
+  @UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shift-assignments')
+getShiftAssignments(
+  @Query('employeeId') employeeId?: string,
+  @Query('status') status?: string,
+  @Query('start') start?: string,
+  @Query('end') end?: string,
+) {
+  return this.timeManagementService.getShiftAssignments({
+    employeeId: employeeId ? new Types.ObjectId(employeeId) : undefined,
+    status,
+    start: start ? new Date(start) : undefined,
+    end: end ? new Date(end) : undefined,
+  });
+}
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shift-assignments/:id')
+getShiftAssignmentById(@Param('id') id: string) {
+  return this.timeManagementService.getShiftAssignmentById(id);
+}
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Patch('shift-assignments/:id/status')
+updateShiftAssignmentStatus(
+  @Param('id') id: string,
+  @Body('status') status: ShiftAssignmentStatus,
+) {
+  return this.timeManagementService.updateShiftAssignmentStatus(id, status);
+}
 
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Delete('shift-assignments/:id')
+deleteShiftAssignment(@Param('id') id: string) {
+  // DELETE endpoint now calls REVOKE (backward compatibility)
+  return this.timeManagementService.revokeShiftAssignment(id);
+}
+
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Patch('shift-assignments/:id/revoke')
+revokeShiftAssignment(@Param('id') id: string) {
+  return this.timeManagementService.revokeShiftAssignment(id);
+}
   // ================================================
-  // USER STORY 2 — SHIFT CONFIGURATION & TYPES
-  // BR-TM-03, BR-TM-04
-  // ================================================
+// USER STORY 2 — SHIFT CONFIGURATION & TYPES
+// BR-TM-03, BR-TM-04
+// ================================================
 
-  // ------------------------------
-  // SHIFT TYPES
-  // ------------------------------
+// ------------------------------
+// SHIFT TYPES
+// ------------------------------
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Post('shift-types')
-  createShiftType(@Body() dto: ShiftTypeCreateDTO) {
-    return this.timeManagementService.createShiftType(dto);
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Post('shift-types')
+createShiftType(@Body() dto: ShiftTypeCreateDTO) {
+  return this.timeManagementService.createShiftType(dto);
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Get('shift-types')
-  getAllShiftTypes() {
-    return this.timeManagementService.getAllShiftTypes();
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shift-types')
+getAllShiftTypes() {
+  return this.timeManagementService.getAllShiftTypes();
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Patch('shift-types/:id')
-  updateShiftType(
-    @Param('id') id: string,
-    @Body() dto: ShiftTypeUpdateDTO,
-  ) {
-    return this.timeManagementService.updateShiftType(id, dto);
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shift-types/:id')
+getShiftTypeById(@Param('id') id: string) {
+  return this.timeManagementService.getShiftTypeById(id);
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Delete('shift-types/:id')
-  deactivateShiftType(@Param('id') id: string) {
-    return this.timeManagementService.deactivateShiftType(id);
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Patch('shift-types/:id')
+updateShiftType(
+  @Param('id') id: string,
+  @Body() dto: ShiftTypeUpdateDTO,
+) {
+  return this.timeManagementService.updateShiftType(id, dto);
+}
 
-  // ------------------------------
-  // SHIFTS (ACTUAL SHIFT DEFINITIONS)
-  // ------------------------------
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Delete('shift-types/:id')
+deactivateShiftType(@Param('id') id: string) {
+  return this.timeManagementService.deactivateShiftType(id);
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Post('shifts')
-  createShift(@Body() dto: ShiftCreateDTO) {
-    return this.timeManagementService.createShift(dto);
-  }
+// ------------------------------
+// SHIFTS (ACTUAL SHIFT DEFINITIONS)
+// ------------------------------
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Get('shifts')
-  getAllShifts() {
-    return this.timeManagementService.getAllShifts();
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Post('shifts')
+createShift(@Body() dto: ShiftCreateDTO) {
+  return this.timeManagementService.createShift(dto);
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Patch('shifts/:id')
-  updateShift(
-    @Param('id') id: string,
-    @Body() dto: ShiftUpdateDTO,
-  ) {
-    return this.timeManagementService.updateShift(id, dto);
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shifts')
+getAllShifts() {
+  return this.timeManagementService.getAllShifts();
+}
 
-  @UseGuards(RolesGuard)
-  @Roles(
-    SystemRole.SYSTEM_ADMIN,
-    SystemRole.HR_MANAGER,
-    SystemRole.HR_ADMIN,
-  )
-  @Delete('shifts/:id')
-  deactivateShift(@Param('id') id: string) {
-    return this.timeManagementService.deactivateShift(id);
-  }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('shifts/:id')
+getShiftById(@Param('id') id: string) {
+  return this.timeManagementService.getShiftById(id);
+}
 
-  // ================================================
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Patch('shifts/:id')
+updateShift(
+  @Param('id') id: string,
+  @Body() dto: ShiftUpdateDTO,
+) {
+  return this.timeManagementService.updateShift(id, dto);
+}
+
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Delete('shifts/:id')
+deactivateShift(@Param('id') id: string) {
+  return this.timeManagementService.deactivateShift(id);
+}
+// ================================================
 // USER STORY 3 — CUSTOM SCHEDULING RULES
 // ================================================
 
@@ -271,6 +401,18 @@ createScheduleRule(@Body() dto: ScheduleRuleCreateDTO) {
 @Get('schedule-rules')
 getAllScheduleRules() {
   return this.timeManagementService.getAllScheduleRules();
+}
+
+// ✅ ADD THIS - Get single schedule rule by ID
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Get('schedule-rules/:id')
+getScheduleRuleById(@Param('id') id: string) {
+  return this.timeManagementService.getScheduleRuleById(id);
 }
 
 @UseGuards(RolesGuard)
@@ -312,61 +454,313 @@ notifyUpcomingShiftExpiry(@Query('daysBefore') daysBefore?: string) {
   return this.timeManagementService.notifyUpcomingShiftExpiry(days);
 }
 
+
+
 @UseGuards(RolesGuard)
-@Roles(SystemRole.SYSTEM_ADMIN)
-@Post('shift-assignments/expiry-cycle')
-handleShiftExpiryCron() {
-  return this.timeManagementService.handleShiftExpiryCron();
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
+@Get('notifications/shift-expiry')
+getShiftExpiryNotifications(
+  @Query('limit') limit?: string,
+  @Query('offset') offset?: string,
+) {
+  return this.timeManagementService.getShiftExpiryNotifications(
+    Number(limit) || 5,
+    Number(offset) || 0,
+  );
+}
+// ================================================
+// USER STORY 5 — EXCEL-BASED ATTENDANCE IMPORT
+// ================================================
+
+@Post('attendance/upload-excel')
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.PAYROLL_SPECIALIST)
+@UseInterceptors(FileInterceptor('file'))
+async uploadExcelForPreview(@UploadedFile() file: any) {
+
+  console.log('🟡 [UPLOAD-EXCEL] Endpoint hit');
+
+  if (!file) {
+    console.error('❌ [UPLOAD-EXCEL] No file received');
+    throw new BadRequestException('No file uploaded');
+  }
+
+  console.log('📄 [UPLOAD-EXCEL] File info:', {
+    name: file.originalname,
+    size: file.size,
+    mimetype: file.mimetype,
+  });
+
+  if (!file.originalname.match(/\.(xlsx|xls)$/)) {
+    console.error('❌ [UPLOAD-EXCEL] Invalid file type');
+    throw new BadRequestException('Only Excel files (.xlsx, .xls) are allowed');
+  }
+
+  try {
+    const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    console.log('📊 [UPLOAD-EXCEL] Raw rows count:', jsonData.length);
+
+    if (jsonData.length === 0) {
+      console.error('❌ [UPLOAD-EXCEL] Excel file empty');
+      throw new BadRequestException('Excel file is empty');
+    }
+
+    const parsedData = jsonData.map((row: any, index) => {
+      const errors: string[] = [];
+
+      const employeeIdentifier =
+        row['Employee Email'] ||
+        row['email'] ||
+        row['Email'] ||
+        row['employee_email'] ||
+        '';
+
+      let date = row['Date'] || row['date'] || '';
+      const time = row['Time'] || row['time'] || '';
+      const type = row['Type'] || row['type'] || row['Punch Type'] || '';
+
+      if (!employeeIdentifier) errors.push('Missing employee email');
+      if (!date) errors.push('Missing date');
+      if (!time) errors.push('Missing time');
+      if (!type) errors.push('Missing punch type');
+
+      if (type && !['IN', 'OUT'].includes(type.toString().toUpperCase())) {
+        errors.push('Invalid punch type (must be IN or OUT)');
+      }
+
+      if (date) {
+        if (typeof date === 'number') {
+          const excelDate = XLSX.SSF.parse_date_code(date);
+          date = `${excelDate.y}-${String(excelDate.m).padStart(2, '0')}-${String(excelDate.d).padStart(2, '0')}`;
+        }
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          errors.push('Invalid date format (expected YYYY-MM-DD)');
+        }
+      }
+
+      if (time && !/^\d{2}:\d{2}$/.test(time)) {
+        errors.push('Invalid time format (expected HH:mm)');
+      }
+
+      if (errors.length > 0) {
+        console.warn(`⚠️ [UPLOAD-EXCEL] Row ${index + 2} errors:`, errors);
+      }
+
+      return {
+        rowNumber: index + 2,
+        employeeIdentifier,
+        date,
+        time,
+        type: type.toString().toUpperCase(),
+        isValid: errors.length === 0,
+        errors,
+      };
+    });
+
+    console.log('✅ [UPLOAD-EXCEL] Parsed result:', {
+      total: parsedData.length,
+      valid: parsedData.filter(r => r.isValid).length,
+      invalid: parsedData.filter(r => !r.isValid).length,
+    });
+
+    return {
+      success: true,
+      totalRows: parsedData.length,
+      validRows: parsedData.filter(r => r.isValid).length,
+      invalidRows: parsedData.filter(r => !r.isValid).length,
+      data: parsedData,
+    };
+  } catch (error) {
+    console.error('🔥 [UPLOAD-EXCEL] Parsing failed:', error);
+    throw new BadRequestException(`Failed to parse Excel file: ${error.message}`);
+  }
 }
 
-// ================================================
-// USER STORY 5 — CLOCK-IN / CLOCK-OUT
-// ================================================
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.PAYROLL_SPECIALIST)
+@Post('attendance/process-excel-data')
+async processExcelData(
+  @Body() data: { 
+    rows: Array<{ 
+      employeeIdentifier: string; 
+      date: string; 
+      time: string; 
+      type: PunchType;
+      rowNumber?: number;
+    }> 
+  }
+) {
+  if (!data.rows || data.rows.length === 0) {
+    throw new BadRequestException('No rows to process');
+  }
 
+  const results: {
+    successful: Array<{ 
+      row: any; 
+      result: any;
+      rowNumber: number;
+    }>;
+    failed: Array<{ 
+      row: any; 
+      error: string;
+      rowNumber: number;
+    }>;
+  } = { 
+    successful: [], 
+    failed: [] 
+  };
+
+  // Process each row
+  for (const row of data.rows) {
+    try {
+      const result = await this.timeManagementService.logPunchFromExternalSheet({
+        employeeIdentifier: row.employeeIdentifier,
+        date: row.date,
+        time: row.time,
+        type: row.type,
+      });
+      
+      results.successful.push({ 
+        row, 
+        result,
+        rowNumber: row.rowNumber || 0
+      });
+    } catch (error) {
+      results.failed.push({ 
+        row, 
+        error: error.message,
+        rowNumber: row.rowNumber || 0
+      });
+    }
+  }
+
+  return {
+    totalProcessed: data.rows.length,
+    successful: results.successful.length,
+    failed: results.failed.length,
+    successRate: ((results.successful.length / data.rows.length) * 100).toFixed(2) + '%',
+    details: results,
+  };
+}
+
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.PAYROLL_SPECIALIST)
+  @Post('attendance/external-punch')
+  async logPunchFromExternalSheet(@Body() input: { employeeIdentifier: string; date: string; time: string; type: PunchType }) {
+    return this.timeManagementService.logPunchFromExternalSheet(input);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Post('attendance/clock-in')
+  async clockIn(@Body('employeeIdentifier') employeeIdentifier: string) {
+    return this.timeManagementService.clockIn(employeeIdentifier);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Post('attendance/clock-out')
+  async clockOut(@Body('employeeIdentifier') employeeIdentifier: string) {
+    return this.timeManagementService.clockOut(employeeIdentifier);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN, SystemRole.PAYROLL_SPECIALIST)
+  @Get('attendance')
+  async getAttendanceRecords(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string, @Query('employeeId') employeeId?: string, @Query('page') page?: number, @Query('limit') limit?: number) {
+    return this.timeManagementService.getAttendanceRecords({ startDate, endDate, employeeId, page, limit });
+  }
+
+
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Get('attendance/stats')
+  async getAttendanceStats(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.timeManagementService.getAttendanceStats({ startDate, endDate });
+  }
+
+ @UseGuards(RolesGuard)
+@Roles(
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+  SystemRole.SYSTEM_ADMIN
+)
+@Get('attendance/finalized')
+async getAttendanceRecordsFinalized(
+  @Query('page') page?: string,
+  @Query('limit') limit?: string
+) {
+  console.log("🚀 CONTROLLER: finalized endpoint HIT", { page, limit });
+
+  return this.timeManagementService.getAttendanceRecordsFinalized({
+    page: Number(page ?? 1),
+    limit: Number(limit ?? 10),
+  });
+}
+@Post('attendance/finalize-all-complete')
 @UseGuards(RolesGuard)
 @Roles(
-  SystemRole.SYSTEM_ADMIN,
   SystemRole.HR_ADMIN,
   SystemRole.PAYROLL_SPECIALIST,
+  SystemRole.SYSTEM_ADMIN,
 )
-@Post('attendance/external-punch')
-logPunchFromExternalSheet(@Body() input: any) {
-  return this.timeManagementService.logPunchFromExternalSheet(input);
+async finalizeAllCompleteRecords(
+  @Query('startDate') startDate?: string,
+  @Query('endDate') endDate?: string,
+) {
+  return this.timeManagementService.finalizeAllCompleteRecords({
+    startDate: startDate ? new Date(startDate) : undefined,
+    endDate: endDate ? new Date(endDate) : undefined,
+  });
 }
 
+/**
+ * US9 — Finalize single attendance record by ID
+ */
+@Post('attendance/:id/finalize')
 @UseGuards(RolesGuard)
 @Roles(
-  SystemRole.DEPARTMENT_EMPLOYEE,
-  SystemRole.DEPARTMENT_HEAD,
+  SystemRole.HR_ADMIN,
+  SystemRole.PAYROLL_SPECIALIST,
+  SystemRole.SYSTEM_ADMIN,
+)
+async finalizeSingleRecord(@Param('id') id: string) {
+  return this.timeManagementService.finalizeSingleRecord(id);
+}
+
+/**
+ * US9 — Finalize all complete attendance records
+ */
+
+ @UseGuards(RolesGuard)
+@Roles(
   SystemRole.HR_EMPLOYEE,
   SystemRole.HR_MANAGER,
   SystemRole.HR_ADMIN,
-  SystemRole.SYSTEM_ADMIN,
+  SystemRole.SYSTEM_ADMIN
 )
-@Post('attendance/clock-in')
-clockIn(@Body('employeeIdentifier') employeeIdentifier: string) {
-  return this.timeManagementService.clockIn(employeeIdentifier);
+@Get('attendance/:id')
+async getAttendanceRecordById(@Param('id') id: string) {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new BadRequestException('Invalid attendance record ID');
+  }
+
+  return this.timeManagementService.getAttendanceRecordById(
+    new Types.ObjectId(id)
+  );
 }
 
-@UseGuards(RolesGuard)
-@Roles(
-  SystemRole.DEPARTMENT_EMPLOYEE,
-  SystemRole.DEPARTMENT_HEAD,
-  SystemRole.HR_EMPLOYEE,
-  SystemRole.HR_MANAGER,
-  SystemRole.HR_ADMIN,
-  SystemRole.SYSTEM_ADMIN,
-)
-@Post('attendance/clock-out')
-clockOut(@Body('employeeIdentifier') employeeIdentifier: string) {
-  return this.timeManagementService.clockOut(employeeIdentifier);
-}
 
 // ================================================
 // USER STORY 6 — MANUAL ATTENDANCE CORRECTION
 // ================================================
 
-@UseGuards(RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(
   SystemRole.DEPARTMENT_HEAD,
   SystemRole.HR_MANAGER,
@@ -374,9 +768,21 @@ clockOut(@Body('employeeIdentifier') employeeIdentifier: string) {
   SystemRole.SYSTEM_ADMIN,
 )
 @Post('attendance/manual-corrections')
-correctAttendance(@Body() input: any) {
-  return this.timeManagementService.correctAttendance(input);
+correctAttendance(
+  @Req() req: any,
+  @Body() input: any,
+) {
+  return this.timeManagementService.correctAttendance({
+    ...input,
+    managerId: req.user._id,  // << CORRECT FIELD
+  });
 }
+
+
+
+
+
+
 // ================================================
 // USER STORY 7 — FLEXIBLE PUNCH HANDLING
 // ================================================
@@ -386,7 +792,32 @@ correctAttendance(@Body() input: any) {
 // ================================================
 // USER STORY 8 — MISSED PUNCH MANAGEMENT
 // ================================================
+@UseGuards(RolesGuard)
+@Roles(SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+@Post('attendance/scan-missed-punches')
+async scanMissedPunches(
+  @Body() params?: { startDate?: string; endDate?: string },
+) {
+  return this.timeManagementService.scanAndProcessMissedPunches(params);
+}
 
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+  SystemRole.SYSTEM_ADMIN,
+)
+@Get('exceptions/missed-punches')
+async getMissedPunchExceptions(
+  @Query('status') status?: string,
+  @Query('employeeId') employeeId?: string,
+) {
+  return this.timeManagementService.getMissedPunchExceptions({
+    status,
+    employeeId,
+  });
+}
 
 
 
@@ -540,7 +971,6 @@ listLatenessRules(@Query() filter: any) {
 // ================================================
 // USER STORY 12 — REPEATED LATENESS HANDLING
 // ================================================
-
 @UseGuards(RolesGuard)
 @Roles(
   SystemRole.SYSTEM_ADMIN,
@@ -549,16 +979,27 @@ listLatenessRules(@Query() filter: any) {
   SystemRole.DEPARTMENT_HEAD,
 )
 @Get('lateness/repeated/:employeeId')
-getRepeatedLatenessCount(
+async getRepeatedLatenessCount(
   @Param('employeeId') employeeId: string,
   @Query('days') days?: string,
 ) {
-  const period = days ? Number(days) : 30;
+  if (!Types.ObjectId.isValid(employeeId)) {
+    throw new BadRequestException('Invalid employeeId');
+  }
+
+  const parsedDays = days ? Number(days) : 30;
+
+  if (Number.isNaN(parsedDays) || parsedDays <= 0) {
+    throw new BadRequestException('days must be a positive number');
+  }
+
   return this.timeManagementService.countLatenessExceptions(
     new Types.ObjectId(employeeId),
-    period,
+    parsedDays,
   );
 }
+
+// ------------------------------------------------
 
 @UseGuards(RolesGuard)
 @Roles(
@@ -568,19 +1009,87 @@ getRepeatedLatenessCount(
   SystemRole.DEPARTMENT_HEAD,
 )
 @Post('lateness/handle')
-async handleRepeatedLatenessManually(@Body() input: {
-  attendanceRecordId: string;
-  shiftStartTime: string;
-}) {
-  const attendance = await this.timeManagementService.getAttendanceRecordById(
-    new Types.ObjectId(input.attendanceRecordId),
-  );
+async handleRepeatedLatenessManually(
+  @Body()
+  input: {
+    attendanceRecordId: string;
+    shiftStartTime: string;
+  },
+) {
+  if (!Types.ObjectId.isValid(input.attendanceRecordId)) {
+    throw new BadRequestException('Invalid attendanceRecordId');
+  }
+
+  if (!input.shiftStartTime) {
+    throw new BadRequestException('shiftStartTime is required');
+  }
+
+  const attendance =
+    await this.timeManagementService.getAttendanceRecordById(
+      new Types.ObjectId(input.attendanceRecordId),
+    );
+
+  if (!attendance) {
+    throw new BadRequestException('Attendance record not found');
+  }
 
   return this.timeManagementService.handleRepeatedLateness(
     attendance,
     input.shiftStartTime,
   );
 }
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+)
+@Post('lateness/notifications/rebuild')
+async rebuildLatenessNotifications(
+  @Req() req: any,
+  @Query('days') days?: string,
+) {
+  
+  console.log('recived by controller');
+
+  const hrUserId = new Types.ObjectId(req.user.sub);
+
+  const parsedDays = days ? Number(days) : 30;
+  if (Number.isNaN(parsedDays) || parsedDays <= 0) {
+    throw new BadRequestException('days must be a positive number');
+  }
+
+  return this.timeManagementService.rebuildLatenessNotifications(
+    hrUserId,
+    parsedDays,
+  );
+}
+
+@Post('lateness/repeated/notifications/rebuild')
+async rebuildRepeatedLatenessNotifications(
+  @Req() req: any,
+  @Query('days') days?: string,
+) {
+  const hrUserId = new Types.ObjectId(req.user.sub);
+
+  const parsedDays = days ? Number(days) : 30;
+  if (Number.isNaN(parsedDays) || parsedDays <= 0) {
+    throw new BadRequestException('days must be a positive number');
+  }
+
+  return this.timeManagementService.rebuildRepeatedLatenessNotifications(
+    hrUserId,
+    parsedDays,
+    3, // threshold
+  );
+}
+
 // ================================================
 // USER STORY 13 — ATTENDANCE CORRECTION REQUESTS
 // ================================================
@@ -591,7 +1100,7 @@ async handleRepeatedLatenessManually(@Body() input: {
   SystemRole.DEPARTMENT_EMPLOYEE,
   SystemRole.HR_EMPLOYEE,
   SystemRole.HR_MANAGER,
-  SystemRole.SYSTEM_ADMIN,
+  SystemRole.SYSTEM_ADMIN, // ✅ fixed
 )
 @Post('attendance-corrections')
 submitAttendanceCorrectionRequest(@Body() dto: any) {
@@ -632,9 +1141,14 @@ getMyCorrectionRequests(@Param('employeeId') employeeId: string) {
 @Patch('attendance-corrections/:requestId/review')
 async reviewCorrectionRequest(
   @Param('requestId') requestId: string,
-  @Body() dto: { status: CorrectionRequestStatus.APPROVED | CorrectionRequestStatus.REJECTED; reviewerId: string },
+  @Body()
+  dto: {
+    status:
+      | CorrectionRequestStatus.APPROVED
+      | CorrectionRequestStatus.REJECTED;
+    reviewerId: string;
+  },
 ) {
-
   // Allowed statuses for this endpoint
   const allowed = [
     CorrectionRequestStatus.APPROVED,
@@ -654,6 +1168,51 @@ async reviewCorrectionRequest(
     new Types.ObjectId(dto.reviewerId),
   );
 }
+// Controller
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.DEPARTMENT_EMPLOYEE,
+  
+)
+// ================================================
+// USER STORY 13 — SUBMIT CORRECTION BY DATE
+// ================================================
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.DEPARTMENT_EMPLOYEE,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_MANAGER,
+  SystemRole.SYSTEM_ADMIN,
+)
+@Post('attendance-corrections/by-date')
+submitAttendanceCorrectionByDate(
+  @Body()
+  dto: {
+    employeeId: string;
+    date: string;   // "YYYY-MM-DD" from the <input type="date">
+    reason: string;
+  },
+) {
+  // 🔹 1) Validate employeeId is a proper ObjectId
+  if (!Types.ObjectId.isValid(dto.employeeId)) {
+    throw new BadRequestException('Invalid employeeId format.');
+  }
+
+  // 🔹 2) Validate date
+  const date = new Date(dto.date);
+  if (isNaN(date.getTime())) {
+    throw new BadRequestException('Invalid date.');
+  }
+
+  // 🔹 3) Delegate to service
+  return this.timeManagementService.submitAttendanceCorrectionRequestByDate({
+    employeeId: new Types.ObjectId(dto.employeeId),
+    date,
+    reason: dto.reason,
+  });
+}
+
+
 // ================================================
 // USER STORY 14 — TIME EXCEPTION APPROVAL WORKFLOW
 // ================================================
@@ -769,6 +1328,7 @@ autoEscalateStaleCorrectionRequestsForPayroll() {
 // ================================================
 
 // 1) Employee submits a permission request
+@Post('permissions')
 @UseGuards(RolesGuard)
 @Roles(
   SystemRole.DEPARTMENT_EMPLOYEE,
@@ -776,10 +1336,17 @@ autoEscalateStaleCorrectionRequestsForPayroll() {
   SystemRole.HR_MANAGER,
   SystemRole.SYSTEM_ADMIN,
 )
-@Post('permissions')
-submitPermissionRequest(@Body() dto: any) {
+submitPermissionRequest(
+  @Req() req: any,
+  @Body() dto: {
+    attendanceRecordId: string;
+    type: TimeExceptionType;
+    minutesRequested: number;
+    reason?: string;
+  },
+) {
   return this.timeManagementService.submitPermissionRequest({
-    employeeId: new Types.ObjectId(dto.employeeId),
+    employeeId: new Types.ObjectId(req.user._id), // ← Fixed
     attendanceRecordId: new Types.ObjectId(dto.attendanceRecordId),
     type: dto.type,
     minutesRequested: dto.minutesRequested,
@@ -797,8 +1364,12 @@ submitPermissionRequest(@Body() dto: any) {
 )
 @Patch('permissions/:exceptionId/review')
 async reviewPermissionRequest(
+  @Req() req: any, // ← Added to get reviewer from JWT
   @Param('exceptionId') exceptionId: string,
-  @Body() dto: { reviewerId: string; status: TimeExceptionStatus.APPROVED | TimeExceptionStatus.REJECTED; comment?: string },
+  @Body() dto: { 
+    status: TimeExceptionStatus.APPROVED | TimeExceptionStatus.REJECTED; 
+    comment?: string;
+  }, // ← Removed reviewerId from body
 ) {
   // Allowed statuses
   const allowed = [
@@ -814,7 +1385,7 @@ async reviewPermissionRequest(
 
   return this.timeManagementService.reviewPermissionRequest(
     new Types.ObjectId(exceptionId),
-    new Types.ObjectId(dto.reviewerId),
+    new Types.ObjectId(req.user._id), // ← Get reviewer from JWT
     dto.status,
     dto.comment,
   );
@@ -841,13 +1412,71 @@ getApprovedPermissionsForPayroll(
 }
 
 // 4) Auto-escalate stale permission requests (manual trigger)
-// Cron runs inside service; this route is optional
 @UseGuards(RolesGuard)
 @Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
 @Post('permissions/escalate')
 autoEscalatePendingPermissions() {
   return this.timeManagementService.autoEscalatePendingPermissions();
 }
+
+// =====================================================
+// USER STORY 15 — Get my permission requests (Employee)
+// =====================================================
+@Get('permissions/my')
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.DEPARTMENT_EMPLOYEE,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_MANAGER,
+  SystemRole.SYSTEM_ADMIN,
+)
+getMyPermissions(@Req() req: any) {
+  return this.timeManagementService.getMyPermissions(
+    new Types.ObjectId(req.user._id), // ← Fixed
+  );
+}
+
+// =====================================================
+// USER STORY 15 — Permission request by DATE
+// Date is inferred from punches[].time
+// =====================================================
+@Post('permissions/by-date')
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.DEPARTMENT_EMPLOYEE,
+  SystemRole.HR_EMPLOYEE,
+  SystemRole.HR_MANAGER,
+  SystemRole.SYSTEM_ADMIN,
+)
+submitPermissionRequestByDate(
+  @Req() req: any,
+  @Body() dto: {
+    date: string; // YYYY-MM-DD
+    type: TimeExceptionType;
+    minutesRequested: number;
+    reason?: string;
+  },
+) {
+  return this.timeManagementService.submitPermissionRequestByDate({
+    employeeId: new Types.ObjectId(req.user._id), // ← Fixed
+    date: dto.date,
+    type: dto.type,
+    minutesRequested: dto.minutesRequested,
+    reason: dto.reason,
+  });
+}
+@Get('permissions/pending')
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.DEPARTMENT_HEAD,
+  SystemRole.HR_MANAGER,
+  SystemRole.HR_ADMIN,
+  SystemRole.SYSTEM_ADMIN,
+)
+getPendingPermissions() {
+  return this.timeManagementService.getPendingPermissions();
+}
+
 // ================================================
 // USER STORY 16 — VACATION PACKAGE INTEGRATION
 // ================================================

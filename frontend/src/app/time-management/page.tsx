@@ -1,21 +1,51 @@
-import { Timer } from "lucide-react";
+"use client";
 
-export default function Page() {
-  return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden text-white">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-20 w-96 h-96 bg-slate-700/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-20 right-20 w-96 h-96 bg-slate-600/20 rounded-full blur-3xl animate-pulse delay-1000" />
-      </div>
-      <div className="relative z-10 max-w-4xl mx-auto px-6 py-12">
-        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-3xl p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Timer className="w-8 h-8 text-slate-400" />
-            <h2 className="text-3xl text-white">Time Management</h2>
-          </div>
-          <p className="text-slate-300">Time management features coming soon...</p>
-        </div>
-      </div>
-    </main>
-  );
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/providers/auth-provider";
+
+// Route mapping for time management:
+// - Admin/HR Manager → /time-management/admin
+// - Department Head → /time-management/department-head
+// - Everyone else (employees) → /time-management/employee
+export default function TimeManagementRouter() {
+  const { status, currentRole } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    // Still checking auth → do nothing yet
+    if (status === "loading") return;
+
+    // Not logged in → go to login
+    if (status === "unauthenticated") {
+      router.replace("/auth/login");
+      return;
+    }
+
+    // Authenticated but role not loaded yet
+    if (!currentRole) return;
+
+    // Group 1: Admin + HR Manager
+    if (
+      currentRole === "System Admin" ||
+      currentRole === "HR Admin" ||
+      currentRole === "HR Manager"
+    ) {
+      router.replace("/time-management/admin-pannel");
+      return;
+    }
+
+    // Group 2: Department Head
+    if (currentRole === "department head") {
+      router.replace("/time-management/department-head-pannel");
+      return;
+    }
+
+    // Group 3: Default → Employee view
+    // (department employee, HR Employee, or anything else)
+    router.replace("/time-management/employee-pannel");
+  }, [status, currentRole, router]);
+
+  // We don't render anything here; this component only redirects.
+  return null;
 }

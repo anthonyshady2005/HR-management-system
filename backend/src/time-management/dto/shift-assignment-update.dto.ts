@@ -1,35 +1,34 @@
 import { IsMongoId, IsOptional, IsDateString, IsEnum } from "class-validator";
-import { Types } from "mongoose";
 import { ShiftAssignmentStatus } from "../models/enums";
 
 export class ShiftAssignmentUpdateDTO {
   @IsOptional()
   @IsMongoId()
-  employeeId?: Types.ObjectId;
+  employeeId?: string;
 
   @IsOptional()
   @IsMongoId()
-  departmentId?: Types.ObjectId;
+  departmentId?: string;
 
   @IsOptional()
   @IsMongoId()
-  positionId?: Types.ObjectId;
+  positionId?: string;
 
   @IsOptional()
   @IsMongoId()
-  shiftId?: Types.ObjectId;
+  shiftId?: string;
 
   @IsOptional()
   @IsMongoId()
-  scheduleRuleId?: Types.ObjectId;
+  scheduleRuleId?: string;
 
   @IsOptional()
   @IsDateString()
-  startDate?: Date;
+  startDate?: string;
 
   @IsOptional()
   @IsDateString()
-  endDate?: Date;
+  endDate?: string;
 
   @IsOptional()
   @IsEnum(ShiftAssignmentStatus)
