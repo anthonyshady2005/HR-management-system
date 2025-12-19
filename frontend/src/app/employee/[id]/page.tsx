@@ -1086,6 +1086,7 @@ export default function EmployeeDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+          </div>
         )}
       </div>
     </ProtectedRoute>
