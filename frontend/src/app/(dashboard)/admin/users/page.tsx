@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { AxiosError } from "axios";
+import { toast } from "sonner";
 import {
     Users,
     Search,
@@ -104,13 +105,13 @@ export default function UserManagementPage() {
                 roles: newRoles
             });
             setIsRoleModalOpen(false);
-            alert("Roles updated successfully");
+            toast.success("Roles updated successfully");
         } catch (err) {
             console.error("Failed to save roles", err);
             if (err instanceof AxiosError) {
-                alert(`Failed to update roles: ${err.response?.data?.message || err.message}`);
+                toast.error(`Failed to update roles: ${err.response?.data?.message || err.message}`);
             } else {
-                alert("Failed to update roles");
+                toast.error("Failed to update roles");
             }
         }
     };
@@ -123,11 +124,11 @@ export default function UserManagementPage() {
                 reason: "Admin action"
             });
             setIsDeactivateModalOpen(false);
-            alert("User deactivated successfully");
+            toast.success("User deactivated successfully");
             fetchUsers();
         } catch (err) {
             console.error("Failed to deactivate user", err);
-            alert("Failed to deactivate user");
+            toast.error("Failed to deactivate user");
         }
     };
 
