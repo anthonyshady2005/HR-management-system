@@ -62,6 +62,16 @@ export function Approvals() {
   const [filterStatus, setFilterStatus] = useState<"all" | StructureRequestStatus>("all");
   const [filterType, setFilterType] = useState<"all" | StructureRequestType>("all");
 
+  // Security: Early return if user doesn't have permission
+  // This prevents the component from rendering at all if unauthorized
+  if (!canApproveChangeRequests(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. You do not have permission to view approvals.</p>
+      </div>
+    );
+  }
+
   // Fetch pending change requests
   useEffect(() => {
     if (canApproveChangeRequests(currentRole)) {

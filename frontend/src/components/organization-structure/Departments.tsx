@@ -56,6 +56,15 @@ interface Department {
 
 export function Departments() {
   const { currentRole, user } = useAuth();
+
+  // Security: Early return if user doesn't have permission
+  if (!canViewAllDepartments(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. You do not have permission to view departments.</p>
+      </div>
+    );
+  }
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

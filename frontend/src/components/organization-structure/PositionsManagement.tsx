@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useAuth } from "@/providers/auth-provider";
+import { isSystemAdmin } from "@/lib/organization-role-utils";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +51,16 @@ interface Position {
 }
 
 export function PositionsManagement() {
+  const { currentRole } = useAuth();
+
+  // Security: Early return if user doesn't have permission
+  if (!isSystemAdmin(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. Only System Administrators can manage positions.</p>
+      </div>
+    );
+  }
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
