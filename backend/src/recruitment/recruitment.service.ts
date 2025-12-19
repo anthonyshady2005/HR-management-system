@@ -1863,6 +1863,19 @@ export class RecruitmentService {
       throw new NotFoundException(`Offer with ID ${id} not found`);
     }
 
+    // If both candidate and HR have signed, create employee profile and initialize onboarding
+    if (updated.candidateSignedAt && updated.hrSignedAt) {
+      try {
+        await this.handleOfferSigned(updated);
+      } catch (error) {
+        this.logger.error(
+          `Failed to process offer signed integration for offer ${updated._id}:`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        // Don't fail offer signing if integration fails - log and continue
+      }
+    }
+
     // Send notification if candidate signed
     if (signerType === 'candidate') {
       try {
