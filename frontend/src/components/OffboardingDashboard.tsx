@@ -436,6 +436,13 @@ export default function OffboardingDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <Link
+                  href="/recruitment/offboarding/clearances"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white text-sm font-medium transition-all flex items-center gap-2"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  Pending Clearances
+                </Link>
                 <select
                   value={dateRange}
                   onChange={(e) => setDateRange(e.target.value)}

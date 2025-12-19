@@ -3347,6 +3347,249 @@ export class RecruitmentService {
   }
 
   /**
+   * Update a single clearance checklist item by department
+   * Department-specific users can approve/reject their clearance items (OFF-010)
+   * @param terminationId - Termination request ID
+   * @param department - Department name (IT, Finance, Facilities, Line Manager)
+   * @param userId - User ID who is updating the clearance item
+   * @param userRoles - User's system roles
+   * @param updateDto - Update data (status, comments)
+   * @returns Updated clearance checklist document
+   */
+  async updateClearanceItemByDepartment(
+    terminationId: string,
+    department: string,
+    userId: string,
+    userRoles: string[],
+    updateDto: { status: ApprovalStatus; comments?: string },
+  ): Promise<ClearanceChecklistDocument> {
+    if (!Types.ObjectId.isValid(terminationId)) {
+      throw new BadRequestException('Invalid termination request ID');
+    }
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid user ID');
+    }
+
+    // Validate termination exists
+    const termination = await this.terminationRequestModel
+      .findById(terminationId)
+      .populate('employeeId')
+      .exec();
+
+    if (!termination) {
+      throw new NotFoundException(
+        `Termination request with ID ${terminationId} not found`,
+      );
+    }
+
+    // Role-based authorization check
+    const isAuthorized = this.canApproveClearanceItem(
+      department,
+      userRoles,
+      termination.employeeId.toString(),
+      userId,
+    );
+
+    if (!isAuthorized) {
+      throw new ForbiddenException(
+        `You are not authorized to approve ${department} clearance items. Required role or relationship not found.`,
+      );
+    }
+
+    // Get or create clearance checklist
+    let checklist: ClearanceChecklistDocument | null = await this.clearanceChecklistModel
+      .findOne({ terminationId: new Types.ObjectId(terminationId) })
+      .exec();
+
+    if (!checklist) {
+      // Initialize checklist if it doesn't exist
+      checklist = await this.initializeClearanceChecklist(terminationId);
+    }
+
+    // At this point, checklist is guaranteed to be non-null
+    if (!checklist) {
+      throw new BadRequestException(
+        `Failed to initialize clearance checklist for termination ${terminationId}`,
+      );
+    }
+
+    // Find and update the specific department item
+    const itemIndex = checklist.items.findIndex(
+      (item: any) => item.department === department,
+    );
+
+    if (itemIndex === -1) {
+      throw new NotFoundException(
+        `Clearance item for department ${department} not found in checklist`,
+      );
+    }
+
+    // Update the item
+    checklist.items[itemIndex].status = updateDto.status;
+    checklist.items[itemIndex].comments = updateDto.comments;
+    checklist.items[itemIndex].updatedBy = new Types.ObjectId(userId);
+    checklist.items[itemIndex].updatedAt = new Date();
+
+    const savedChecklist = await checklist.save();
+
+    this.logger.log(
+      `${department} clearance item updated to ${updateDto.status} for termination ${terminationId} by user ${userId}`,
+    );
+
+    return savedChecklist;
+  }
+
+  /**
+   * Check if user can approve a clearance item for a specific department
+   * @param department - Department name (IT, Finance, Facilities, Line Manager)
+   * @param userRoles - User's system roles
+   * @param terminatedEmployeeId - ID of the terminated employee
+   * @param userId - ID of the user trying to approve
+   * @returns true if user is authorized
+   */
+  private canApproveClearanceItem(
+    department: string,
+    userRoles: string[],
+    terminatedEmployeeId: string,
+    userId: string,
+  ): boolean {
+    const normalizedRoles = userRoles.map((r) => r.toLowerCase());
+
+    switch (department.toUpperCase()) {
+      case 'IT':
+        // IT clearance: System Admin
+        return normalizedRoles.includes('system admin');
+
+      case 'FINANCE':
+        // Finance clearance: Finance Staff, Payroll Manager, Payroll Specialist
+        return (
+          normalizedRoles.includes('finance staff') ||
+          normalizedRoles.includes('payroll manager') ||
+          normalizedRoles.includes('payroll specialist') ||
+          normalizedRoles.includes('hr manager') ||
+          normalizedRoles.includes('hr admin')
+        );
+
+      case 'FACILITIES':
+        // Facilities clearance: For now, allow HR roles (can be extended)
+        // In a full implementation, this might check for a Facilities department role
+        return (
+          normalizedRoles.includes('hr manager') ||
+          normalizedRoles.includes('hr admin') ||
+          normalizedRoles.includes('system admin')
+        );
+
+      case 'LINE MANAGER':
+        // Line Manager clearance: Must be the manager of the terminated employee
+        // This would require checking the organization structure
+        // For now, allow Department Head role
+        // TODO: Add check to verify user is actually the manager of the terminated employee
+        return (
+          normalizedRoles.includes('department head') ||
+          normalizedRoles.includes('hr manager') ||
+          normalizedRoles.includes('hr admin')
+        );
+
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Get pending clearance items for the current user based on their role/department
+   * @param userId - User ID
+   * @param userRoles - User's system roles
+   * @returns Array of termination requests with pending clearance items for this user
+   */
+  async getPendingClearancesForUser(
+    userId: string,
+    userRoles: string[],
+  ): Promise<any[]> {
+    const normalizedRoles = userRoles.map((r) => r.toLowerCase());
+
+    // Determine which departments this user can approve
+    const approvableDepartments: string[] = [];
+
+    if (normalizedRoles.includes('system admin')) {
+      approvableDepartments.push('IT');
+    }
+
+    if (
+      normalizedRoles.includes('finance staff') ||
+      normalizedRoles.includes('payroll manager') ||
+      normalizedRoles.includes('payroll specialist') ||
+      normalizedRoles.includes('hr manager') ||
+      normalizedRoles.includes('hr admin')
+    ) {
+      approvableDepartments.push('Finance');
+    }
+
+    if (
+      normalizedRoles.includes('hr manager') ||
+      normalizedRoles.includes('hr admin') ||
+      normalizedRoles.includes('system admin')
+    ) {
+      approvableDepartments.push('Facilities');
+    }
+
+    if (
+      normalizedRoles.includes('department head') ||
+      normalizedRoles.includes('hr manager') ||
+      normalizedRoles.includes('hr admin')
+    ) {
+      approvableDepartments.push('Line Manager');
+    }
+
+    if (approvableDepartments.length === 0) {
+      return [];
+    }
+
+    // Find all clearance checklists with pending items for these departments
+    const checklists = await this.clearanceChecklistModel
+      .find({
+        'items.department': { $in: approvableDepartments },
+        'items.status': ApprovalStatus.PENDING,
+      })
+      .populate({
+        path: 'terminationId',
+        populate: {
+          path: 'employeeId',
+          select: 'firstName lastName fullName employeeNumber workEmail primaryDepartmentId',
+          populate: {
+            path: 'primaryDepartmentId',
+            select: 'name code',
+          },
+        },
+      })
+      .exec();
+
+    // Filter to only include items this user can approve
+    const result: any[] = [];
+
+    for (const checklist of checklists) {
+      const termination = (checklist.terminationId as any);
+      if (!termination) continue;
+
+      const pendingItems = checklist.items.filter(
+        (item: any) =>
+          approvableDepartments.includes(item.department) &&
+          item.status === ApprovalStatus.PENDING,
+      );
+
+      if (pendingItems.length > 0) {
+        result.push({
+          terminationId: termination._id,
+          terminationRequest: termination,
+          checklistId: checklist._id,
+          pendingItems,
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * OFF-007: Revoke system and account access for terminated employee
    * System Admin can revoke all roles and permissions
    * @param terminationId - Termination request ID

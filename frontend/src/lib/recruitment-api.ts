@@ -210,28 +210,26 @@ export interface TerminationStats {
 }
 
 export interface ClearanceItem {
-  item: string;
-  status: "pending" | "completed" | "not_applicable";
-  completedBy?: string;
-  completedAt?: string;
-  notes?: string;
+  department: string;
+  status: "pending" | "approved" | "rejected";
+  comments?: string;
+  updatedBy?: any;
+  updatedAt?: string;
 }
 
 export interface EquipmentItem {
-  item: string;
-  serialNumber?: string;
-  status: "returned" | "pending" | "lost" | "not_applicable";
-  returnedAt?: string;
-  notes?: string;
+  equipmentId?: string;
+  name?: string;
+  returned?: boolean;
+  condition?: string;
 }
 
 export interface ClearanceChecklist {
   _id: string;
-  terminationRequestId: string;
+  terminationId: string;
   items: ClearanceItem[];
-  equipment: EquipmentItem[];
-  status: "pending" | "in_progress" | "completed";
-  completedAt?: string;
+  equipmentList?: EquipmentItem[];
+  cardReturned?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -944,6 +942,33 @@ export const offboardingApi = {
       `/recruitment/terminations/${id}/clearance`,
       data
     );
+    return response.data;
+  },
+
+  // Update single clearance item by department
+  updateClearanceItem: async (
+    terminationId: string,
+    department: string,
+    data: {
+      status: "approved" | "rejected" | "pending";
+      comments?: string;
+    }
+  ): Promise<ClearanceChecklist> => {
+    const response = await api.patch(
+      `/recruitment/terminations/${terminationId}/clearance/${department}`,
+      data
+    );
+    return response.data;
+  },
+
+  // Get pending clearances for current user
+  getPendingClearances: async (): Promise<Array<{
+    terminationId: string;
+    terminationRequest: TerminationRequest;
+    checklistId: string;
+    pendingItems: ClearanceItem[];
+  }>> => {
+    const response = await api.get(`/recruitment/clearances/pending`);
     return response.data;
   },
 };

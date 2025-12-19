@@ -60,6 +60,7 @@ import {
   CreateTerminationRequestDto,
   UpdateTerminationStatusDto,
   UpdateClearanceChecklistDto,
+  UpdateClearanceItemDto,
   RevokeAccessDto,
   TriggerFinalSettlementDto,
   CreateReferralDto,
@@ -967,6 +968,69 @@ export class RecruitmentController {
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
   async updateClearanceChecklist(@Param('id') id: string, @Body() updateDto: UpdateClearanceChecklistDto) {
     return this.recruitmentService.updateClearanceChecklist(id, updateDto);
+  }
+
+  @Patch('terminations/:id/clearance/:department')
+  @Roles(
+    SystemRole.HR_MANAGER,
+    SystemRole.HR_ADMIN,
+    SystemRole.SYSTEM_ADMIN,
+    SystemRole.FINANCE_STAFF,
+    SystemRole.PAYROLL_MANAGER,
+    SystemRole.PAYROLL_SPECIALIST,
+    SystemRole.DEPARTMENT_HEAD,
+  )
+  @ApiOperation({
+    summary: 'Update single clearance item by department (OFF-010)',
+    description: 'Department users (IT, Finance, Facilities, Line Manager) can approve/reject their clearance items',
+  })
+  @ApiParam({ name: 'id', description: 'Termination request ID' })
+  @ApiParam({ name: 'department', description: 'Department name (IT, Finance, Facilities, Line Manager)' })
+  @ApiBody({ type: UpdateClearanceItemDto })
+  @ApiResponse({ status: 200, description: 'Clearance item updated successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - user not authorized to approve this department clearance' })
+  @ApiResponse({ status: 404, description: 'Termination request or clearance item not found' })
+  @ApiResponse({ status: 400, description: 'Bad request - validation error' })
+  async updateClearanceItemByDepartment(
+    @Param('id') id: string,
+    @Param('department') department: string,
+    @Body() updateDto: UpdateClearanceItemDto,
+    @Req() req: express.Request,
+  ) {
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
+    const userRoles = user?.roles || [];
+
+    return this.recruitmentService.updateClearanceItemByDepartment(
+      id,
+      department,
+      userId,
+      userRoles,
+      updateDto,
+    );
+  }
+
+  @Get('clearances/pending')
+  @Roles(
+    SystemRole.HR_MANAGER,
+    SystemRole.HR_ADMIN,
+    SystemRole.SYSTEM_ADMIN,
+    SystemRole.FINANCE_STAFF,
+    SystemRole.PAYROLL_MANAGER,
+    SystemRole.PAYROLL_SPECIALIST,
+    SystemRole.DEPARTMENT_HEAD,
+  )
+  @ApiOperation({
+    summary: 'Get pending clearance items for current user',
+    description: 'Returns termination requests with pending clearance items that the current user can approve based on their role/department',
+  })
+  @ApiResponse({ status: 200, description: 'Pending clearances retrieved successfully' })
+  async getPendingClearances(@Req() req: express.Request) {
+    const user = (req as any).user;
+    const userId = (user?.sub || user?._id || user?.id)?.toString();
+    const userRoles = user?.roles || [];
+
+    return this.recruitmentService.getPendingClearancesForUser(userId, userRoles);
   }
 
   @Post('terminations/:id/revoke-access')

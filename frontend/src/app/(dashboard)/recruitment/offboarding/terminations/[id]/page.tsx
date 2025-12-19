@@ -347,11 +347,11 @@ export default function TerminationDetailPage() {
                             className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10"
                           >
                             <div className="flex items-center gap-3">
-                              {getDepartmentIcon(item.item)}
+                              {getDepartmentIcon(item.department)}
                               <div>
-                                <p className="text-white font-medium">{item.item}</p>
-                                {item.notes && (
-                                  <p className="text-slate-400 text-sm mt-1">{item.notes}</p>
+                                <p className="text-white font-medium">{item.department}</p>
+                                {item.comments && (
+                                  <p className="text-slate-400 text-sm mt-1">{item.comments}</p>
                                 )}
                               </div>
                             </div>
@@ -367,30 +367,30 @@ export default function TerminationDetailPage() {
                   </div>
                 </div>
 
-                {clearance.equipment && clearance.equipment.length > 0 && (
+                {clearance.equipmentList && clearance.equipmentList.length > 0 && (
                   <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
                     <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                       <Laptop className="w-5 h-5" />
                       Equipment Return
                     </h2>
                     <div className="space-y-2">
-                      {clearance.equipment.map((equipment, index) => (
+                      {clearance.equipmentList.map((equipment: any, index: number) => (
                         <div
                           key={index}
                           className="flex items-center justify-between p-3 bg-white/5 rounded-lg"
                         >
                           <div>
-                            <p className="text-white font-medium">{equipment.item}</p>
-                            {equipment.notes && (
-                              <p className="text-slate-400 text-sm">{equipment.notes}</p>
+                            <p className="text-white font-medium">{equipment.name || "Equipment"}</p>
+                            {equipment.condition && (
+                              <p className="text-slate-400 text-sm">Condition: {equipment.condition}</p>
                             )}
                           </div>
                           <span className={`px-3 py-1 rounded-full text-sm ${
-                            equipment.status === "returned"
+                            equipment.returned
                               ? "bg-green-500/20 text-green-300"
                               : "bg-yellow-500/20 text-yellow-300"
                           }`}>
-                            {equipment.status === "returned" ? "Returned" : "Pending"}
+                            {equipment.returned ? "Returned" : "Pending"}
                           </span>
                         </div>
                       ))}
@@ -398,26 +398,21 @@ export default function TerminationDetailPage() {
                   </div>
                 )}
 
-                {clearance.items && clearance.items.some(item => item.item.toLowerCase().includes('card') || item.item.toLowerCase().includes('access')) && (
+                {clearance.cardReturned !== undefined && (
                   <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
                     <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                       <Key className="w-5 h-5" />
                       Access Card
                     </h2>
-                    <div className="space-y-4">
-                      {clearance.items
-                        .filter(item => item.item.toLowerCase().includes('card') || item.item.toLowerCase().includes('access'))
-                        .map((item, index) => {
-                          const statusBadge = getClearanceStatusBadge(item.status);
-                          return (
-                            <div key={index} className="flex items-center justify-between">
-                              <p className="text-white">{item.item}</p>
-                              <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusBadge.color}`}>
-                                {statusBadge.label}
-                              </span>
-                            </div>
-                          );
-                        })}
+                    <div className="flex items-center justify-between">
+                      <p className="text-white">Access Card Returned</p>
+                      <span className={`px-3 py-1 rounded-full text-sm ${
+                        clearance.cardReturned
+                          ? "bg-green-500/20 text-green-300"
+                          : "bg-yellow-500/20 text-yellow-300"
+                      }`}>
+                        {clearance.cardReturned ? "Yes" : "No"}
+                      </span>
                     </div>
                   </div>
                 )}

@@ -9,6 +9,7 @@ import {
   Calendar,
   FileText,
   Globe,
+  CheckCircle,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import ProtectedRoute from "@/components/protected-route";
@@ -26,6 +27,11 @@ const RECRUITMENT_SUB_LINKS = [
   { href: "/recruitment/interviews", label: "Interviews", icon: Calendar },
   { href: "/recruitment/offers", label: "Offers", icon: FileText },
   { href: "/careers", label: "Careers", icon: Globe },
+];
+
+const OFFBOARDING_SUB_LINKS = [
+  { href: "/recruitment/offboarding/dashboard", label: "Dashboard", icon: Briefcase },
+  { href: "/recruitment/offboarding/clearances", label: "Pending Clearances", icon: CheckCircle },
 ];
 
 export default function DashboardLayout({
@@ -121,6 +127,30 @@ export default function DashboardLayout({
                             // Other sub-links are active when pathname matches or starts with their href + "/"
                             const isSubActive = subLink.href === "/recruitment"
                               ? pathname === "/recruitment"
+                              : pathname === subLink.href || pathname?.startsWith(subLink.href + "/");
+                            return (
+                              <Link
+                                key={subLink.href}
+                                href={subLink.href}
+                                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs transition ${
+                                  isSubActive
+                                    ? "bg-white/10 text-white"
+                                    : "text-slate-400 hover:bg-white/5 hover:text-white"
+                                }`}
+                              >
+                                <SubIcon className="w-3 h-3" />
+                                {subLink.label}
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {isActive && link.href === "/offboarding" && (
+                        <div className="ml-4 mt-2 space-y-1 border-l border-white/10 pl-4">
+                          {OFFBOARDING_SUB_LINKS.map((subLink) => {
+                            const SubIcon = subLink.icon;
+                            const isSubActive = subLink.href === "/recruitment/offboarding/dashboard"
+                              ? pathname === "/recruitment/offboarding/dashboard" || pathname === "/offboarding" || pathname === "/recruitment/offboarding"
                               : pathname === subLink.href || pathname?.startsWith(subLink.href + "/");
                             return (
                               <Link
