@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
-import { useRequireRole } from "@/hooks/use-require-role";
+import ProtectedRoute from "@/components/protected-route";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -120,18 +120,11 @@ export default function EmployeeDetailPage() {
   const [showRoleDialog, setShowRoleDialog] = useState(false);
   const [rolesToAssign, setRolesToAssign] = useState<SystemRole[]>([]);
 
-  useRequireRole(ALLOWED_ROLES, "/employee/directory");
-
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/auth/login");
-      return;
-    }
-
     if (status === "authenticated" && employeeId) {
       loadEmployeeData();
     }
-  }, [status, employeeId, router]);
+  }, [status, employeeId]);
 
   const loadEmployeeData = async () => {
     try {
@@ -347,40 +340,28 @@ export default function EmployeeDetailPage() {
     }
   };
 
-  if (status !== "authenticated" || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading employee profile...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <p className="text-slate-400">Failed to load profile</p>
-        </div>
-      </div>
-    );
-  }
-
-  const position = profile.primaryPositionId as Position | undefined;
-  const department = profile.primaryDepartmentId as Department | undefined;
+  const position = profile?.primaryPositionId as Position | undefined;
+  const department = profile?.primaryDepartmentId as Department | undefined;
   
   const isHrOrAdmin = currentRole === "HR Admin" || currentRole === "HR Manager" || currentRole === "System Admin";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-      <Navbar />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
+    <ProtectedRoute allowedRoles={ALLOWED_ROLES}>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+        <Navbar />
+        {loading ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+              <p className="text-slate-400">Loading employee profile...</p>
+            </div>
+          </div>
+        ) : !profile ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <p className="text-slate-400">Failed to load profile</p>
+          </div>
+        ) : (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
@@ -1105,7 +1086,8 @@ export default function EmployeeDetailPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        )}
       </div>
-    </div>
+    </ProtectedRoute>
   );
 }

@@ -17,15 +17,12 @@ export default function ProtectedRoute({ children, allowedRoles }: Props) {
         if (status === "unauthenticated") {
             router.push("/auth/login");
         } else if (status === "authenticated" && allowedRoles) {
+            // Only check currentRole, not all roles the user has
             if (!currentRole || !allowedRoles.includes(currentRole)) {
-                // Fallback: check if the user has any of the allowed roles in their list
-                const hasAccess = roles.some((r) => allowedRoles.includes(r));
-                if (!hasAccess) {
-                    router.push("/"); // or unauthorized page
-                }
+                router.replace("/"); // Redirect unauthorized users to root
             }
         }
-    }, [user, status, currentRole, roles, allowedRoles, router]);
+    }, [user, status, currentRole, allowedRoles, router]);
 
     if (status === "loading" || status === "idle") {
         // You can replace this with a proper loading spinner from your design system
@@ -41,7 +38,8 @@ export default function ProtectedRoute({ children, allowedRoles }: Props) {
     }
 
     if (allowedRoles) {
-        const hasAccess = currentRole && allowedRoles.includes(currentRole) || roles.some(r => allowedRoles.includes(r));
+        // Only check currentRole, not all roles the user has
+        const hasAccess = currentRole && allowedRoles.includes(currentRole);
         if (!hasAccess) {
             return null; // Will redirect in useEffect
         }

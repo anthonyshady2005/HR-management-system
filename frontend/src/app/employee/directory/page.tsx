@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
-import { useRequireRole } from "@/hooks/use-require-role";
+import ProtectedRoute from "@/components/protected-route";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,8 +54,6 @@ function DirectoryPageContent() {
     parseInt(searchParams.get("page") || "1")
   );
   const [showFilters, setShowFilters] = useState(false);
-
-  useRequireRole(ALLOWED_ROLES, "/employee/profile");
 
   type SearchOverride = {
     page?: number;
@@ -116,15 +114,10 @@ function DirectoryPageContent() {
   );
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/auth/login");
-      return;
-    }
-
     if (status === "authenticated") {
       performSearch();
     }
-  }, [status, performSearch, router]);
+  }, [status, performSearch]);
 
   const handleSearch = () => {
     setCurrentPage(1);
@@ -152,22 +145,9 @@ function DirectoryPageContent() {
     }
   };
 
-  if (status !== "authenticated") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+    <ProtectedRoute allowedRoles={ALLOWED_ROLES}>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
@@ -386,7 +366,8 @@ function DirectoryPageContent() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
 

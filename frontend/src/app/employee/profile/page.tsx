@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { isAxiosError } from "axios";
 import { useAuth } from "@/providers/auth-provider";
+import ProtectedRoute from "@/components/protected-route";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,15 +61,10 @@ export default function EmployeeProfilePage() {
   });
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/auth/login");
-      return;
-    }
-
     if (status === "authenticated") {
       loadProfile();
     }
-  }, [status, router]);
+  }, [status]);
 
   const loadChangeRequests = async () => {
     try {
@@ -235,39 +231,27 @@ export default function EmployeeProfilePage() {
     reader.readAsDataURL(file);
   };
 
-  if (status !== "authenticated" || !user || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading profile...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <p className="text-slate-400">Failed to load profile</p>
-        </div>
-      </div>
-    );
-  }
-
-  const position = (profile.primaryPositionId || profile.positionId) as Position | undefined;
-  const department = (profile.primaryDepartmentId || profile.departmentId) as Department | undefined;
-  const payGrade = profile.payGradeId as PayGrade | undefined;
+  const position = (profile?.primaryPositionId || profile?.positionId) as Position | undefined;
+  const department = (profile?.primaryDepartmentId || profile?.departmentId) as Department | undefined;
+  const payGrade = profile?.payGradeId as PayGrade | undefined;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-      <Navbar />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+        <Navbar />
+        {loading || !user ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+              <p className="text-slate-400">Loading profile...</p>
+            </div>
+          </div>
+        ) : !profile ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <p className="text-slate-400">Failed to load profile</p>
+          </div>
+        ) : (
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
@@ -992,7 +976,9 @@ export default function EmployeeProfilePage() {
             </Card>
           </div>
         </div>
+          </div>
+        )}
       </div>
-    </div>
+    </ProtectedRoute>
   );
 }

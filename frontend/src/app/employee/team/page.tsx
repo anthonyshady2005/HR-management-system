@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
-import { useRequireRole } from "@/hooks/use-require-role";
+import ProtectedRoute from "@/components/protected-route";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, TrendingUp, Briefcase, AlertCircle, Calendar, Clock, FileText, BarChart3 } from "lucide-react";
@@ -24,18 +24,11 @@ export default function TeamPage() {
   const [summary, setSummary] = useState<TeamSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useRequireRole(ALLOWED_ROLES, "/employee/profile");
-
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/auth/login");
-      return;
-    }
-
     if (status === "authenticated") {
       loadTeamData();
     }
-  }, [status, router]);
+  }, [status]);
 
   const loadTeamData = async () => {
     try {
@@ -60,22 +53,9 @@ export default function TeamPage() {
     router.push(`/employee/${employeeId}`);
   };
 
-  if (status !== "authenticated" || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading team data...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+    <ProtectedRoute allowedRoles={ALLOWED_ROLES}>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
@@ -456,6 +436,6 @@ export default function TeamPage() {
           </>
         )}
       </div>
-    </div>
+    </ProtectedRoute>
   );
 }

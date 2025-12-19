@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
-import { useRequireRole } from "@/hooks/use-require-role";
+import ProtectedRoute from "@/components/protected-route";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -82,8 +82,6 @@ export default function ChangeRequestsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
 
-  useRequireRole(ALLOWED_ROLES, "/employee/profile");
-
   const loadRequests = useCallback(async () => {
     try {
       setLoading(true);
@@ -152,16 +150,11 @@ export default function ChangeRequestsPage() {
   };
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.replace("/auth/login");
-      return;
-    }
-
     if (status === "authenticated") {
       loadRequests();
       loadPositionsAndDepartments();
     }
-  }, [status, loadRequests, router]);
+  }, [status, loadRequests]);
 
   const handleProcessRequest = (
     request: EmployeeProfileChangeRequest,
@@ -269,22 +262,9 @@ export default function ChangeRequestsPage() {
     }
   };
 
-  if (status !== "authenticated") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+    <ProtectedRoute allowedRoles={ALLOWED_ROLES}>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
@@ -804,6 +784,7 @@ export default function ChangeRequestsPage() {
           </DialogContent>
         </Dialog>
       </div>
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
