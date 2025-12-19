@@ -23,7 +23,7 @@ export class PayrollIntegrationService {
    */
   async processSigningBonus(
     employeeId: string,
-    contractId: string,
+    offerId: string,
     bonusAmount: number,
   ): Promise<void> {
     try {

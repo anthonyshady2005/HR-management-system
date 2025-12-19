@@ -127,7 +127,7 @@ export default function RunsPage() {
       // Fetch runs & departments in parallel
       const [runsRes, depsRes] = await Promise.all([
         api.get("/payroll-execution/runs"),
-        api.get("/organization-structure/departments"),
+        api.get("/payroll-execution/departments"),
       ]);
       setRuns(runsRes.data);
       setDepartments(depsRes.data);

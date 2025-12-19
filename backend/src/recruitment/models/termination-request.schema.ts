@@ -33,8 +33,8 @@ export class TerminationRequest {
   @Prop()
   terminationDate?: Date;
 
-  @Prop({ type: Types.ObjectId, ref: 'Contract', required: true })
-  contractId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Offer', required: true })
+  offerId: Types.ObjectId;
 }
 
 export type TerminationRequestDocument = HydratedDocument<TerminationRequest>;
