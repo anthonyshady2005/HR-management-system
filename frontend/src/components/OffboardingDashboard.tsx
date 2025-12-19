@@ -341,7 +341,7 @@ export default function OffboardingDashboard() {
     const total = termination.clearance.items.length;
     if (total === 0) return 100;
     const completed = termination.clearance.items.filter(
-      (item) => item.status === "completed"
+      (item) => item.status === "approved"
     ).length;
     return Math.round((completed / total) * 100);
   };
