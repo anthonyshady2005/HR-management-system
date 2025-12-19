@@ -1780,6 +1780,7 @@ export class RecruitmentService {
     ipAddress?: string,
     token?: string,
     userId?: string,
+    userRoles?: string[],
   ): Promise<OfferDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid offer ID');
@@ -1811,10 +1812,8 @@ export class RecruitmentService {
       updateData.candidateSignedAt = new Date();
       if (typedName) updateData.candidateTypedName = typedName;
       if (ipAddress) updateData.candidateSigningIp = ipAddress;
-      // When candidate signs, also update applicantResponse to ACCEPTED
-      if (offer.applicantResponse === OfferResponseStatus.PENDING) {
-        updateData.applicantResponse = OfferResponseStatus.ACCEPTED;
-      }
+      // When candidate signs, always update applicantResponse to ACCEPTED
+      updateData.applicantResponse = OfferResponseStatus.ACCEPTED;
       // Clear token after signing
       updateData.candidateSigningToken = undefined;
       updateData.candidateSigningTokenExpiresAt = undefined;
@@ -1837,6 +1836,16 @@ export class RecruitmentService {
       updateData.hrSigningToken = undefined;
       updateData.hrSigningTokenExpiresAt = undefined;
     } else if (signerType === 'manager') {
+      // Manager signature can only be signed by HR Manager (not department head)
+      if (userId && userRoles && userRoles.length > 0) {
+        const hasHrManagerRole = userRoles.some(role => 
+          role === 'HR Manager' || role === 'System Admin'
+        );
+        if (!hasHrManagerRole) {
+          throw new BadRequestException('Only HR Manager can sign as manager');
+        }
+      }
+      
       // Verify typed name matches user's full name (case-sensitive)
       if (userId && typedName) {
         const userProfile = await this.employeeProfileModel.findById(userId).exec();
@@ -1864,6 +1873,7 @@ export class RecruitmentService {
     }
 
     // If both candidate and HR have signed, create employee profile and initialize onboarding
+    // Note: Manager signature is optional, so we create employee when candidate + HR sign
     if (updated.candidateSignedAt && updated.hrSignedAt) {
       try {
         await this.handleOfferSigned(updated);
@@ -2074,23 +2084,7 @@ export class RecruitmentService {
       throw new NotFoundException('Candidate not found for offer');
     }
 
-    // Check if employee profile already exists (avoid duplicates)
-    const existingProfile = await this.employeeProfileService
-      .getEmployeeById(candidate._id.toString())
-      .catch(() => null);
-
-    if (existingProfile) {
-      this.logger.log(
-        `Employee profile already exists for candidate ${candidate._id}, skipping creation`,
-      );
-      return;
-    }
-
-    // Create employee profile from candidate
-    const employeeNumber = `EMP-${Date.now()}`;
-    const dateOfHire = offer.candidateSignedAt || new Date();
-
-    // Check if profile already exists
+    // Check if profile already exists by ID
     const existingProfileDoc = await this.employeeProfileModel
       .findById(candidate._id)
       .exec();
@@ -2099,8 +2093,22 @@ export class RecruitmentService {
       this.logger.log(
         `Employee profile already exists for candidate ${candidate._id}, skipping creation`,
       );
+      // Still create onboarding if it doesn't exist
+      const existingOnboarding = await this.onboardingModel
+        .findOne({ employeeId: candidate._id, offerId: offer._id })
+        .exec();
+      if (!existingOnboarding) {
+        await this.createOnboardingForNewEmployee(
+          candidate._id.toString(),
+          offer._id.toString(),
+        );
+      }
       return;
     }
+
+    // Create employee profile from candidate
+    const employeeNumber = `EMP-${Date.now()}`;
+    const dateOfHire = offer.candidateSignedAt || new Date();
 
     // Create employee profile from candidate data
     const employeeProfile = new this.employeeProfileModel({

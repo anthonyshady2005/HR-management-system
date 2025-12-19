@@ -213,15 +213,25 @@ export default function ApplyPage() {
               {/* Job Summary */}
               <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 mb-8">
                 <h1 className="text-4xl font-bold mb-4">
-                  {template?.title || "Job Title"}
+                  {job.title || template?.title || "Job Title"}
                 </h1>
                 <div className="flex flex-wrap gap-4 text-slate-400 mb-4">
-                  {template?.department && (
-                    <span className="flex items-center gap-2">
-                      <Briefcase className="w-5 h-5" />
-                      {template.department}
-                    </span>
-                  )}
+                  {(() => {
+                    const department = typeof job.departmentId === 'object' && job.departmentId !== null
+                      ? (job.departmentId as { name?: string; code?: string }).name
+                      : null;
+                    return department ? (
+                      <span className="flex items-center gap-2">
+                        <Briefcase className="w-5 h-5" />
+                        {department}
+                      </span>
+                    ) : template?.department ? (
+                      <span className="flex items-center gap-2">
+                        <Briefcase className="w-5 h-5" />
+                        {template.department}
+                      </span>
+                    ) : null;
+                  })()}
                   {job.location && (
                     <span className="flex items-center gap-2">
                       <MapPin className="w-5 h-5" />
