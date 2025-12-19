@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as crypto from 'crypto';
 import {
   Injectable,
   NotFoundException,
@@ -759,7 +760,13 @@ export class RecruitmentService {
       application.assignedHr?.toString() || application.candidateId.toString(),
     );
 
-    return updated;
+    // Populate relations before returning
+    return await this.applicationModel
+      .findById(id)
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
+      .exec() as ApplicationDocument;
   }
 
   /**
@@ -797,6 +804,14 @@ export class RecruitmentService {
       application.assignedHr?.toString() || application.candidateId.toString(),
     );
 
+    // Populate relations before returning
+    const populated = await this.applicationModel
+      .findById(id)
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
+      .exec() as ApplicationDocument;
+
     // Send notification for status update
     if (oldStatus !== updateDto.status) {
       const candidate = await this.candidateModel.findById(application.candidateId).exec();
@@ -824,7 +839,7 @@ export class RecruitmentService {
       }
     }
 
-    return updated;
+    return populated;
   }
 
   /**
@@ -851,6 +866,9 @@ export class RecruitmentService {
         { assignedHr: new Types.ObjectId(hrId) },
         { new: true, runValidators: true },
       )
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
       .exec();
 
     if (!application) {
@@ -1170,6 +1188,26 @@ export class RecruitmentService {
       throw new NotFoundException(`Interview with ID ${id} not found`);
     }
     return interview;
+  }
+
+  /**
+   * Delete an interview
+   * @param id - Interview ID
+   * @returns void
+   * @throws NotFoundException if interview not found
+   */
+  async deleteInterview(id: string): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid interview ID');
+    }
+
+    const interview = await this.interviewModel.findByIdAndDelete(id).exec();
+
+    if (!interview) {
+      throw new NotFoundException(`Interview with ID ${id} not found`);
+    }
+
+    this.logger.log(`Interview ${id} deleted successfully`);
   }
 
   /**
@@ -1638,17 +1676,59 @@ export class RecruitmentService {
   }
 
   /**
-   * Sign offer (candidate/HR/manager)
+   * Generate signing token for offer
    * @param id - Offer ID
    * @param signerType - Type of signer (candidate, hr, manager)
-   * @param signature - Signature data/URL
-   * @returns Updated offer document
-   * @throws NotFoundException if offer not found
+   * @param expiresInDays - Token expiration in days (default: 7)
+   * @returns Token string
    */
-  async signOffer(
+  async generateOfferSigningToken(
     id: string,
     signerType: string,
-    signature: string,
+    expiresInDays: number = 7,
+  ): Promise<string> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid offer ID');
+    }
+
+    const offer = await this.offerModel.findById(id).exec();
+    if (!offer) {
+      throw new NotFoundException(`Offer with ID ${id} not found`);
+    }
+
+    // Generate secure random token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+
+    const updateData: any = {};
+    if (signerType === 'candidate') {
+      updateData.candidateSigningToken = token;
+      updateData.candidateSigningTokenExpiresAt = expiresAt;
+    } else if (signerType === 'hr') {
+      updateData.hrSigningToken = token;
+      updateData.hrSigningTokenExpiresAt = expiresAt;
+    } else {
+      throw new BadRequestException('Invalid signer type for offer');
+    }
+
+    await this.offerModel.findByIdAndUpdate(id, updateData).exec();
+
+    return token;
+  }
+
+  /**
+   * Validate offer signing token
+   * @param id - Offer ID
+   * @param token - Signing token
+   * @param signerType - Type of signer
+   * @returns Offer document if valid
+   * @throws BadRequestException if token is invalid or expired
+   */
+  async validateOfferSigningToken(
+    id: string,
+    token: string,
+    signerType: string,
   ): Promise<OfferDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid offer ID');
@@ -1659,13 +1739,97 @@ export class RecruitmentService {
       throw new NotFoundException(`Offer with ID ${id} not found`);
     }
 
+    let isValid = false;
+    if (signerType === 'candidate') {
+      isValid =
+        !!offer.candidateSigningToken &&
+        offer.candidateSigningToken === token &&
+        !!offer.candidateSigningTokenExpiresAt &&
+        offer.candidateSigningTokenExpiresAt > new Date();
+    } else if (signerType === 'hr') {
+      isValid =
+        !!offer.hrSigningToken &&
+        offer.hrSigningToken === token &&
+        !!offer.hrSigningTokenExpiresAt &&
+        offer.hrSigningTokenExpiresAt > new Date();
+    } else {
+      throw new BadRequestException('Invalid signer type');
+    }
+
+    if (!isValid) {
+      throw new BadRequestException('Invalid or expired signing token');
+    }
+
+    return offer;
+  }
+
+  /**
+   * Sign offer (candidate/HR/manager)
+   * @param id - Offer ID
+   * @param signerType - Type of signer (candidate, hr, manager)
+   * @param typedName - Typed name of the signer
+   * @param ipAddress - IP address of the signer (optional)
+   * @param token - Signing token (optional, for public signing)
+   * @returns Updated offer document
+   * @throws NotFoundException if offer not found
+   */
+  async signOffer(
+    id: string,
+    signerType: string,
+    typedName?: string,
+    ipAddress?: string,
+    token?: string,
+  ): Promise<OfferDocument> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid offer ID');
+    }
+
+    const offer = await this.offerModel.findById(id).exec();
+    if (!offer) {
+      throw new NotFoundException(`Offer with ID ${id} not found`);
+    }
+
+    // If token is provided, validate it (for public signing)
+    if (token) {
+      await this.validateOfferSigningToken(id, token, signerType);
+    }
+
+    // Check if already signed
+    if (signerType === 'candidate' && offer.candidateSignedAt) {
+      throw new BadRequestException('Offer already signed by candidate');
+    }
+    if (signerType === 'hr' && offer.hrSignedAt) {
+      throw new BadRequestException('Offer already signed by HR');
+    }
+    if (signerType === 'manager' && offer.managerSignedAt) {
+      throw new BadRequestException('Offer already signed by manager');
+    }
+
     const updateData: any = {};
     if (signerType === 'candidate') {
       updateData.candidateSignedAt = new Date();
+      if (typedName) updateData.candidateTypedName = typedName;
+      if (ipAddress) updateData.candidateSigningIp = ipAddress;
+      // When candidate signs, also update applicantResponse to ACCEPTED
+      if (offer.applicantResponse === OfferResponseStatus.PENDING) {
+        updateData.applicantResponse = OfferResponseStatus.ACCEPTED;
+      }
+      // Clear token after signing
+      updateData.candidateSigningToken = undefined;
+      updateData.candidateSigningTokenExpiresAt = undefined;
     } else if (signerType === 'hr') {
       updateData.hrSignedAt = new Date();
+      if (typedName) updateData.hrTypedName = typedName;
+      if (ipAddress) updateData.hrSigningIp = ipAddress;
+      // Clear token after signing
+      updateData.hrSigningToken = undefined;
+      updateData.hrSigningTokenExpiresAt = undefined;
     } else if (signerType === 'manager') {
       updateData.managerSignedAt = new Date();
+      if (typedName) updateData.managerTypedName = typedName;
+      if (ipAddress) updateData.managerSigningIp = ipAddress;
+    } else {
+      throw new BadRequestException('Invalid signer type');
     }
 
     const updated = await this.offerModel
@@ -1675,6 +1839,27 @@ export class RecruitmentService {
     if (!updated) {
       throw new NotFoundException(`Offer with ID ${id} not found`);
     }
+
+    // Send notification if candidate signed
+    if (signerType === 'candidate') {
+      try {
+        // Log the signing event
+        this.logger.log(`Offer ${id} signed by candidate ${offer.candidateId}`);
+        
+        // Update application status to HIRED if offer was accepted
+        if (updated.applicantResponse === OfferResponseStatus.ACCEPTED) {
+          await this.applicationModel
+            .findByIdAndUpdate(updated.applicationId, {
+              status: ApplicationStatus.HIRED,
+            })
+            .exec();
+        }
+        // Email notification can be added here if needed
+      } catch (error) {
+        this.logger.error('Failed to log offer signed notification', error);
+      }
+    }
+
     return updated;
   }
 
@@ -1721,10 +1906,15 @@ export class RecruitmentService {
       throw new NotFoundException('Candidate not found for offer');
     }
 
+    // Generate signing token for candidate
+    const signingToken = await this.generateOfferSigningToken(id, 'candidate', 7);
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5001';
+    const signingUrl = `${baseUrl}/offers/${id}/sign?token=${signingToken}&signerType=candidate`;
+
     // Generate PDF first
     const pdfUrl = await this.pdfIntegration.generateOfferPDF(offer, candidate);
 
-    // Send email
+    // Send email with signing link
     await this.emailIntegration.sendOfferEmail(
       candidate.personalEmail || '',
       candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
@@ -1736,6 +1926,7 @@ export class RecruitmentService {
         benefits: offer.benefits,
       },
       pdfUrl,
+      signingUrl,
     );
 
     // Send notification
@@ -1749,6 +1940,7 @@ export class RecruitmentService {
       candidateId: offer.candidateId,
       sent: true,
       pdfUrl,
+      signingUrl,
       message: 'Offer email sent successfully',
     };
   }
@@ -2054,10 +2246,60 @@ export class RecruitmentService {
    * @returns Updated contract document
    * @throws NotFoundException if contract not found
    */
-  async signContract(
+  /**
+   * Generate signing token for contract
+   * @param id - Contract ID
+   * @param signerType - Type of signer (employee, employer)
+   * @param expiresInDays - Token expiration in days (default: 7)
+   * @returns Token string
+   */
+  async generateContractSigningToken(
     id: string,
     signerType: string,
-    signatureUrl: string,
+    expiresInDays: number = 7,
+  ): Promise<string> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid contract ID');
+    }
+
+    const contract = await this.contractModel.findById(id).exec();
+    if (!contract) {
+      throw new NotFoundException(`Contract with ID ${id} not found`);
+    }
+
+    // Generate secure random token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+
+    const updateData: any = {};
+    if (signerType === 'employee') {
+      updateData.employeeSigningToken = token;
+      updateData.employeeSigningTokenExpiresAt = expiresAt;
+    } else if (signerType === 'employer') {
+      updateData.employerSigningToken = token;
+      updateData.employerSigningTokenExpiresAt = expiresAt;
+    } else {
+      throw new BadRequestException('Invalid signer type for contract');
+    }
+
+    await this.contractModel.findByIdAndUpdate(id, updateData).exec();
+
+    return token;
+  }
+
+  /**
+   * Validate contract signing token
+   * @param id - Contract ID
+   * @param token - Signing token
+   * @param signerType - Type of signer
+   * @returns Contract document if valid
+   * @throws BadRequestException if token is invalid or expired
+   */
+  async validateContractSigningToken(
+    id: string,
+    token: string,
+    signerType: string,
   ): Promise<ContractDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid contract ID');
@@ -2068,13 +2310,74 @@ export class RecruitmentService {
       throw new NotFoundException(`Contract with ID ${id} not found`);
     }
 
+    let isValid = false;
+    if (signerType === 'employee') {
+      isValid =
+        !!contract.employeeSigningToken &&
+        contract.employeeSigningToken === token &&
+        !!contract.employeeSigningTokenExpiresAt &&
+        contract.employeeSigningTokenExpiresAt > new Date();
+    } else if (signerType === 'employer') {
+      isValid =
+        !!contract.employerSigningToken &&
+        contract.employerSigningToken === token &&
+        !!contract.employerSigningTokenExpiresAt &&
+        contract.employerSigningTokenExpiresAt > new Date();
+    } else {
+      throw new BadRequestException('Invalid signer type');
+    }
+
+    if (!isValid) {
+      throw new BadRequestException('Invalid or expired signing token');
+    }
+
+    return contract;
+  }
+
+  async signContract(
+    id: string,
+    signerType: string,
+    typedName?: string,
+    ipAddress?: string,
+    token?: string,
+  ): Promise<ContractDocument> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid contract ID');
+    }
+
+    const contract = await this.contractModel.findById(id).exec();
+    if (!contract) {
+      throw new NotFoundException(`Contract with ID ${id} not found`);
+    }
+
+    // If token is provided, validate it (for public signing)
+    if (token) {
+      await this.validateContractSigningToken(id, token, signerType);
+    }
+
+    // Check if already signed
+    if (signerType === 'employee' && contract.employeeSignedAt) {
+      throw new BadRequestException('Contract already signed by employee');
+    }
+    if (signerType === 'employer' && contract.employerSignedAt) {
+      throw new BadRequestException('Contract already signed by employer');
+    }
+
     const updateData: any = {};
     if (signerType === 'employee') {
-      updateData.employeeSignatureUrl = signatureUrl;
       updateData.employeeSignedAt = new Date();
+      if (typedName) updateData.employeeTypedName = typedName;
+      if (ipAddress) updateData.employeeSigningIp = ipAddress;
+      // Clear token after signing
+      updateData.employeeSigningToken = undefined;
+      updateData.employeeSigningTokenExpiresAt = undefined;
     } else if (signerType === 'employer') {
-      updateData.employerSignatureUrl = signatureUrl;
       updateData.employerSignedAt = new Date();
+      if (typedName) updateData.employerTypedName = typedName;
+      if (ipAddress) updateData.employerSigningIp = ipAddress;
+      // Clear token after signing
+      updateData.employerSigningToken = undefined;
+      updateData.employerSigningTokenExpiresAt = undefined;
     } else {
       throw new BadRequestException('Invalid signer type');
     }

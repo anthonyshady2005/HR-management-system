@@ -44,7 +44,7 @@ export function Navbar() {
               <Users className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-sm text-slate-300">HR Hub</p>
+              <p className="text-sm text-slate-300">Edara HRMS</p>
               <p className="text-xs text-slate-500">Logged in as {user.fullName || user.email}</p>
             </div>
           </div>

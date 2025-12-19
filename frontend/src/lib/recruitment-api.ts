@@ -397,6 +397,25 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  sendCalendarInvite: async (interviewId: string): Promise<any> => {
+    const response = await api.post(`/recruitment/interviews/${interviewId}/send-calendar-invite`);
+    return response.data;
+  },
+
+  createInterview: async (data: {
+    applicationId: string;
+    stage: string;
+    scheduledDate: string;
+    method: string;
+    location?: string;
+    videoLink?: string;
+    panel?: string[];
+    notes?: string;
+  }): Promise<any> => {
+    const response = await api.post(`/recruitment/interviews`, data);
+    return response.data;
+  },
+
   // Offers
   getOffers: async (filters?: {
     applicationId?: string;
@@ -614,6 +633,7 @@ export const recruitmentApi = {
       `/recruitment/interviews/${interviewId}/send-calendar-invite`
     );
     return response.data;
+
   },
 
   submitAssessment: async (
@@ -644,7 +664,7 @@ export const recruitmentApi = {
     grossSalary: number;
     signingBonus?: number;
     benefits?: string[];
-    insurances?: string[];
+    insurances?: string;
     conditions?: string;
     content?: string;
     role?: string;
@@ -656,6 +676,10 @@ export const recruitmentApi = {
     }>;
   }): Promise<Offer> => {
     const response = await api.post("/recruitment/offers", data);
+    // Ensure _id is a string
+    if (response.data && response.data._id && typeof response.data._id !== 'string') {
+      response.data._id = response.data._id.toString();
+    }
     return response.data;
   },
 
@@ -687,7 +711,31 @@ export const recruitmentApi = {
   },
 
   sendOfferToCandidate: async (id: string): Promise<any> => {
-    const response = await api.post(`/recruitment/offers/${id}/send-email`);
+    const response = await api.post(`/recruitment/offers/${id}/send`);
+    return response.data;
+  },
+
+  generateOfferSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/offers/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
+    return response.data;
+  },
+
+  generateContractSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/contracts/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
     return response.data;
   },
 };

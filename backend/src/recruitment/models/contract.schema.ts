@@ -38,6 +38,32 @@ export class Contract {
 
   @Prop()
   employerSignedAt?: Date;
+
+  // SIGNING TOKENS (for public signing links)
+  @Prop()
+  employeeSigningToken?: string;
+
+  @Prop()
+  employeeSigningTokenExpiresAt?: Date;
+
+  @Prop()
+  employerSigningToken?: string;
+
+  @Prop()
+  employerSigningTokenExpiresAt?: Date;
+
+  // SIGNATURE DETAILS
+  @Prop()
+  employeeTypedName?: string;
+
+  @Prop()
+  employeeSigningIp?: string;
+
+  @Prop()
+  employerTypedName?: string;
+
+  @Prop()
+  employerSigningIp?: string;
 }
 
 export type ContractDocument = HydratedDocument<Contract>;

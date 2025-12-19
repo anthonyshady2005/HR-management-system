@@ -14,6 +14,7 @@ import {
   Video,
   Phone,
   MapPin,
+  Trash2,
 } from "lucide-react";
 import { recruitmentApi, type Interview } from "@/lib/recruitment-api";
 
@@ -57,7 +58,9 @@ export default function InterviewsPage() {
       filtered = filtered.filter(
         (interview) =>
           interview._id.toLowerCase().includes(query) ||
-          interview.applicationId?.toString().toLowerCase().includes(query)
+          (typeof interview.applicationId === 'object' && interview.applicationId?._id
+            ? interview.applicationId._id.toString().toLowerCase().includes(query)
+            : interview.applicationId?.toString().toLowerCase().includes(query))
       );
     }
 
@@ -67,11 +70,31 @@ export default function InterviewsPage() {
 
     if (filters.applicationId) {
       filtered = filtered.filter(
-        (interview) => interview.applicationId?.toString() === filters.applicationId
+        (interview) => {
+          const appId = typeof interview.applicationId === 'object' && interview.applicationId?._id
+            ? interview.applicationId._id.toString()
+            : interview.applicationId?.toString();
+          return appId === filters.applicationId;
+        }
       );
     }
 
     setFilteredInterviews(filtered);
+  };
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this interview? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await recruitmentApi.deleteInterview(id);
+      await loadInterviews();
+    } catch (error) {
+      console.error("Error deleting interview:", error);
+      alert("Failed to delete interview");
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -247,7 +270,7 @@ export default function InterviewsPage() {
                       <th className="text-left px-6 py-4 text-sm text-slate-400">
                         Status
                       </th>
-                      <th className="text-left px-6 py-4 text-sm text-slate-400"></th>
+                      <th className="text-left px-6 py-4 text-sm text-slate-400">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -267,7 +290,9 @@ export default function InterviewsPage() {
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-slate-300">
-                              {interview.applicationId?.toString().slice(-8) || "N/A"}
+                              {typeof interview.applicationId === 'object' && interview.applicationId?._id
+                                ? interview.applicationId._id.toString().slice(-8)
+                                : interview.applicationId?.toString().slice(-8) || "N/A"}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -303,13 +328,22 @@ export default function InterviewsPage() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <Link
-                              href={`/recruitment/interviews/${interview._id}`}
-                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-                              className="w-8 h-8 rounded-lg backdrop-blur-xl bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all inline-flex"
-                            >
-                              <Eye className="w-4 h-4 text-slate-400" />
-                            </Link>
+                            <div className="flex items-center gap-2">
+                              <Link
+                                href={`/recruitment/interviews/${interview._id}`}
+                                onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+                                className="w-8 h-8 rounded-lg backdrop-blur-xl bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all inline-flex"
+                              >
+                                <Eye className="w-4 h-4 text-slate-400" />
+                              </Link>
+                              <button
+                                onClick={(e) => handleDelete(interview._id, e)}
+                                className="w-8 h-8 rounded-lg backdrop-blur-xl bg-white/5 border border-white/10 flex items-center justify-center hover:bg-red-500/20 hover:border-red-500/30 transition-all inline-flex"
+                                title="Delete interview"
+                              >
+                                <Trash2 className="w-4 h-4 text-slate-400 hover:text-red-400" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -353,7 +387,9 @@ export default function InterviewsPage() {
                           <div>
                             <p className="text-white">
                               {interview.stage || "Interview"} - Application #
-                              {interview.applicationId?.toString().slice(-8)}
+                              {typeof interview.applicationId === 'object' && interview.applicationId?._id
+                                ? interview.applicationId._id.toString().slice(-8)
+                                : interview.applicationId?.toString().slice(-8)}
                             </p>
                             <div className="flex items-center gap-4 mt-2">
                               <div className="flex items-center gap-2 text-slate-400 text-sm">

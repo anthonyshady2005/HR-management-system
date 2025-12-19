@@ -35,6 +35,7 @@ export class EmailIntegrationService {
     offerId: string,
     offerDetails: any,
     pdfUrl?: string,
+    signingUrl?: string,
   ): Promise<void> {
     try {
       if (!this.transporter) {
@@ -53,8 +54,16 @@ export class EmailIntegrationService {
           <p><strong>Position:</strong> ${offerDetails.role || 'N/A'}</p>
           <p><strong>Salary:</strong> ${offerDetails.grossSalary || 'N/A'}</p>
           ${offerDetails.signingBonus ? `<p><strong>Signing Bonus:</strong> ${offerDetails.signingBonus}</p>` : ''}
-          ${pdfUrl ? `<p><a href="${pdfUrl}">Download Offer Letter (PDF)</a></p>` : ''}
-          <p>Please log in to your candidate portal to review and respond to this offer.</p>
+          ${pdfUrl ? `<p><a href="${pdfUrl}" style="display: inline-block; padding: 10px 20px; background-color: #4F46E5; color: white; text-decoration: none; border-radius: 5px; margin: 10px 0;">Download Offer Letter (PDF)</a></p>` : ''}
+          ${signingUrl ? `
+            <div style="margin: 20px 0; padding: 20px; background-color: #F3F4F6; border-radius: 5px;">
+              <p style="margin-bottom: 10px;"><strong>Ready to accept this offer?</strong></p>
+              <p style="margin-bottom: 15px;">Click the button below to review and sign the offer letter online:</p>
+              <a href="${signingUrl}" style="display: inline-block; padding: 12px 24px; background-color: #10B981; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Sign Offer Letter</a>
+              <p style="margin-top: 15px; font-size: 12px; color: #6B7280;">This link will expire in 7 days.</p>
+            </div>
+          ` : ''}
+          <p>If you have any questions, please don't hesitate to contact our HR team.</p>
           <p>Best regards,<br>HR Team</p>
         `,
       };

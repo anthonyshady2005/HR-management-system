@@ -23,6 +23,7 @@ import express from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
+import * as fs from 'fs';
 import {
   ApiTags,
   ApiOperation,
@@ -472,6 +473,17 @@ export class RecruitmentController {
     return this.recruitmentService.sendCalendarInvite(id);
   }
 
+  @Delete('interviews/:id')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.RECRUITER, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Delete interview', description: 'Deletes an interview by ID' })
+  @ApiParam({ name: 'id', description: 'Interview ID' })
+  @ApiResponse({ status: 200, description: 'Interview deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Interview not found' })
+  async deleteInterview(@Param('id') id: string) {
+    await this.recruitmentService.deleteInterview(id);
+    return { message: 'Interview deleted successfully' };
+  }
+
   // ==================== Offer Endpoints ====================
 
   @Post('offers')
@@ -557,12 +569,81 @@ export class RecruitmentController {
   @ApiResponse({ status: 200, description: 'Offer signed successfully' })
   @ApiResponse({ status: 404, description: 'Offer not found' })
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
-  async signOffer(@Param('id') id: string, @Body() signDto: any) {
+  async signOffer(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
     return this.recruitmentService.signOffer(
       id,
       signDto.signerType,
-      signDto.signature,
+      signDto.typedName,
+      ipAddress,
+      signDto.token,
     );
+  }
+
+  @Get('offers/:id/validate-token')
+  @Public()
+  @ApiOperation({ summary: 'Validate offer signing token', description: 'Public endpoint to validate a signing token for an offer' })
+  @ApiParam({ name: 'id', description: 'Offer ID' })
+  @ApiResponse({ status: 200, description: 'Token is valid' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async validateOfferToken(@Param('id') id: string, @Query('token') token: string, @Query('signerType') signerType: string) {
+    const offer = await this.recruitmentService.validateOfferSigningToken(id, token, signerType);
+    const candidate = await this.recruitmentService['candidateModel'].findById(offer.candidateId).exec();
+    return {
+      valid: true,
+      offer: {
+        _id: offer._id,
+        role: offer.role,
+        grossSalary: offer.grossSalary,
+        signingBonus: offer.signingBonus,
+        benefits: offer.benefits,
+        deadline: offer.deadline,
+        content: offer.content,
+      },
+      candidate: candidate ? {
+        fullName: candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+        personalEmail: candidate.personalEmail,
+      } : null,
+    };
+  }
+
+  @Post('offers/:id/sign-public')
+  @Public()
+  @ApiOperation({ summary: 'Public offer signing', description: 'Public endpoint for candidates to sign offers using a token' })
+  @ApiParam({ name: 'id', description: 'Offer ID' })
+  @ApiResponse({ status: 200, description: 'Offer signed successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid token or validation error' })
+  async signOfferPublic(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
+    if (!signDto.token || !signDto.typedName) {
+      throw new BadRequestException('Token and typed name are required');
+    }
+    return this.recruitmentService.signOffer(
+      id,
+      signDto.signerType || 'candidate',
+      signDto.typedName,
+      ipAddress,
+      signDto.token,
+    );
+  }
+
+  @Post('offers/:id/generate-signing-link')
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Generate signing link for offer', description: 'Generates a secure signing token and returns the signing URL' })
+  @ApiParam({ name: 'id', description: 'Offer ID' })
+  @ApiResponse({ status: 200, description: 'Signing link generated successfully' })
+  async generateOfferSigningLink(@Param('id') id: string, @Body() body: { signerType: string; expiresInDays?: number }) {
+    const token = await this.recruitmentService.generateOfferSigningToken(
+      id,
+      body.signerType,
+      body.expiresInDays || 7,
+    );
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5001';
+    return {
+      token,
+      signingUrl: `${baseUrl}/offers/${id}/sign?token=${token}&signerType=${body.signerType}`,
+      expiresInDays: body.expiresInDays || 7,
+    };
   }
 
   @Post('offers/:id/generate-pdf')
@@ -624,12 +705,80 @@ export class RecruitmentController {
   @ApiResponse({ status: 200, description: 'Contract signed successfully' })
   @ApiResponse({ status: 404, description: 'Contract not found' })
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
-  async signContract(@Param('id') id: string, @Body() signDto: any) {
+  async signContract(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
     return this.recruitmentService.signContract(
       id,
       signDto.signerType,
-      signDto.signatureUrl,
+      signDto.typedName,
+      ipAddress,
+      signDto.token,
     );
+  }
+
+  @Get('contracts/:id/validate-token')
+  @Public()
+  @ApiOperation({ summary: 'Validate contract signing token', description: 'Public endpoint to validate a signing token for a contract' })
+  @ApiParam({ name: 'id', description: 'Contract ID' })
+  @ApiResponse({ status: 200, description: 'Token is valid' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async validateContractToken(@Param('id') id: string, @Query('token') token: string, @Query('signerType') signerType: string) {
+    const contract = await this.recruitmentService.validateContractSigningToken(id, token, signerType);
+    const offer = await this.recruitmentService['offerModel'].findById(contract.offerId).populate('candidateId').exec();
+    return {
+      valid: true,
+      contract: {
+        _id: contract._id,
+        role: contract.role,
+        grossSalary: contract.grossSalary,
+        signingBonus: contract.signingBonus,
+        benefits: contract.benefits,
+        acceptanceDate: contract.acceptanceDate,
+      },
+      candidate: offer?.candidateId ? {
+        fullName: (offer.candidateId as any).fullName || `${(offer.candidateId as any).firstName} ${(offer.candidateId as any).lastName}`,
+        personalEmail: (offer.candidateId as any).personalEmail,
+      } : null,
+    };
+  }
+
+  @Post('contracts/:id/sign-public')
+  @Public()
+  @ApiOperation({ summary: 'Public contract signing', description: 'Public endpoint for employees/employers to sign contracts using a token' })
+  @ApiParam({ name: 'id', description: 'Contract ID' })
+  @ApiResponse({ status: 200, description: 'Contract signed successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid token or validation error' })
+  async signContractPublic(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
+    if (!signDto.token || !signDto.typedName) {
+      throw new BadRequestException('Token and typed name are required');
+    }
+    return this.recruitmentService.signContract(
+      id,
+      signDto.signerType || 'employee',
+      signDto.typedName,
+      ipAddress,
+      signDto.token,
+    );
+  }
+
+  @Post('contracts/:id/generate-signing-link')
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Generate signing link for contract', description: 'Generates a secure signing token and returns the signing URL' })
+  @ApiParam({ name: 'id', description: 'Contract ID' })
+  @ApiResponse({ status: 200, description: 'Signing link generated successfully' })
+  async generateContractSigningLink(@Param('id') id: string, @Body() body: { signerType: string; expiresInDays?: number }) {
+    const token = await this.recruitmentService.generateContractSigningToken(
+      id,
+      body.signerType,
+      body.expiresInDays || 7,
+    );
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5001';
+    return {
+      token,
+      signingUrl: `${baseUrl}/contracts/${id}/sign?token=${token}&signerType=${body.signerType}`,
+      expiresInDays: body.expiresInDays || 7,
+    };
   }
 
   @Get('contracts/:id/pdf')
@@ -840,7 +989,14 @@ export class RecruitmentController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: './uploads/documents',
+        destination: (req, file, cb) => {
+          const uploadDir = './uploads/documents';
+          // Ensure directory exists
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          cb(null, uploadDir);
+        },
         filename: (req, file, cb) => {
           const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = path.extname(file.originalname);
@@ -883,6 +1039,10 @@ export class RecruitmentController {
     file: any, // Express.Multer.File - type will be available when multer types are installed
     @Body() documentDto: CreateDocumentDto,
   ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
     return this.recruitmentService.createDocument({
       ...documentDto,
       filePath: file.path,
