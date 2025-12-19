@@ -656,5 +656,40 @@ export async function fetchOverlappingLeaves(
     const res = await api.get(`/leaves/requests/manager/${managerId}/pending-team`, {
         params: { overlappingOnly: overlappingOnly.toString() }
     });
-    return res.data as OverlappingLeavesResponse;
+    const data = res.data as OverlappingLeavesResponse;
+    const deriveEmployeeName = (employee: any): string | undefined => {
+        if (!employee || typeof employee === "string") return undefined;
+        if (employee.displayName) return employee.displayName;
+        if (employee.fullName) return employee.fullName;
+        if (employee.firstName && employee.lastName) {
+            return `${employee.firstName} ${employee.lastName}`;
+        }
+        if (employee.firstName) return employee.firstName;
+        return undefined;
+    };
+    const normalizeRequest = (req: any): LeaveRequest => {
+        const id =
+            req?.id?.toString?.() ||
+            req?._id?.toString?.() ||
+            req?.id ||
+            req?._id ||
+            "";
+        const employeeDisplayName =
+            req?.employeeDisplayName ||
+            deriveEmployeeName(req?.employee) ||
+            deriveEmployeeName(req?.employeeId);
+        const leaveType = req?.leaveType || req?.leaveTypeId;
+        return {
+            ...(req || {}),
+            id,
+            leaveType,
+            employeeDisplayName,
+        } as LeaveRequest;
+    };
+
+    return {
+        ...data,
+        requests: (data?.requests || []).map(normalizeRequest),
+        allRequests: (data?.allRequests || []).map(normalizeRequest),
+    };
 }

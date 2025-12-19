@@ -1629,7 +1629,12 @@ export default function LeavesDashboardPage() {
         setOverlappingLoading(true);
         setError(null);
         try {
-            const data = await fetchOverlappingLeaves(user.id, showOverlappingOnly);
+            const managerId =
+                profile?._id?.toString?.() ||
+                profile?.id?.toString?.() ||
+                profile?.employeeId?.toString?.() ||
+                user.id;
+            const data = await fetchOverlappingLeaves(managerId, showOverlappingOnly);
             setOverlappingLeaves(data);
         } catch (err: any) {
             setError(err?.response?.data?.message || "Failed to load overlapping leaves.");
@@ -1787,7 +1792,7 @@ export default function LeavesDashboardPage() {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                                    <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
                                         {overlappingLeaves.requests.map((req) => {
                                             const isOverlapping = overlappingLeaves.overlaps.some(
                                                 (o) => o.requestA === req.id || o.requestB === req.id
@@ -4819,6 +4824,14 @@ function renderEmployee(employee: any, opts?: { allowId?: boolean }): string {
         const disp = (employee as any).employeeDisplayName;
         if (opts?.allowId === false && isLikelyId(disp)) return "Unknown";
         return disp;
+    }
+    const requestEmployee = (employee as any).employeeId;
+    const isRequestLike =
+        Boolean((employee as any).dates) ||
+        Boolean((employee as any).leaveTypeId) ||
+        Boolean((employee as any).status);
+    if (requestEmployee && isRequestLike) {
+        return renderEmployee(requestEmployee, opts);
     }
     if ((employee as any).employee) {
         const nested: string = renderEmployee((employee as any).employee, opts);

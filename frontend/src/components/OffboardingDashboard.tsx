@@ -128,12 +128,40 @@ export default function OffboardingDashboard() {
 
       // Process terminations data
       if (terminationsData.status === "fulfilled") {
+        // Helper function to derive type from reason
+        const deriveType = (reason?: string): "resignation" | "termination" => {
+          if (!reason) return "termination";
+          const reasonLower = reason.toLowerCase();
+          if (reasonLower.includes("resign") || reasonLower.includes("resigned")) {
+            return "resignation";
+          }
+          return "termination";
+        };
+
         // Backend should populate employee information
-        const terminationsToUse = terminationsData.value.map((t) => ({
-          ...t,
-          employeeName: `Employee ${t.employeeId}`,
-          employeeDepartment: "Unknown",
-        }));
+        const terminationsToUse = terminationsData.value.map((t) => {
+          const employee = t.employeeId;
+          const employeeName = employee
+            ? typeof employee === 'object'
+              ? employee.fullName || `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || employee.employeeNumber || 'Unknown Employee'
+              : 'Unknown Employee'
+            : 'Unknown Employee';
+          
+          const employeeDepartment = employee
+            ? typeof employee === 'object' && employee.primaryDepartmentId
+              ? typeof employee.primaryDepartmentId === 'object'
+                ? employee.primaryDepartmentId.name || 'Unknown'
+                : 'Unknown'
+              : 'Unknown'
+            : 'Unknown';
+
+          return {
+            ...t,
+            employeeName,
+            employeeDepartment,
+            type: t.type || deriveType(t.reason), // Use existing type or derive from reason
+          };
+        });
         setTerminations(terminationsToUse);
         
         // Calculate stats from terminations if stats API fails
@@ -148,12 +176,40 @@ export default function OffboardingDashboard() {
       if (statsData.status === "fulfilled" && statsData.value) {
         setStats(statsData.value);
       } else if (terminationsData.status === "fulfilled" && terminationsData.value.length > 0) {
+        // Helper function to derive type from reason
+        const deriveType = (reason?: string): "resignation" | "termination" => {
+          if (!reason) return "termination";
+          const reasonLower = reason.toLowerCase();
+          if (reasonLower.includes("resign") || reasonLower.includes("resigned")) {
+            return "resignation";
+          }
+          return "termination";
+        };
+
         // Calculate stats from terminations if stats API fails
-        const terminationsToUse = terminationsData.value.map((t) => ({
-          ...t,
-          employeeName: `Employee ${t.employeeId}`,
-          employeeDepartment: "Unknown",
-        }));
+        const terminationsToUse = terminationsData.value.map((t) => {
+          const employee = t.employeeId;
+          const employeeName = employee
+            ? typeof employee === 'object'
+              ? employee.fullName || `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || employee.employeeNumber || 'Unknown Employee'
+              : 'Unknown Employee'
+            : 'Unknown Employee';
+          
+          const employeeDepartment = employee
+            ? typeof employee === 'object' && employee.primaryDepartmentId
+              ? typeof employee.primaryDepartmentId === 'object'
+                ? employee.primaryDepartmentId.name || 'Unknown'
+                : 'Unknown'
+              : 'Unknown'
+            : 'Unknown';
+
+          return {
+            ...t,
+            employeeName,
+            employeeDepartment,
+            type: t.type || deriveType(t.reason), // Use existing type or derive from reason
+          };
+        });
         calculateStatsFromData(terminationsToUse);
       } else {
         setStats(null);
@@ -687,9 +743,13 @@ export default function OffboardingDashboard() {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-slate-400">
-                            {termination.initiatedBy === "employee"
+                            {termination.initiator === "employee"
                               ? "Employee"
-                              : "HR"}
+                              : termination.initiator === "hr"
+                              ? "HR"
+                              : termination.initiator === "manager"
+                              ? "Manager"
+                              : "Unknown"}
                           </td>
                           <td className="py-3 px-4 text-slate-400">
                             {termination.terminationDate

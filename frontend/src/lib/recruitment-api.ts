@@ -838,14 +838,14 @@ export const offboardingApi = {
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/termination-requests?${params.toString()}`
+      `/recruitment/terminations?${params.toString()}`
     );
     return response.data;
   },
 
   // Get termination request by ID
   getTerminationById: async (id: string): Promise<TerminationRequest> => {
-    const response = await api.get(`/recruitment/termination-requests/${id}`);
+    const response = await api.get(`/recruitment/terminations/${id}`);
     return response.data;
   },
 
@@ -868,7 +868,7 @@ export const offboardingApi = {
     id: string,
     status: TerminationStatus
   ): Promise<TerminationRequest> => {
-    const response = await api.patch(`/recruitment/termination-requests/${id}/status`, {
+    const response = await api.patch(`/recruitment/terminations/${id}/status`, {
       status,
     });
     return response.data;
@@ -886,7 +886,7 @@ export const offboardingApi = {
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/termination-requests/stats?${params.toString()}`
+      `/recruitment/terminations/stats?${params.toString()}`
     );
     return response.data;
   },
@@ -903,7 +903,7 @@ export const offboardingApi = {
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/termination-requests/turnover?${params.toString()}`
+      `/recruitment/terminations/turnover?${params.toString()}`
     );
     return response.data;
   },
@@ -920,14 +920,14 @@ export const offboardingApi = {
     if (filters?.department) params.append("department", filters.department);
 
     const response = await api.get(
-      `/recruitment/termination-requests/reasons?${params.toString()}`
+      `/recruitment/terminations/reasons?${params.toString()}`
     );
     return response.data;
   },
 
   // Get clearance checklist
   getClearanceChecklist: async (id: string): Promise<ClearanceChecklist | null> => {
-    const response = await api.get(`/recruitment/termination-requests/${id}/clearance`);
+    const response = await api.get(`/recruitment/terminations/${id}/clearance`);
     return response.data;
   },
 
@@ -941,7 +941,7 @@ export const offboardingApi = {
     }
   ): Promise<ClearanceChecklist> => {
     const response = await api.patch(
-      `/recruitment/termination-requests/${id}/clearance`,
+      `/recruitment/terminations/${id}/clearance`,
       data
     );
     return response.data;

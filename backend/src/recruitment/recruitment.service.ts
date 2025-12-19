@@ -2841,9 +2841,19 @@ export class RecruitmentService {
       throw new BadRequestException('Invalid employee ID');
     }
 
-    // Find offerId if not provided - look for employee's onboarding record
+    // Find offerId if not provided - look for employee's onboarding record or offer
+    // Verify employee exists first (we need it for lookup)
+    const employee = await this.employeeProfileModel
+      .findById(createDto.employeeId)
+      .lean()
+      .exec();
+    if (!employee) {
+      throw new NotFoundException('Employee profile not found');
+    }
+
     let offerId = createDto.offerId;
     if (!offerId) {
+      // Method 1: Try to find offer through onboarding record
       const onboarding = await this.onboardingModel
         .findOne({ employeeId: new Types.ObjectId(createDto.employeeId) })
         .sort({ createdAt: -1 }) // Get most recent onboarding
@@ -2853,8 +2863,9 @@ export class RecruitmentService {
         offerId = onboarding.offerId.toString();
         this.logger.log(`Found offer ${offerId} from onboarding for employee ${createDto.employeeId}`);
       } else {
-        // Try to find offer by candidateId (employee ID when created from candidate)
-        const offer = await this.offerModel
+        // Method 2: Try to find offer by candidateId (if employee ID matches candidate ID)
+        // This works when employee profile was created directly from candidate (same _id)
+        let offer = await this.offerModel
           .findOne({ candidateId: new Types.ObjectId(createDto.employeeId) })
           .sort({ createdAt: -1 }) // Get most recent offer
           .exec();
@@ -2863,24 +2874,59 @@ export class RecruitmentService {
           offerId = offer._id.toString();
           this.logger.log(`Found offer ${offerId} by candidateId for employee ${createDto.employeeId}`);
         } else {
-          throw new BadRequestException(
-            'Offer ID is required. Cannot find associated offer for this employee. ' +
-            'Please provide offerId or ensure employee has an onboarding record or offer.'
-          );
+          // Method 3: Try to find offer through candidate email match -> application -> offer
+          const employeeEmail = (employee as any).workEmail || (employee as any).personalEmail;
+          
+          if (employeeEmail) {
+            // Find candidate by email (Candidate extends UserProfileBase which has personalEmail)
+            // Check both personalEmail and workEmail (if candidate has workEmail)
+            const candidate = await this.candidateModel
+              .findOne({
+                $or: [
+                  { personalEmail: employeeEmail },
+                  { workEmail: employeeEmail },
+                ],
+              })
+              .sort({ createdAt: -1 })
+              .exec();
+            
+            if (candidate) {
+              // Find application by candidateId
+              const application = await this.applicationModel
+                .findOne({ candidateId: candidate._id })
+                .sort({ createdAt: -1 })
+                .exec();
+              
+              if (application) {
+                // Find offer by applicationId
+                offer = await this.offerModel
+                  .findOne({ applicationId: application._id })
+                  .sort({ createdAt: -1 })
+                  .exec();
+                
+                if (offer) {
+                  offerId = offer._id.toString();
+                  this.logger.log(`Found offer ${offerId} through candidate email match for employee ${createDto.employeeId}`);
+                }
+              }
+            }
+          }
+          
+          // If still no offer found, throw helpful error
+          if (!offerId) {
+            this.logger.warn(`Could not find offer for employee ${createDto.employeeId}. Attempted: onboarding record, candidateId match, and candidate email lookup.`);
+            throw new BadRequestException(
+              'Offer ID is required. Cannot find associated offer for this employee. ' +
+              'This employee may not have gone through the recruitment process, or the offer link may be missing. ' +
+              'Please provide offerId manually or contact system administrator.'
+            );
+          }
         }
       }
     }
 
     if (!Types.ObjectId.isValid(offerId)) {
       throw new BadRequestException('Invalid offer ID');
-    }
-
-    // Verify employee exists
-    const employee = await this.employeeProfileModel
-      .findById(createDto.employeeId)
-      .exec();
-    if (!employee) {
-      throw new NotFoundException('Employee profile not found');
     }
 
     const termination = new this.terminationRequestModel({
@@ -2962,7 +3008,14 @@ export class RecruitmentService {
   ): Promise<TerminationRequestDocument[]> {
     const query = this.terminationRequestModel
       .find()
-      .populate('employeeId')
+      .populate({
+        path: 'employeeId',
+        select: 'firstName lastName fullName primaryDepartmentId workEmail employeeNumber',
+        populate: {
+          path: 'primaryDepartmentId',
+          select: 'name code',
+        },
+      })
       .populate('offerId');
 
     if (filters?.status) {
@@ -2993,7 +3046,14 @@ export class RecruitmentService {
 
     const termination = await this.terminationRequestModel
       .findById(id)
-      .populate('employeeId')
+      .populate({
+        path: 'employeeId',
+        select: 'firstName lastName fullName primaryDepartmentId workEmail employeeNumber',
+        populate: {
+          path: 'primaryDepartmentId',
+          select: 'name code',
+        },
+      })
       .populate('offerId')
       .exec();
 
@@ -3144,12 +3204,13 @@ export class RecruitmentService {
 
   /**
    * Get clearance checklist for termination
+   * Automatically initializes checklist if it doesn't exist (lazy initialization)
    * @param id - Termination request ID
-   * @returns Clearance checklist document or null
+   * @returns Clearance checklist document
    */
   async getClearanceChecklist(
     id: string,
-  ): Promise<ClearanceChecklistDocument | null> {
+  ): Promise<ClearanceChecklistDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid termination request ID');
     }
@@ -3164,10 +3225,30 @@ export class RecruitmentService {
       );
     }
 
-    return await this.clearanceChecklistModel
+    // Try to find existing checklist
+    let checklist = await this.clearanceChecklistModel
       .findOne({ terminationId: new Types.ObjectId(id) })
       .populate('items.updatedBy')
       .exec();
+
+    // If checklist doesn't exist, initialize it (lazy initialization)
+    if (!checklist) {
+      this.logger.log(`Clearance checklist not found for termination ${id}, initializing...`);
+      try {
+        checklist = await this.initializeClearanceChecklist(id);
+        this.logger.log(`Successfully initialized clearance checklist for termination ${id}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to initialize clearance checklist for termination ${id}:`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        throw new BadRequestException(
+          `Failed to initialize clearance checklist: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    }
+
+    return checklist;
   }
 
   /**

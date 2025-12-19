@@ -902,12 +902,13 @@ export class RecruitmentController {
   // ==================== Termination Endpoints ====================
 
   @Post('terminations')
-  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Roles(SystemRole.HR_MANAGER)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create termination request', description: 'Creates a termination request for an employee (resignation or termination)' })
+  @ApiOperation({ summary: 'Create termination request', description: 'Creates a termination request for an employee (resignation or termination). Only HR Manager can initiate termination requests.' })
   @ApiBody({ type: CreateTerminationRequestDto })
   @ApiResponse({ status: 201, description: 'Termination request created successfully' })
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
+  @ApiResponse({ status: 403, description: 'Forbidden - only HR Manager can initiate termination requests' })
   async createTerminationRequest(@Body() createDto: CreateTerminationRequestDto) {
     return this.recruitmentService.createTerminationRequest(createDto);
   }
