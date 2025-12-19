@@ -563,7 +563,7 @@ export class RecruitmentController {
   }
 
   @Post('offers/:id/sign')
-  @Roles(SystemRole.JOB_CANDIDATE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Roles(SystemRole.JOB_CANDIDATE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.HR_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.SYSTEM_ADMIN)
   @ApiOperation({ summary: 'Sign offer', description: 'Signs an offer letter (candidate, HR, or manager signature)' })
   @ApiParam({ name: 'id', description: 'Offer ID' })
   @ApiResponse({ status: 200, description: 'Offer signed successfully' })
@@ -571,12 +571,14 @@ export class RecruitmentController {
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
   async signOffer(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
     const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
+    const userId = (req as any).user?._id?.toString() || (req as any).user?.sub?.toString();
     return this.recruitmentService.signOffer(
       id,
       signDto.signerType,
       signDto.typedName,
       ipAddress,
       signDto.token,
+      userId,
     );
   }
 

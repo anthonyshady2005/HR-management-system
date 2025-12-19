@@ -17,13 +17,24 @@ import {
   Copy,
   Link as LinkIcon,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
 import { api } from "@/lib/api";
+import { useAuth } from "@/providers/auth-provider";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function OfferDetailPage() {
   const router = useRouter();
   const params = useParams();
+  const { user, roles, currentRole } = useAuth();
   const rawId = params.id;
   // Ensure id is always a string
   const id = typeof rawId === 'string' ? rawId : (rawId as any)?._id?.toString() || String(rawId);
@@ -34,6 +45,12 @@ export default function OfferDetailPage() {
   const [candidateSigningLink, setCandidateSigningLink] = useState<string | null>(null);
   const [generatingLink, setGeneratingLink] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
+  const [signingModalOpen, setSigningModalOpen] = useState(false);
+  const [signingType, setSigningType] = useState<'hr' | 'manager' | null>(null);
+  const [typedName, setTypedName] = useState("");
+  const [signing, setSigning] = useState(false);
+  const [nameError, setNameError] = useState("");
 
   useEffect(() => {
     // If the ID is "new", redirect to the new offer page
@@ -61,6 +78,21 @@ export default function OfferDetailPage() {
 
     return () => clearInterval(interval);
   }, [offer?.candidateSignedAt, id]);
+
+  // Load current user profile
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      try {
+        const response = await api.get('/employee-profile/me');
+        setCurrentUserProfile(response.data);
+      } catch (error) {
+        console.error('Failed to load current user profile:', error);
+      }
+    };
+    if (user) {
+      loadCurrentUser();
+    }
+  }, [user]);
 
   const loadOffer = async () => {
     // Double-check the ID is valid
@@ -154,6 +186,93 @@ export default function OfferDetailPage() {
       alert("Failed to send email. Please try again.");
     } finally {
       setSendingEmail(false);
+    }
+  };
+
+  // Determine if current user can sign and what type
+  const getSigningEligibility = () => {
+    if (!currentUserProfile || !roles || !currentRole) {
+      return { canSign: false, signerType: null, role: null, fullName: null };
+    }
+
+    const userFullName = currentUserProfile.fullName || `${currentUserProfile.firstName || ''} ${currentUserProfile.lastName || ''}`.trim();
+    
+    // Check if user has HR roles
+    const hasHrRole = roles.some(role => 
+      role === 'HR_MANAGER' || 
+      role === 'HR_ADMIN' || 
+      role === 'HR_EMPLOYEE' ||
+      role === 'SYSTEM_ADMIN'
+    );
+
+    // Check if user has Manager role
+    const hasManagerRole = roles.some(role => 
+      role === 'DEPARTMENT_HEAD' ||
+      role === 'SYSTEM_ADMIN'
+    );
+
+    // Determine which signature they can provide
+    if (hasHrRole && !offer?.hrSignedAt) {
+      return { 
+        canSign: true, 
+        signerType: 'hr' as const, 
+        role: 'HR',
+        fullName: userFullName
+      };
+    }
+    
+    if (hasManagerRole && !offer?.managerSignedAt) {
+      return { 
+        canSign: true, 
+        signerType: 'manager' as const, 
+        role: 'Manager',
+        fullName: userFullName
+      };
+    }
+
+    return { canSign: false, signerType: null, role: null, fullName: userFullName };
+  };
+
+  const handleOpenSigningModal = (type: 'hr' | 'manager') => {
+    setSigningType(type);
+    setTypedName("");
+    setNameError("");
+    setSigningModalOpen(true);
+  };
+
+  const handleSignOffer = async () => {
+    if (!signingType || !typedName.trim()) {
+      setNameError("Please enter your full name");
+      return;
+    }
+
+    const eligibility = getSigningEligibility();
+    if (!eligibility.fullName) {
+      setNameError("Unable to verify your identity. Please refresh the page.");
+      return;
+    }
+
+    // Case-sensitive name verification
+    if (typedName.trim() !== eligibility.fullName) {
+      setNameError(`Name must match exactly: "${eligibility.fullName}" (case-sensitive)`);
+      return;
+    }
+
+    try {
+      setSigning(true);
+      setNameError("");
+      await api.post(`/recruitment/offers/${id}/sign`, {
+        signerType: signingType,
+        typedName: typedName.trim(),
+      });
+      setSigningModalOpen(false);
+      setTypedName("");
+      alert('Offer signed successfully!');
+      loadOffer();
+    } catch (error: any) {
+      setNameError(error.response?.data?.message || "Failed to sign offer. Please try again.");
+    } finally {
+      setSigning(false);
     }
   };
 
@@ -562,38 +681,30 @@ export default function OfferDetailPage() {
                       )}
                     </div>
                   )}
-                  {!offer.hrSignedAt && (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        id="hrTypedName"
-                        placeholder="Enter your full name"
-                        className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400"
-                      />
-                      <button
-                        onClick={async () => {
-                          const typedName = (document.getElementById('hrTypedName') as HTMLInputElement)?.value;
-                          if (!typedName) {
-                            alert('Please enter your full name');
-                            return;
-                          }
-                          try {
-                            await api.post(`/recruitment/offers/${id}/sign`, {
-                              signerType: 'hr',
-                              typedName,
-                            });
-                            alert('Offer signed successfully!');
-                            loadOffer();
-                          } catch (error: any) {
-                            alert(`Failed to sign: ${error.response?.data?.message || error.message}`);
-                          }
-                        }}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors"
-                      >
-                        Sign as HR
-                      </button>
-                    </div>
-                  )}
+                  {!offer.hrSignedAt && (() => {
+                    const eligibility = getSigningEligibility();
+                    const canSignAsHr = eligibility.canSign && eligibility.signerType === 'hr';
+                    return canSignAsHr ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-sm text-slate-400 mb-1">Current User</p>
+                          <p className="text-white font-semibold">{eligibility.fullName}</p>
+                          <p className="text-xs text-slate-400 mt-1">Role: {eligibility.role}</p>
+                        </div>
+                        <button
+                          onClick={() => handleOpenSigningModal('hr')}
+                          className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          Sign as HR
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-400 text-sm">
+                        {!currentUserProfile ? "Loading user information..." : "You are not eligible to sign as HR"}
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 {/* Manager Signature */}
@@ -628,44 +739,114 @@ export default function OfferDetailPage() {
                       )}
                     </div>
                   )}
-                  {!offer.managerSignedAt && (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        id="managerTypedName"
-                        placeholder="Enter your full name"
-                        className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400"
-                      />
-                      <button
-                        onClick={async () => {
-                          const typedName = (document.getElementById('managerTypedName') as HTMLInputElement)?.value;
-                          if (!typedName) {
-                            alert('Please enter your full name');
-                            return;
-                          }
-                          try {
-                            await api.post(`/recruitment/offers/${id}/sign`, {
-                              signerType: 'manager',
-                              typedName,
-                            });
-                            alert('Offer signed successfully!');
-                            loadOffer();
-                          } catch (error: any) {
-                            alert(`Failed to sign: ${error.response?.data?.message || error.message}`);
-                          }
-                        }}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors"
-                      >
-                        Sign as Manager
-                      </button>
-                    </div>
-                  )}
+                  {!offer.managerSignedAt && (() => {
+                    const eligibility = getSigningEligibility();
+                    const canSignAsManager = eligibility.canSign && eligibility.signerType === 'manager';
+                    return canSignAsManager ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-sm text-slate-400 mb-1">Current User</p>
+                          <p className="text-white font-semibold">{eligibility.fullName}</p>
+                          <p className="text-xs text-slate-400 mt-1">Role: {eligibility.role}</p>
+                        </div>
+                        <button
+                          onClick={() => handleOpenSigningModal('manager')}
+                          className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          Sign as Manager
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-400 text-sm">
+                        {!currentUserProfile ? "Loading user information..." : "You are not eligible to sign as Manager"}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
           )}
         </main>
       </div>
+
+      {/* Signing Modal */}
+      <Dialog open={signingModalOpen} onOpenChange={setSigningModalOpen}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              Sign Offer as {signingType === 'hr' ? 'HR' : 'Manager'}
+            </DialogTitle>
+            <DialogDescription className="text-slate-300">
+              Please verify your identity by typing your full name exactly as it appears in your profile.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+              <p className="text-sm text-slate-400 mb-1">Your Profile Name</p>
+              <p className="text-white font-semibold">
+                {getSigningEligibility().fullName || "Loading..."}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 mb-2 text-sm">
+                Type your full name (case-sensitive):
+              </label>
+              <input
+                type="text"
+                value={typedName}
+                onChange={(e) => {
+                  setTypedName(e.target.value);
+                  setNameError("");
+                }}
+                placeholder="Enter your full name exactly as shown above"
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={signing}
+                autoFocus
+              />
+              {nameError && (
+                <p className="text-red-400 text-sm mt-2 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  {nameError}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              onClick={() => {
+                setSigningModalOpen(false);
+                setTypedName("");
+                setNameError("");
+              }}
+              disabled={signing}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSignOffer}
+              disabled={signing || !typedName.trim()}
+              className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg text-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {signing ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Signing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  Sign
+                </>
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

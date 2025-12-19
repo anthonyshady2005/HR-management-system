@@ -1779,6 +1779,7 @@ export class RecruitmentService {
     typedName?: string,
     ipAddress?: string,
     token?: string,
+    userId?: string,
   ): Promise<OfferDocument> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid offer ID');
@@ -1818,6 +1819,17 @@ export class RecruitmentService {
       updateData.candidateSigningToken = undefined;
       updateData.candidateSigningTokenExpiresAt = undefined;
     } else if (signerType === 'hr') {
+      // Verify typed name matches user's full name (case-sensitive)
+      if (userId && typedName) {
+        const userProfile = await this.employeeProfileModel.findById(userId).exec();
+        if (!userProfile) {
+          throw new BadRequestException('User profile not found');
+        }
+        const userFullName = userProfile.fullName || `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim();
+        if (typedName.trim() !== userFullName) {
+          throw new BadRequestException(`Name verification failed. Expected: "${userFullName}" (case-sensitive)`);
+        }
+      }
       updateData.hrSignedAt = new Date();
       if (typedName) updateData.hrTypedName = typedName;
       if (ipAddress) updateData.hrSigningIp = ipAddress;
@@ -1825,6 +1837,17 @@ export class RecruitmentService {
       updateData.hrSigningToken = undefined;
       updateData.hrSigningTokenExpiresAt = undefined;
     } else if (signerType === 'manager') {
+      // Verify typed name matches user's full name (case-sensitive)
+      if (userId && typedName) {
+        const userProfile = await this.employeeProfileModel.findById(userId).exec();
+        if (!userProfile) {
+          throw new BadRequestException('User profile not found');
+        }
+        const userFullName = userProfile.fullName || `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim();
+        if (typedName.trim() !== userFullName) {
+          throw new BadRequestException(`Name verification failed. Expected: "${userFullName}" (case-sensitive)`);
+        }
+      }
       updateData.managerSignedAt = new Date();
       if (typedName) updateData.managerTypedName = typedName;
       if (ipAddress) updateData.managerSigningIp = ipAddress;
