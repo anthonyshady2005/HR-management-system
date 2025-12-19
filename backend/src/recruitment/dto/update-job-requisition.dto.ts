@@ -24,6 +24,14 @@ export class UpdateJobRequisitionDto {
   requisitionId?: string;
 
   @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  departmentId?: string;
+
+  @IsOptional()
   @IsMongoId()
   templateId?: string;
 

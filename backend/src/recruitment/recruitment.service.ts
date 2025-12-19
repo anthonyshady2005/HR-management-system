@@ -269,10 +269,21 @@ export class RecruitmentService {
       throw new BadRequestException('Invalid hiring manager ID');
     }
 
+    // Convert comma-separated tags string to array
+    const tagsArray = createDto.tags
+      ? createDto.tags
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter((tag) => tag.length > 0)
+      : [];
+
     const requisition = new this.jobRequisitionModel({
       ...createDto,
       templateId: createDto.templateId
         ? new Types.ObjectId(createDto.templateId)
+        : undefined,
+      departmentId: createDto.departmentId
+        ? new Types.ObjectId(createDto.departmentId)
         : undefined,
       hiringManagerId: new Types.ObjectId(createDto.hiringManagerId),
       postingDate: createDto.postingDate
@@ -281,6 +292,7 @@ export class RecruitmentService {
       expiryDate: createDto.expiryDate
         ? new Date(createDto.expiryDate)
         : undefined,
+      tags: tagsArray,
     });
 
     return await requisition.save();
@@ -294,7 +306,7 @@ export class RecruitmentService {
   async findAllJobRequisitions(
     filters?: any,
   ): Promise<JobRequisitionDocument[]> {
-    const query = this.jobRequisitionModel.find().populate('templateId').populate('hiringManagerId');
+    const query = this.jobRequisitionModel.find().populate('templateId').populate('hiringManagerId').populate('departmentId', 'name code');
 
     // Support both 'status' (from frontend) and 'publishStatus' (backend field name)
     const publishStatus = filters?.publishStatus || filters?.status;
@@ -320,6 +332,7 @@ export class RecruitmentService {
       .find({ publishStatus: 'published' })
       .populate('templateId')
       .populate('hiringManagerId')
+      .populate('departmentId', 'name code')
       .exec();
   }
 
@@ -340,6 +353,7 @@ export class RecruitmentService {
       .findById(id)
       .populate('templateId')
       .populate('hiringManagerId')
+      .populate('departmentId', 'name code')
       .exec();
 
     if (!requisition) {
@@ -367,6 +381,9 @@ export class RecruitmentService {
     if (updateDto.templateId) {
       updateData.templateId = new Types.ObjectId(updateDto.templateId);
     }
+    if (updateDto.departmentId) {
+      updateData.departmentId = new Types.ObjectId(updateDto.departmentId);
+    }
     if (updateDto.hiringManagerId) {
       updateData.hiringManagerId = new Types.ObjectId(updateDto.hiringManagerId);
     }
@@ -381,6 +398,7 @@ export class RecruitmentService {
       .findByIdAndUpdate(id, updateData, { new: true, runValidators: true })
       .populate('templateId')
       .populate('hiringManagerId')
+      .populate('departmentId', 'name code')
       .exec();
 
     if (!requisition) {
@@ -460,6 +478,7 @@ export class RecruitmentService {
       .findById(id)
       .populate('templateId')
       .populate('hiringManagerId')
+      .populate('departmentId', 'name code')
       .exec();
 
     if (!requisition) {
@@ -469,6 +488,8 @@ export class RecruitmentService {
     // Return formatted preview data
     return {
       requisitionId: requisition.requisitionId,
+      title: requisition.title,
+      department: requisition.departmentId,
       template: requisition.templateId,
       openings: requisition.openings,
       location: requisition.location,
@@ -2765,13 +2786,22 @@ export class RecruitmentService {
       fileSize: number;
     },
   ): Promise<DocumentDocument> {
+    // Ensure filePath is relative to project root for consistency
+    const filePath = createDto.filePath.startsWith('./')
+      ? createDto.filePath
+      : `./${createDto.filePath}`;
+
     const document = new this.documentModel({
       ownerId: createDto.ownerId
         ? new Types.ObjectId(createDto.ownerId)
         : undefined,
       type: createDto.type,
-      filePath: createDto.filePath,
+      filePath: filePath,
       uploadedAt: new Date(),
+      entityType: createDto.entityType,
+      entityId: createDto.entityId
+        ? new Types.ObjectId(createDto.entityId)
+        : undefined,
     });
 
     return await document.save();

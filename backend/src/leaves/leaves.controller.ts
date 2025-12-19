@@ -101,7 +101,7 @@ import { HolidayType } from '../time-management/models/enums';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('leaves')
 export class LeavesController {
-  // In-memory delegation Map (REQ-023)
+  // NOT USED
   private delegations = new Map<string, string>();
 
   constructor(
@@ -168,8 +168,8 @@ export class LeavesController {
   })
   @ApiQuery({
     name: 'to',
-    required: false,
-    description: 'Optional recipient ID to filter notifications',
+    required: true,
+    description: ' recipient ID to filter notifications',
   })
   @ApiResponse({
     status: 200,
@@ -690,6 +690,11 @@ export class LeavesController {
     description: 'Filter by status',
   })
   @ApiQuery({
+    name: 'paid',
+    required: false,
+    description: 'Filter by paid/unpaid leave type',
+  })
+  @ApiQuery({
     name: 'startDate',
     required: false,
     description: 'Filter by start date (YYYY-MM-DD)',
@@ -779,6 +784,11 @@ export class LeavesController {
     required: false,
     description: 'Filter by leave type ID',
   })
+  @ApiQuery({
+    name: 'paid',
+    required: false,
+    description: 'Filter by paid/unpaid leave type',
+  })
   async getHeadLeaveRequests(
     @Query() query: LeaveRequestQueryDto,
     @Request() req,
@@ -838,6 +848,11 @@ export class LeavesController {
     name: 'endDate',
     required: false,
     description: 'Filter by end date (YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'paid',
+    required: false,
+    description: 'Filter by paid/unpaid leave type',
   })
   @ApiQuery({
     name: 'sortBy',
@@ -1512,7 +1527,26 @@ The operation processes all employees and returns a summary showing:
     type: [LeaveAdjustmentResponseDto],
   })
   @ApiResponse({ status: 400, description: 'Invalid employee ID format' })
-  async getEmployeeAdjustments(@Param('employeeId') employeeId: string) {
+  async getEmployeeAdjustments(
+    @Param('employeeId') employeeId: string,
+    @Request() req,
+  ) {
+    const userId = this.getCurrentUserId(req);
+    const roles = this.getUserRoles(req);
+    const privilegedRoles = [
+      'hr admin',
+      'hr manager',
+      'system admin',
+      'department head',
+    ];
+    const isPrivileged = roles.some((role) =>
+      privilegedRoles.includes(role),
+    );
+    if (!isPrivileged && userId !== employeeId) {
+      throw new ForbiddenException(
+        'You can only view your own adjustment history',
+      );
+    }
     return await this.leavesService.getEmployeeAdjustments(employeeId);
   }
 
@@ -2029,8 +2063,28 @@ The operation processes all employees and returns a summary showing:
   }
 
   /**
-   * Manual trigger for accrual (single endpoint)
+   * Manual triggers for daily maintenance and accrual
    */
+  @Post('accrual/daily-reset')
+  @HttpCode(HttpStatus.OK)
+  @Roles('HR Admin', 'System Admin')
+  @ApiOperation({
+    summary: 'Manually run daily reset and accrual',
+    description:
+      'Runs the daily reset-and-accrual maintenance for all entitlements.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Daily reset and accrual process completed',
+  })
+  async runDailyResetAndAccrual() {
+    const result = await this.leavesService.runDailyResetAndAccrual();
+    return {
+      message: 'Daily reset and accrual completed',
+      ...result,
+    };
+  }
+
   @Post('accrual/run')
   @Roles('HR Admin', 'System Admin')
   @ApiOperation({

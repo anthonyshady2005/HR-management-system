@@ -583,8 +583,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid category ID format');
     }
 
+    const categoryObjectId = new Types.ObjectId(data.categoryId);
+
     const categoryExists = await this.leaveCategoryModel.findById(
-      data.categoryId,
+      categoryObjectId,
     );
     if (!categoryExists) {
       throw new NotFoundException('Leave category not found');
@@ -596,7 +598,10 @@ export class LeavesService {
       throw new ConflictException('Leave type with this code already exists');
     }
 
-    const leaveType = new this.leaveTypeModel(data);
+    const leaveType = new this.leaveTypeModel({
+      ...data,
+      categoryId: categoryObjectId,
+    });
     return await leaveType.save();
   }
 
@@ -620,8 +625,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave type ID format');
     }
 
+    const leaveTypeObjectId = new Types.ObjectId(id);
+
     const leaveType = await this.leaveTypeModel
-      .findById(id)
+      .findById(leaveTypeObjectId)
       .populate('categoryId')
       .exec();
 
@@ -675,19 +682,71 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave type ID format');
     }
 
-    if (data.categoryId && !Types.ObjectId.isValid(data.categoryId)) {
-      throw new BadRequestException('Invalid category ID format');
+    const leaveTypeObjectId = new Types.ObjectId(id);
+
+    let categoryObjectId: Types.ObjectId | null = null;
+    if (data.categoryId) {
+      if (!Types.ObjectId.isValid(data.categoryId)) {
+        throw new BadRequestException('Invalid category ID format');
+      }
+      categoryObjectId = new Types.ObjectId(data.categoryId);
     }
 
-    const leaveType = await this.leaveTypeModel
-      .findByIdAndUpdate(id, data, { new: true, runValidators: true })
-      .populate('categoryId')
+    const existingLeaveType = await this.leaveTypeModel
+      .findById(leaveTypeObjectId)
       .exec();
-
-    if (!leaveType) {
+    if (!existingLeaveType) {
       throw new NotFoundException('Leave type not found');
     }
-    return leaveType;
+
+    if (categoryObjectId) {
+      const categoryExists = await this.leaveCategoryModel
+        .exists({ _id: categoryObjectId })
+        .exec();
+      if (!categoryExists) {
+        throw new NotFoundException('Leave category not found');
+      }
+    }
+
+    if (data.code && data.code !== existingLeaveType.code) {
+      const codeTaken = await this.leaveTypeModel
+        .exists({ code: data.code, _id: { $ne: leaveTypeObjectId } })
+        .exec();
+      if (codeTaken) {
+        throw new ConflictException(
+          'Leave type with this code already exists',
+        );
+      }
+    }
+
+    const { categoryId, ...rest } = data;
+    const updatePayload = {
+      ...rest,
+      ...(categoryObjectId ? { categoryId: categoryObjectId } : {}),
+    };
+
+    try {
+      const leaveType = await this.leaveTypeModel
+        .findByIdAndUpdate(leaveTypeObjectId, updatePayload, {
+          new: true,
+          runValidators: true,
+        })
+        .populate('categoryId')
+        .exec();
+
+      if (!leaveType) {
+        throw new NotFoundException('Leave type not found');
+      }
+
+      return leaveType;
+    } catch (error: any) {
+      if (error?.code === 11000 && error?.keyPattern?.code) {
+        throw new ConflictException(
+          'Leave type with this code already exists',
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -701,7 +760,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave type ID format');
     }
 
-    const leaveType = await this.leaveTypeModel.findByIdAndDelete(id).exec();
+    const leaveTypeObjectId = new Types.ObjectId(id);
+    const leaveType = await this.leaveTypeModel
+      .findByIdAndDelete(leaveTypeObjectId)
+      .exec();
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -730,21 +792,26 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave type ID format');
     }
 
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+
     const leaveTypeExists = await this.leaveTypeModel.findById(
-      data.leaveTypeId,
+      leaveTypeObjectId,
     );
     if (!leaveTypeExists) {
       throw new NotFoundException('Leave type not found');
     }
 
     const existingPolicy = await this.leavePolicyModel.findOne({
-      leaveTypeId: data.leaveTypeId,
+      leaveTypeId: leaveTypeObjectId,
     });
     if (existingPolicy) {
       throw new ConflictException('Policy already exists for this leave type');
     }
 
-    const policy = new this.leavePolicyModel(data);
+    const policy = new this.leavePolicyModel({
+      ...data,
+      leaveTypeId: leaveTypeObjectId,
+    });
     return await policy.save();
   }
 
@@ -764,8 +831,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid policy ID format');
     }
 
+    const policyObjectId = new Types.ObjectId(id);
+
     const policy = await this.leavePolicyModel
-      .findById(id)
+      .findById(policyObjectId)
       .populate('leaveTypeId')
       .exec();
 
@@ -780,8 +849,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave type ID format');
     }
 
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     const policy = await this.leavePolicyModel
-      .findOne({ leaveTypeId })
+      .findOne({ leaveTypeId: leaveTypeObjectId })
       .populate('leaveTypeId')
       .exec();
 
@@ -810,8 +881,13 @@ export class LeavesService {
       throw new BadRequestException('Invalid policy ID format');
     }
 
+    const policyObjectId = new Types.ObjectId(id);
+
     const policy = await this.leavePolicyModel
-      .findByIdAndUpdate(id, data, { new: true, runValidators: true })
+      .findByIdAndUpdate(policyObjectId, data, {
+        new: true,
+        runValidators: true,
+      })
       .populate('leaveTypeId')
       .exec();
 
@@ -826,7 +902,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid policy ID format');
     }
 
-    const policy = await this.leavePolicyModel.findByIdAndDelete(id).exec();
+    const policyObjectId = new Types.ObjectId(id);
+    const policy = await this.leavePolicyModel
+      .findByIdAndDelete(policyObjectId)
+      .exec();
     if (!policy) {
       throw new NotFoundException('Leave policy not found');
     }
@@ -856,6 +935,9 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee or leave type ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(data.employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+
     const fromDate = new Date(data.dates.from);
     const toDate = new Date(data.dates.to);
 
@@ -863,14 +945,14 @@ export class LeavesService {
       throw new BadRequestException('Start date must be before end date');
     }
 
-    const leaveType = await this.leaveTypeModel.findById(data.leaveTypeId);
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
 
     // Enforce late submission window: allow backdated requests only within minNoticeDays
     const policy = await this.leavePolicyModel
-      .findOne({ leaveTypeId: data.leaveTypeId })
+      .findOne({ leaveTypeId: leaveTypeObjectId })
       .exec();
     if (policy?.minNoticeDays !== undefined) {
       const now = new Date();
@@ -953,6 +1035,8 @@ export class LeavesService {
 
     const request = new this.leaveRequestModel({
       ...data,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
       dates: { from: fromDate, to: toDate },
       durationDays: netDays, // override client input
       attachmentId: data.attachmentId
@@ -1015,6 +1099,7 @@ export class LeavesService {
     includeDecidedByIds?: string | string[];
     sortBy?: 'dates.from' | 'createdAt';
     sortOrder?: 'asc' | 'desc';
+    paid?: string | boolean;
   }) {
     const scopeOr: any[] = [];
     const matchClauses: any[] = [];
@@ -1024,11 +1109,18 @@ export class LeavesService {
         ? filters.includeDecidedByIds
         : [filters.includeDecidedByIds]
       : [];
-    const decidedByObjectIds = decidedByRaw
-      .map((id) => (Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : null))
-      .filter((id): id is Types.ObjectId => Boolean(id));
-    const decidedByStrings = decidedByRaw.filter((id): id is string => Boolean(id));
-    const hasDecidedByScope = decidedByObjectIds.length || decidedByStrings.length;
+    if (decidedByRaw.length > 0) {
+      const invalidDecidedBy = decidedByRaw.filter(
+        (id) => !Types.ObjectId.isValid(id),
+      );
+      if (invalidDecidedBy.length > 0) {
+        throw new BadRequestException(
+          `Invalid decidedBy ID format: ${invalidDecidedBy.join(', ')}`,
+        );
+      }
+    }
+    const decidedByObjectIds = decidedByRaw.map((id) => new Types.ObjectId(id));
+    const hasDecidedByScope = decidedByObjectIds.length > 0;
 
     // Department scoping first: resolve employee IDs in given departments (profile primaryDepartmentId or active assignment snapshot)
     if (filters?.departmentId) {
@@ -1075,13 +1167,10 @@ export class LeavesService {
       });
 
       if (employeeIds.size) {
-        const employeeObjectIds = Array.from(employeeIds).map((id) => new Types.ObjectId(id));
-        scopeOr.push({
-          $or: [
-            { employeeId: { $in: employeeObjectIds } },
-            { $expr: { $in: [{ $toString: '$employeeId' }, Array.from(employeeIds)] } },
-          ],
-        });
+        const employeeObjectIds = Array.from(employeeIds).map(
+          (id) => new Types.ObjectId(id),
+        );
+        scopeOr.push({ employeeId: { $in: employeeObjectIds } });
       } else if (!hasDecidedByScope) {
         return [];
       }
@@ -1090,25 +1179,7 @@ export class LeavesService {
     // Visibility via approvalFlow.decidedBy (e.g., department head as approver)
     if (hasDecidedByScope) {
       scopeOr.push({
-        $or: [
-          { approvalFlow: { $elemMatch: { decidedBy: { $in: decidedByObjectIds } } } },
-          {
-            $expr: {
-              $gt: [
-                {
-                  $size: {
-                    $filter: {
-                      input: '$approvalFlow',
-                      as: 'step',
-                      cond: { $in: [{ $toString: '$$step.decidedBy' }, decidedByStrings] },
-                    },
-                  },
-                },
-                0,
-              ],
-            },
-          },
-        ],
+        approvalFlow: { $elemMatch: { decidedBy: { $in: decidedByObjectIds } } },
       });
     }
 
@@ -1117,19 +1188,10 @@ export class LeavesService {
     }
 
     if (filters?.employeeId) {
-      const empId = filters.employeeId;
-      if (Types.ObjectId.isValid(empId)) {
-        // Match either as ObjectId or string (defensive in case documents store raw string)
-        matchClauses.push({
-          $or: [
-            { employeeId: new Types.ObjectId(empId) },
-            { $expr: { $eq: [{ $toString: '$employeeId' }, empId] } },
-          ],
-        });
-      } else {
-        // Fallback: string comparison
-        matchClauses.push({ $expr: { $eq: [{ $toString: '$employeeId' }, empId] } });
+      if (!Types.ObjectId.isValid(filters.employeeId)) {
+        throw new BadRequestException('Invalid employee ID format');
       }
+      matchClauses.push({ employeeId: new Types.ObjectId(filters.employeeId) });
     }
 
     if (filters?.leaveTypeId) {
@@ -1164,6 +1226,10 @@ export class LeavesService {
 
     const sortField = filters?.sortBy || 'createdAt';
     const sortOrder = filters?.sortOrder === 'asc' ? 1 : -1;
+    const paidFilter =
+      filters?.paid === undefined || filters?.paid === null || filters?.paid === ''
+        ? undefined
+        : String(filters.paid).toLowerCase() === 'true';
 
     // Default path without department filter (aggregate to support $expr/$or matching)
     const pipeline: any[] = [
@@ -1177,6 +1243,9 @@ export class LeavesService {
         },
       },
       { $unwind: { path: '$leaveType', preserveNullAndEmptyArrays: true } },
+      ...(paidFilter === undefined
+        ? []
+        : [{ $match: { 'leaveType.paid': paidFilter } }]),
       {
         $lookup: {
           from: 'employee_profiles',
@@ -1187,6 +1256,47 @@ export class LeavesService {
       },
       { $unwind: { path: '$employee', preserveNullAndEmptyArrays: true } },
       {
+        $addFields: {
+          employeeDisplayName: {
+            $cond: [
+              { $ne: ['$employee', null] },
+              {
+                $ifNull: [
+                  '$employee.fullName',
+                  {
+                    $let: {
+                      vars: {
+                        firstName: { $trim: { input: { $ifNull: ['$employee.firstName', ''] } } },
+                        lastName: { $trim: { input: { $ifNull: ['$employee.lastName', ''] } } },
+                      },
+                      in: {
+                        $cond: [
+                          {
+                            $and: [
+                              { $gt: [{ $strLenCP: '$$firstName' }, 0] },
+                              { $gt: [{ $strLenCP: '$$lastName' }, 0] },
+                            ],
+                          },
+                          { $concat: ['$$firstName', ' ', '$$lastName'] },
+                          {
+                            $cond: [
+                              { $gt: [{ $strLenCP: '$$firstName' }, 0] },
+                              '$$firstName',
+                              '$employee.employeeNumber',
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+              null,
+            ],
+          },
+        },
+      },
+      {
         $lookup: {
           from: 'attachments',
           localField: 'attachmentId',
@@ -1195,6 +1305,124 @@ export class LeavesService {
         },
       },
       { $unwind: { path: '$attachment', preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          approvalFlow: {
+            $map: {
+              input: '$approvalFlow',
+              as: 'step',
+              in: {
+                role: '$$step.role',
+                status: '$$step.status',
+                decidedBy: '$$step.decidedBy',
+                decidedByName: '$$step.decidedByName',
+                decidedAt: '$$step.decidedAt',
+              },
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: 'employee_profiles',
+          let: { approvalFlow: '$approvalFlow' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $in: [
+                    '$_id',
+                    {
+                      $map: {
+                        input: {
+                          $filter: {
+                            input: '$$approvalFlow',
+                            as: 'step',
+                            cond: { $ne: ['$$step.decidedBy', null] },
+                          },
+                        },
+                        as: 'step',
+                        in: '$$step.decidedBy',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                fullName: 1,
+                firstName: 1,
+                lastName: 1,
+              },
+            },
+          ],
+          as: 'decidedByUsers',
+        },
+      },
+      {
+        $addFields: {
+          approvalFlow: {
+            $map: {
+              input: '$approvalFlow',
+              as: 'step',
+              in: {
+                role: '$$step.role',
+                status: '$$step.status',
+                decidedBy: '$$step.decidedBy',
+                decidedAt: '$$step.decidedAt',
+                decidedByName: {
+                  $let: {
+                    vars: {
+                      user: {
+                        $arrayElemAt: [
+                          {
+                            $filter: {
+                              input: '$decidedByUsers',
+                              as: 'u',
+                              cond: { $eq: ['$$u._id', '$$step.decidedBy'] },
+                            },
+                          },
+                          0,
+                        ],
+                      },
+                    },
+                    in: {
+                      $ifNull: [
+                        '$$user.fullName',
+                        {
+                          $cond: [
+                            {
+                              $and: [
+                                { $ne: ['$$user.firstName', null] },
+                                { $ne: ['$$user.lastName', null] },
+                              ],
+                            },
+                            {
+                              $concat: [
+                                { $ifNull: ['$$user.firstName', ''] },
+                                ' ',
+                                { $ifNull: ['$$user.lastName', ''] },
+                              ],
+                            },
+                            { $ifNull: ['$$user.firstName', null] },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          decidedByUsers: 0,
+        },
+      },
       { $sort: { [sortField]: sortOrder } },
     ];
 
@@ -1206,8 +1434,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave request ID format');
     }
 
+    const requestObjectId = new Types.ObjectId(id);
+
     const request = await this.leaveRequestModel
-      .findById(id)
+      .findById(requestObjectId)
       .populate('leaveTypeId')
       .populate('employeeId')
       .populate('attachmentId')
@@ -1231,7 +1461,19 @@ export class LeavesService {
       throw new BadRequestException('Invalid leave request ID format');
     }
 
-    const request = await this.leaveRequestModel.findById(id).populate('leaveTypeId');
+    const requestObjectId = new Types.ObjectId(id);
+    const decidedByObjectId = data.decidedBy
+      ? (() => {
+          if (!Types.ObjectId.isValid(data.decidedBy)) {
+            throw new BadRequestException('Invalid decidedBy ID format');
+          }
+          return new Types.ObjectId(data.decidedBy);
+        })()
+      : null;
+
+    const request = await this.leaveRequestModel
+      .findById(requestObjectId)
+      .populate('leaveTypeId');
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
@@ -1244,15 +1486,13 @@ export class LeavesService {
     const wasStatus = request.status;
 
     // Update individual approval step if role is provided
-    if (data.role && data.decidedBy) {
+    if (data.role && decidedByObjectId) {
       const flowIndex = request.approvalFlow.findIndex(
         (f) => f.role === data.role,
       );
       if (flowIndex !== -1) {
         request.approvalFlow[flowIndex].status = data.status;
-        request.approvalFlow[flowIndex].decidedBy = new Types.ObjectId(
-          data.decidedBy,
-        );
+        request.approvalFlow[flowIndex].decidedBy = decidedByObjectId;
         request.approvalFlow[flowIndex].decidedAt = new Date();
       } else {
         throw new BadRequestException(`Approval step with role '${data.role}' not found`);
@@ -1277,11 +1517,19 @@ export class LeavesService {
     // Balance updates based on OVERALL status changes (not individual step decisions)
     // Only deduct when overall status changes from non-approved to approved
     // Extract IDs properly (handle populated fields)
-    const employeeIdStr = (request.employeeId as any)?._id?.toString() || (request.employeeId as any)?.toString();
-    const leaveTypeIdStr = (request.leaveTypeId as any)?._id?.toString() || (request.leaveTypeId as any)?.toString();
-    const leaveTypeDoc = leaveTypeIdStr
-      ? await this.leaveTypeModel.findById(leaveTypeIdStr).lean()
-      : null;
+    const employeeIdValue =
+      (request.employeeId as any)?._id || request.employeeId;
+    const leaveTypeIdValue =
+      (request.leaveTypeId as any)?._id || request.leaveTypeId;
+    const employeeIdStr = employeeIdValue ? employeeIdValue.toString() : '';
+    const leaveTypeObjectId =
+      leaveTypeIdValue instanceof Types.ObjectId
+        ? leaveTypeIdValue
+        : new Types.ObjectId(leaveTypeIdValue);
+    const leaveTypeIdStr = leaveTypeObjectId.toString();
+    const leaveTypeDoc = await this.leaveTypeModel
+      .findById(leaveTypeObjectId)
+      .lean();
     const isDeductible = leaveTypeDoc?.deductible !== false;
 
     if (wasStatus !== LeaveStatus.APPROVED && saved.status === LeaveStatus.APPROVED) {
@@ -1419,23 +1667,26 @@ export class LeavesService {
       throw new BadRequestException('Employee ID is required to cancel a request');
     }
 
-    const employeeObjectId = Types.ObjectId.isValid(employeeId)
-      ? new Types.ObjectId(employeeId)
-      : null;
+    if (!Types.ObjectId.isValid(employeeId)) {
+      throw new BadRequestException('Invalid employee ID format');
+    }
+
+    const requestObjectId = new Types.ObjectId(id);
+    const employeeObjectId = new Types.ObjectId(employeeId);
 
     // Fetch the request first
-    const request = await this.leaveRequestModel.findById(id);
+    const request = await this.leaveRequestModel.findById(requestObjectId);
 
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
 
     // Enforce ownership: the provided employeeId must match the request owner (string or ObjectId)
+    const requestEmployeeId =
+      (request.employeeId as any)?._id || request.employeeId;
     const belongsToEmployee =
-      request.employeeId?.toString() === employeeId ||
-      (employeeObjectId &&
-        request.employeeId instanceof Types.ObjectId &&
-        request.employeeId.equals(employeeObjectId));
+      requestEmployeeId instanceof Types.ObjectId &&
+      requestEmployeeId.equals(employeeObjectId);
 
     if (!belongsToEmployee) {
       throw new NotFoundException(
@@ -1499,10 +1750,11 @@ export class LeavesService {
         return null;
       }
 
-      // Get employee profile with pay grade snapshot
+      const employeeObjectId = new Types.ObjectId(employeeId);
+
+      // Get employee profile (avoid populate to prevent ObjectId cast errors when legacy string IDs exist)
       const employee = await this.employeeProfileModel
-        .findById(employeeId)
-        .populate('payGradeId')
+        .findById(employeeObjectId)
         .lean()
         .exec();
 
@@ -1517,7 +1769,7 @@ export class LeavesService {
       const now = new Date();
       const assignment = await this.positionAssignmentModel
         .findOne({
-          employeeProfileId: new Types.ObjectId(employeeId),
+          employeeProfileId: employeeObjectId,
           startDate: { $lte: now },
           $or: [
             { endDate: { $exists: false } },
@@ -1548,7 +1800,11 @@ export class LeavesService {
           )
           : 0;
 
-      const grade = (employee as any)?.payGradeId?.grade;
+      const payGradeField = (employee as any)?.payGradeId;
+      const grade =
+        typeof payGradeField === 'string'
+          ? payGradeField
+          : (payGradeField as any)?.grade;
       const location =
         (employee as any)?.address?.city ||
         (employee as any)?.address?.country ||
@@ -1613,9 +1869,12 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee or leave type ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     // Get the leave policy for this leave type
     const policy = await this.leavePolicyModel
-      .findOne({ leaveTypeId })
+      .findOne({ leaveTypeId: leaveTypeObjectId })
       .populate('leaveTypeId')
       .exec();
 
@@ -1672,7 +1931,9 @@ export class LeavesService {
     }
 
     // Fetch employee data from Employee Profile module
-    const employeeData = await this.getEmployeeDataForEligibility(employeeId);
+    const employeeData = await this.getEmployeeDataForEligibility(
+      employeeObjectId.toString(),
+    );
 
     // If Employee Profile is not integrated yet, allow entitlement creation with warning
     if (!employeeData) {
@@ -1772,10 +2033,13 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee or leave type ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(data.employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+
     // Check if entitlement already exists
     const existing = await this.leaveEntitlementModel.findOne({
-      employeeId: data.employeeId,
-      leaveTypeId: data.leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (existing) {
@@ -1802,7 +2066,7 @@ export class LeavesService {
     let yearlyEntitlement = data.yearlyEntitlement;
     if (yearlyEntitlement === undefined) {
       const policy = await this.leavePolicyModel.findOne({
-        leaveTypeId: data.leaveTypeId,
+        leaveTypeId: leaveTypeObjectId,
       });
       if (policy) {
         yearlyEntitlement = policy.yearlyRate || 0;
@@ -1811,6 +2075,8 @@ export class LeavesService {
 
     const entitlement = new this.leaveEntitlementModel({
       ...data,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
       yearlyEntitlement: yearlyEntitlement || 0,
       remaining: (yearlyEntitlement || 0) + (data.carryForward || 0),
     });
@@ -1848,10 +2114,13 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee or leave type ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(data.employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+
     // Check if entitlement already exists
     const existing = await this.leaveEntitlementModel.findOne({
-      employeeId: data.employeeId,
-      leaveTypeId: data.leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (existing) {
@@ -1867,7 +2136,7 @@ export class LeavesService {
     let yearlyEntitlement = data.yearlyEntitlement;
     if (yearlyEntitlement === undefined) {
       const policy = await this.leavePolicyModel.findOne({
-        leaveTypeId: data.leaveTypeId,
+        leaveTypeId: leaveTypeObjectId,
       });
       if (policy) {
         yearlyEntitlement = policy.yearlyRate || 0;
@@ -1877,8 +2146,8 @@ export class LeavesService {
     }
 
     const entitlement = new this.leaveEntitlementModel({
-      employeeId: data.employeeId,
-      leaveTypeId: data.leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
       yearlyEntitlement: yearlyEntitlement,
       accruedActual: data.accruedActual || 0,
       accruedRounded: data.accruedRounded || 0,
@@ -1921,9 +2190,15 @@ export class LeavesService {
       );
     }
 
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+    const employeeObjectIds = data.employeeIds.map((employeeId) => ({
+      id: employeeId,
+      objectId: new Types.ObjectId(employeeId),
+    }));
+
     // Fetch leave policy for default values
     const policy = await this.leavePolicyModel.findOne({
-      leaveTypeId: data.leaveTypeId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     const yearlyEntitlement =
@@ -1940,12 +2215,12 @@ export class LeavesService {
       errors: [] as { employeeId: string; error: string }[],
     };
 
-    for (const employeeId of data.employeeIds) {
+    for (const { id: employeeId, objectId: employeeObjectId } of employeeObjectIds) {
       try {
         // Check if entitlement already exists
         const existing = await this.leaveEntitlementModel.findOne({
-          employeeId,
-          leaveTypeId: data.leaveTypeId,
+          employeeId: employeeObjectId,
+          leaveTypeId: leaveTypeObjectId,
         });
 
         if (existing) {
@@ -1955,7 +2230,7 @@ export class LeavesService {
         }
 
         // Validate employee exists
-        const employee = await this.employeeProfileModel.findById(employeeId);
+        const employee = await this.employeeProfileModel.findById(employeeObjectId);
         if (!employee) {
           result.failed++;
           result.errors.push({
@@ -1984,8 +2259,8 @@ export class LeavesService {
 
         // Create entitlement
         const entitlement = new this.leaveEntitlementModel({
-          employeeId,
-          leaveTypeId: data.leaveTypeId,
+          employeeId: employeeObjectId,
+          leaveTypeId: leaveTypeObjectId,
           yearlyEntitlement,
           accruedActual: data.accruedActual || 0,
           accruedRounded: data.accruedRounded || 0,
@@ -2016,8 +2291,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+
     return await this.leaveEntitlementModel
-      .find({ employeeId })
+      .find({ employeeId: employeeObjectId })
       .populate('leaveTypeId')
       .exec();
   }
@@ -2027,8 +2304,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid entitlement ID format');
     }
 
+    const entitlementObjectId = new Types.ObjectId(id);
+
     const entitlement = await this.leaveEntitlementModel
-      .findById(id)
+      .findById(entitlementObjectId)
       .populate('leaveTypeId')
       .populate('employeeId')
       .exec();
@@ -2047,8 +2326,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     const entitlement = await this.leaveEntitlementModel
-      .findOne({ employeeId, leaveTypeId })
+      .findOne({ employeeId: employeeObjectId, leaveTypeId: leaveTypeObjectId })
       .populate('leaveTypeId')
       .exec();
 
@@ -2122,7 +2404,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid entitlement ID format');
     }
 
-    const entitlement = await this.leaveEntitlementModel.findById(id);
+    const entitlementObjectId = new Types.ObjectId(id);
+    const entitlement = await this.leaveEntitlementModel.findById(
+      entitlementObjectId,
+    );
     if (!entitlement) {
       throw new NotFoundException('Leave entitlement not found');
     }
@@ -2171,14 +2456,18 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(data.employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(data.leaveTypeId);
+    const hrUserObjectId = new Types.ObjectId(data.hrUserId);
+
     const amount = Math.abs(data.amount);
     if (!Number.isFinite(amount)) {
       throw new BadRequestException('Adjustment amount must be a valid number');
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId: data.employeeId,
-      leaveTypeId: data.leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -2189,13 +2478,16 @@ export class LeavesService {
     if (amount === 0) {
       const adjustment = new this.leaveAdjustmentModel({
         ...data,
+        employeeId: employeeObjectId,
+        leaveTypeId: leaveTypeObjectId,
+        hrUserId: hrUserObjectId,
         amount: 0,
       });
       return await adjustment.save();
     }
 
     const policy = await this.leavePolicyModel
-      .findOne({ leaveTypeId: data.leaveTypeId })
+      .findOne({ leaveTypeId: leaveTypeObjectId })
       .lean();
     const usesYearlyAccrual =
       (policy?.accrualMethod || AccrualMethod.YEARLY) ===
@@ -2296,6 +2588,9 @@ export class LeavesService {
     // Persist adjustment audit log
     const adjustment = new this.leaveAdjustmentModel({
       ...data,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
+      hrUserId: hrUserObjectId,
       amount,
     });
     return await adjustment.save();
@@ -2306,8 +2601,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+
     return await this.leaveAdjustmentModel
-      .find({ employeeId })
+      .find({ employeeId: employeeObjectId })
+      .populate('employeeId')
       .populate('leaveTypeId')
       .populate('hrUserId')
       .sort({ createdAt: -1 })
@@ -2325,14 +2623,14 @@ export class LeavesService {
       if (!Types.ObjectId.isValid(filters.employeeId)) {
         throw new BadRequestException('Invalid employee ID format');
       }
-      query.employeeId = filters.employeeId;
+      query.employeeId = new Types.ObjectId(filters.employeeId);
     }
 
     if (filters?.leaveTypeId) {
       if (!Types.ObjectId.isValid(filters.leaveTypeId)) {
         throw new BadRequestException('Invalid leave type ID format');
       }
-      query.leaveTypeId = filters.leaveTypeId;
+      query.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
     }
 
     if (filters?.adjustmentType) {
@@ -2551,14 +2849,23 @@ export class LeavesService {
     to: Date,
     excludeRequestId?: string,
   ): Promise<void> {
+    if (!Types.ObjectId.isValid(employeeId)) {
+      throw new BadRequestException('Invalid employee ID format');
+    }
+
+    const employeeObjectId = new Types.ObjectId(employeeId);
+
     const query: any = {
-      employeeId,
+      employeeId: employeeObjectId,
       status: { $in: [LeaveStatus.APPROVED, LeaveStatus.PENDING] },
       $or: [{ 'dates.from': { $lte: to }, 'dates.to': { $gte: from } }],
     };
 
     if (excludeRequestId) {
-      query._id = { $ne: excludeRequestId };
+      if (!Types.ObjectId.isValid(excludeRequestId)) {
+        throw new BadRequestException('Invalid request ID format');
+      }
+      query._id = { $ne: new Types.ObjectId(excludeRequestId) };
     }
 
     const overlapping = await this.leaveRequestModel.find(query);
@@ -2591,8 +2898,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     // STEP 1: Check if leave type is paid or unpaid (and whether it is deductible)
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -2619,8 +2929,8 @@ export class LeavesService {
 
     // STEP 3: For paid leave, check balance
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -2631,7 +2941,7 @@ export class LeavesService {
 
     // Enforce carry-forward expiry if configured
     const policyForExpiry = await this.leavePolicyModel
-      .findOne({ leaveTypeId })
+      .findOne({ leaveTypeId: leaveTypeObjectId })
       .exec();
     await this.enforceCarryForwardExpiry(entitlement, policyForExpiry || undefined);
 
@@ -2891,8 +3201,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     // Check if leave type is paid
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -2905,8 +3218,8 @@ export class LeavesService {
     // Non-deductible leave should not adjust remaining; only move pending -> taken
     if (leaveType.deductible === false) {
       const entitlement = await this.leaveEntitlementModel.findOne({
-        employeeId,
-        leaveTypeId,
+        employeeId: employeeObjectId,
+        leaveTypeId: leaveTypeObjectId,
       });
       if (!entitlement) {
         throw new NotFoundException('Leave entitlement not found');
@@ -2919,8 +3232,8 @@ export class LeavesService {
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -2960,7 +3273,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -2973,8 +3289,8 @@ export class LeavesService {
     // Non-deductible leave should not alter remaining; only reduce pending
     if (leaveType.deductible === false) {
       const entitlement = await this.leaveEntitlementModel.findOne({
-        employeeId,
-        leaveTypeId,
+        employeeId: employeeObjectId,
+        leaveTypeId: leaveTypeObjectId,
       });
       if (!entitlement) {
         throw new NotFoundException('Leave entitlement not found');
@@ -2985,8 +3301,8 @@ export class LeavesService {
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -3017,7 +3333,10 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -3030,8 +3349,8 @@ export class LeavesService {
     // Non-deductible leave should not return balance; only adjust taken
     if (leaveType.deductible === false) {
       const entitlement = await this.leaveEntitlementModel.findOne({
-        employeeId,
-        leaveTypeId,
+        employeeId: employeeObjectId,
+        leaveTypeId: leaveTypeObjectId,
       });
       if (!entitlement) {
         throw new NotFoundException('Leave entitlement not found');
@@ -3043,8 +3362,8 @@ export class LeavesService {
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -3077,8 +3396,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     // Check if leave type is paid
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -3089,8 +3411,8 @@ export class LeavesService {
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -3124,8 +3446,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     // Check if leave type is paid
-    const leaveType = await this.leaveTypeModel.findById(leaveTypeId);
+    const leaveType = await this.leaveTypeModel.findById(leaveTypeObjectId);
     if (!leaveType) {
       throw new NotFoundException('Leave type not found');
     }
@@ -3138,8 +3463,8 @@ export class LeavesService {
     // Non-deductible leave: track pending but do not touch remaining
     if (leaveType.deductible === false) {
       const entitlement = await this.leaveEntitlementModel.findOne({
-        employeeId,
-        leaveTypeId,
+        employeeId: employeeObjectId,
+        leaveTypeId: leaveTypeObjectId,
       });
 
       if (!entitlement) {
@@ -3152,8 +3477,8 @@ export class LeavesService {
     }
 
     const entitlement = await this.leaveEntitlementModel.findOne({
-      employeeId,
-      leaveTypeId,
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
     });
 
     if (!entitlement) {
@@ -3188,7 +3513,8 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
-    const request = await this.leaveRequestModel.findById(requestId);
+    const requestObjectId = new Types.ObjectId(requestId);
+    const request = await this.leaveRequestModel.findById(requestObjectId);
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
@@ -3409,6 +3735,10 @@ export class LeavesService {
       return { requests: [], allRequests: [], overlaps: [] };
     }
 
+    const teamMemberObjectIds = teamMemberIds.map(
+      (id) => new Types.ObjectId(id),
+    );
+
     // Fetch both pending and approved requests
     // First, let's check what pending requests exist for debugging
     const allPendingInDB = await this.leaveRequestModel
@@ -3436,11 +3766,11 @@ export class LeavesService {
 
     console.log('[Overlap Debug] All pending (no filter):', testQuery.length);
 
-    // Now try with string IDs directly
+    // Now query with ObjectId filters
     const pendingRequests = await this.leaveRequestModel
       .find({
         status: LeaveStatus.PENDING,
-        employeeId: { $in: teamMemberIds },
+        employeeId: { $in: teamMemberObjectIds },
       })
       .populate('employeeId')
       .populate('leaveTypeId')
@@ -3450,7 +3780,7 @@ export class LeavesService {
     const approvedRequests = await this.leaveRequestModel
       .find({
         status: LeaveStatus.APPROVED,
-        employeeId: { $in: teamMemberIds.map((id) => new Types.ObjectId(id)) },
+        employeeId: { $in: teamMemberObjectIds },
       })
       .populate('employeeId')
       .populate('leaveTypeId')
@@ -3627,7 +3957,8 @@ export class LeavesService {
       throw new BadRequestException('Invalid request ID format');
     }
 
-    const request = await this.leaveRequestModel.findById(requestId);
+    const requestObjectId = new Types.ObjectId(requestId);
+    const request = await this.leaveRequestModel.findById(requestObjectId);
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
@@ -3652,8 +3983,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
     const entitlement = await this.leaveEntitlementModel
-      .findOne({ employeeId, leaveTypeId })
+      .findOne({ employeeId: employeeObjectId, leaveTypeId: leaveTypeObjectId })
       .populate('leaveTypeId');
 
     if (!entitlement) {
@@ -3661,7 +3995,9 @@ export class LeavesService {
     }
 
     // Fetch daily salary rate from employee's base salary
-    const baseSalary = await this.getEmployeeBaseSalary(employeeId);
+    const baseSalary = await this.getEmployeeBaseSalary(
+      employeeObjectId.toString(),
+    );
     if (!baseSalary || baseSalary <= 0) {
       throw new NotFoundException(
         'Employee base salary not found. Cannot calculate encashment.',
@@ -3711,8 +4047,11 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee ID format');
     }
 
+    const employeeObjectId = new Types.ObjectId(employeeId);
+
     const adjustments = await this.leaveAdjustmentModel
-      .find({ employeeId })
+      .find({ employeeId: employeeObjectId })
+      .populate('employeeId')
       .populate('leaveTypeId')
       .populate('hrUserId')
       .sort({ createdAt: -1 })
@@ -3749,7 +4088,8 @@ export class LeavesService {
       throw new BadRequestException('Invalid request ID format');
     }
 
-    const request = await this.leaveRequestModel.findById(id);
+    const requestObjectId = new Types.ObjectId(id);
+    const request = await this.leaveRequestModel.findById(requestObjectId);
     if (!request) {
       throw new NotFoundException('Leave request not found');
     }
@@ -4031,10 +4371,19 @@ export class LeavesService {
     endDate: Date,
   ): Promise<number> {
     try {
+      if (!Types.ObjectId.isValid(employeeId)) {
+        console.error(
+          `Invalid employee ID format while checking unpaid days: ${employeeId}`,
+        );
+        return 0;
+      }
+
+      const employeeObjectId = new Types.ObjectId(employeeId);
+
       // Include suspension periods if employee is suspended and effective date overlaps
       let suspensionDays = 0;
       const employeeProfile = await this.employeeProfileModel
-        .findById(employeeId)
+        .findById(employeeObjectId)
         .lean()
         .exec();
 
@@ -4061,18 +4410,30 @@ export class LeavesService {
       // Check Leave Requests for unpaid leave
       const unpaidLeaves = await this.leaveRequestModel
         .find({
-          employeeId,
+          employeeId: employeeObjectId,
           status: LeaveStatus.APPROVED,
           'dates.from': { $lte: endDate },
           'dates.to': { $gte: startDate },
         })
+        .lean()  // OPTIMIZATION: Use .lean() for better performance
         .exec();
+
+      // OPTIMIZATION: Batch load all leave types at once instead of querying in loop
+      const leaveTypeIds = unpaidLeaves.map(l => l.leaveTypeId);
+      const unpaidLeaveTypes = leaveTypeIds.length > 0
+        ? await this.leaveTypeModel
+            .find({ _id: { $in: leaveTypeIds }, paid: false })
+            .select('_id')
+            .lean()
+            .exec()
+        : [];
+
+      const unpaidTypeSet = new Set(unpaidLeaveTypes.map(lt => lt._id.toString()));
 
       let unpaidDays = suspensionDays;
       for (const leave of unpaidLeaves) {
-        // Check if this is unpaid leave by checking if leave type is not paid
-        const leaveType = await this.leaveTypeModel.findById(leave.leaveTypeId);
-        if (leaveType && !leaveType.paid) {
+        // Check if this is unpaid leave using the pre-loaded set
+        if (unpaidTypeSet.has(leave.leaveTypeId?.toString())) {
           // Calculate overlap days
           const leaveStart = new Date(
             Math.max(leave.dates.from.getTime(), startDate.getTime()),
@@ -4147,6 +4508,7 @@ export class LeavesService {
     leaveTypeId: string,
     startDate: Date,
     endDate: Date,
+    policy?: any, // OPTIMIZATION: Accept pre-loaded policy to avoid duplicate queries
   ): Promise<{ actual: number; rounded: number }> {
     if (
       !Types.ObjectId.isValid(employeeId) ||
@@ -4155,15 +4517,21 @@ export class LeavesService {
       throw new BadRequestException('Invalid employee or leave type ID format');
     }
 
-    // Get leave policy
-    const policy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
-    if (!policy) {
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
+    // OPTIMIZATION: Use provided policy or fetch if not provided
+    const policyDoc = policy || await this.leavePolicyModel
+      .findOne({ leaveTypeId: leaveTypeObjectId })
+      .lean()
+      .exec();
+    if (!policyDoc) {
       throw new NotFoundException('Leave policy not found for this leave type');
     }
 
     // Calculate eligible months (excluding unpaid periods - BR-11)
     const eligibleMonths = await this.calculateEligibleMonths(
-      employeeId,
+      employeeObjectId.toString(),
       startDate,
       endDate,
     );
@@ -4171,25 +4539,25 @@ export class LeavesService {
     let accruedActual = 0;
 
     // Calculate based on accrual method
-    switch (policy.accrualMethod) {
+    switch (policyDoc.accrualMethod) {
       case AccrualMethod.MONTHLY:
         // Monthly accrual = eligible months Ã monthly rate
-        accruedActual = eligibleMonths * (policy.monthlyRate || 0);
+        accruedActual = eligibleMonths * (policyDoc.monthlyRate || 0);
         break;
 
       case AccrualMethod.PER_TERM: // Treat as QUARTERLY
         // Quarterly accrual = eligible quarters Ã (monthly rate Ã 3)
         const eligibleQuarters = Math.floor(eligibleMonths / 3);
-        accruedActual = eligibleQuarters * (policy.monthlyRate || 0) * 3;
+        accruedActual = eligibleQuarters * (policyDoc.monthlyRate || 0) * 3;
         break;
 
       case AccrualMethod.YEARLY:
         // Yearly accrual = yearly rate (if full year worked)
         if (eligibleMonths >= 12) {
-          accruedActual = policy.yearlyRate || 0;
+          accruedActual = policyDoc.yearlyRate || 0;
         } else {
           // Pro-rated for partial year
-          accruedActual = (eligibleMonths / 12) * (policy.yearlyRate || 0);
+          accruedActual = (eligibleMonths / 12) * (policyDoc.yearlyRate || 0);
         }
         break;
 
@@ -4200,7 +4568,7 @@ export class LeavesService {
     // Apply rounding rule
     const accruedRounded = this.applyRounding(
       accruedActual,
-      policy.roundingRule,
+      policyDoc.roundingRule,
     );
 
     return { actual: accruedActual, rounded: accruedRounded };
@@ -4220,142 +4588,254 @@ export class LeavesService {
   }> {
     const now = new Date();
     const endDate: Date = now;
-
-    // Run daily reset/reminder pass first to ensure entitlements are fresh before accruing
-    await this.runDailyResetAndAccrual();
-
-    const processed: number[] = [];
     const failed: Array<{ employeeId: string; error: string }> = [];
 
-    // Pre-load all policies and seed entitlements for eligible employees
-    const policies = await this.leavePolicyModel.find().lean().exec();
+    // OPTIMIZATION: Batch load all data needed for eligibility validation upfront
+    const [policies, activeEmployees, allPositions, allAssignments] = await Promise.all([
+      this.leavePolicyModel.find().populate('leaveTypeId').lean().exec(),
+      this.employeeProfileModel
+        .find({ status: EmployeeStatus.ACTIVE })
+        .select('_id dateOfHire contractType primaryDepartmentId status')
+        .lean()
+        .exec(),
+      this.positionModel.find().select('_id title code name').lean().exec(),
+      this.positionAssignmentModel
+        .find({
+          startDate: { $lte: now },
+          $or: [
+            { endDate: { $exists: false } },
+            { endDate: null },
+            { endDate: { $gte: now } },
+          ],
+        })
+        .populate('positionId')
+        .lean()
+        .exec(),
+    ]);
 
-    const activeEmployees = await this.employeeProfileModel
-      .find({ status: EmployeeStatus.ACTIVE })
-      .select('_id')
+    if (!policies || policies.length === 0) {
+      return { processed: 0, failed: [] };
+    }
+
+    if (!activeEmployees || activeEmployees.length === 0) {
+      return { processed: 0, failed: [] };
+    }
+
+    // OPTIMIZATION: Create policy map for O(1) lookups
+    const policyMap = new Map();
+    policies.forEach(p => {
+      const leaveTypeId = (p.leaveTypeId as any)?._id?.toString() || (p.leaveTypeId as any)?.toString();
+      if (leaveTypeId) policyMap.set(leaveTypeId, p);
+    });
+
+    // OPTIMIZATION: Create employee map for O(1) lookups
+    const employeeMap = new Map();
+    activeEmployees.forEach(e => {
+      employeeMap.set(e._id.toString(), e);
+    });
+
+    // OPTIMIZATION: Build position assignment map: employeeId -> assignment
+    const assignmentMap = new Map();
+    allAssignments.forEach(a => {
+      const empId = (a as any).employeeProfileId?.toString();
+      if (empId) {
+        assignmentMap.set(empId, a);
+      }
+    });
+
+    // OPTIMIZATION: Build position options set for eligibility checking
+    const positionOptionsSet = new Set<string>();
+    Object.values(JobPosition).forEach(p => positionOptionsSet.add(p.toString().toLowerCase()));
+    allPositions.forEach(p => {
+      const title = p.title || (p as any).name || (p as any).code;
+      if (title) positionOptionsSet.add(title.toLowerCase());
+    });
+
+    // OPTIMIZATION: Pre-calculate employee eligibility data (tenure, position, contract)
+    const employeeEligibilityData = new Map();
+    for (const emp of activeEmployees) {
+      const employeeId = emp._id.toString();
+      const assignment = assignmentMap.get(employeeId);
+      const positionDoc = assignment?.positionId as any;
+      const position = positionDoc?.title || positionDoc?.code || positionDoc?.name;
+
+      const hireDate = emp.dateOfHire ? new Date(emp.dateOfHire) : null;
+      const tenureMonths = hireDate && !isNaN(hireDate.getTime())
+        ? Math.max(0, Math.floor((now.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+        : 0;
+
+      employeeEligibilityData.set(employeeId, {
+        tenureMonths,
+        position: position?.toLowerCase(),
+        contractType: emp.contractType,
+      });
+    }
+
+    // OPTIMIZATION: Fast in-memory eligibility checker (no database queries)
+    const checkEligibilityFast = (employeeId: string, policy: any): boolean => {
+      const eligibility = policy.eligibility;
+      if (!eligibility) return true; // No restrictions
+
+      // Check if all criteria are open
+      const tenureOpen = eligibility.minTenureMonths === null || eligibility.minTenureMonths === 0;
+      const positionsOpen = !eligibility.positionsAllowed ||
+        (Array.isArray(eligibility.positionsAllowed) && eligibility.positionsAllowed.length === 0) ||
+        (Array.isArray(eligibility.positionsAllowed) &&
+         Array.from(positionOptionsSet).every(p =>
+           eligibility.positionsAllowed.map((x: any) => String(x).toLowerCase()).includes(p)
+         ));
+      const contractsOpen = !eligibility.contractTypesAllowed ||
+        (Array.isArray(eligibility.contractTypesAllowed) && eligibility.contractTypesAllowed.length === 0);
+
+      if (tenureOpen && positionsOpen && contractsOpen) return true;
+
+      const empData = employeeEligibilityData.get(employeeId);
+      if (!empData) return false; // No data = not eligible
+
+      // Check tenure
+      if (eligibility.minTenureMonths !== undefined && eligibility.minTenureMonths !== null) {
+        if (empData.tenureMonths < eligibility.minTenureMonths) return false;
+      }
+
+      // Check position
+      if (eligibility.positionsAllowed && Array.isArray(eligibility.positionsAllowed) && eligibility.positionsAllowed.length > 0) {
+        const allowed = eligibility.positionsAllowed.map((p: any) => String(p).toLowerCase());
+        if (!empData.position || !allowed.includes(empData.position)) return false;
+      }
+
+      // Check contract type
+      if (eligibility.contractTypesAllowed && Array.isArray(eligibility.contractTypesAllowed) && eligibility.contractTypesAllowed.length > 0) {
+        if (!empData.contractType || !eligibility.contractTypesAllowed.includes(empData.contractType)) return false;
+      }
+
+      return true;
+    };
+
+    // Load ALL existing entitlements at once
+    const existingEntitlements = await this.leaveEntitlementModel
+      .find({
+        employeeId: { $in: activeEmployees.map(e => e._id) }
+      })
       .lean()
       .exec();
 
+    // Create entitlement lookup map: "employeeId:leaveTypeId" -> entitlement
+    const entitlementMap = new Map();
+    existingEntitlements.forEach(ent => {
+      const empId = ent.employeeId?.toString();
+      const ltId = ent.leaveTypeId?.toString();
+      if (empId && ltId) {
+        entitlementMap.set(`${empId}:${ltId}`, ent);
+      }
+    });
+
+    // OPTIMIZATION: Create missing entitlements in batch (seed for new employees/policies)
+    const entitlementsToCreate: any[] = [];
     for (const policy of policies) {
-      const leaveTypeId = (policy.leaveTypeId as any)?.toString();
+      const leaveTypeId = (policy.leaveTypeId as any)?._id?.toString() || (policy.leaveTypeId as any)?.toString();
       if (!leaveTypeId) continue;
 
       for (const emp of activeEmployees) {
         const employeeId = emp._id.toString();
+        const key = `${employeeId}:${leaveTypeId}`;
+
+        // Skip if entitlement already exists
+        if (entitlementMap.has(key)) continue;
+
         try {
-          const eligibility = await this.validateEmployeeEligibility(
-            employeeId,
-            leaveTypeId,
-          );
-          if (!eligibility.eligible) continue;
+          // OPTIMIZATION: Use fast in-memory eligibility check (no DB queries)
+          if (!checkEligibilityFast(employeeId, policy)) continue;
 
-          let entitlement = await this.leaveEntitlementModel.findOne({
-            employeeId,
-            leaveTypeId,
-          });
-
-          if (!entitlement) {
-            let seedStart: Date;
-            if (policy.accrualMethod === AccrualMethod.MONTHLY) {
-              seedStart = new Date(now.getFullYear(), now.getMonth(), 1);
-            } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
-              const q = Math.floor(now.getMonth() / 3);
-              seedStart = new Date(now.getFullYear(), q * 3, 1);
-            } else {
-              seedStart = new Date(now.getFullYear(), 0, 1);
-            }
-
-            const accrual = await this.calculateAccrualForEmployee(
-              employeeId,
-              leaveTypeId,
-              seedStart,
-              endDate,
-            );
-            const nextReset = new Date(now);
-            nextReset.setFullYear(nextReset.getFullYear() + 1);
-
-            entitlement = new this.leaveEntitlementModel({
-              employeeId,
-              leaveTypeId,
-              yearlyEntitlement: accrual.rounded,
-              accruedActual: accrual.actual,
-              accruedRounded: accrual.rounded,
-              carryForward: 0,
-              taken: 0,
-              pending: 0,
-              remaining: accrual.rounded,
-              lastAccrualDate: now,
-              nextResetDate: nextReset,
-            });
-
-            await entitlement.save();
+          let seedStart: Date;
+          if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+            seedStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+            const q = Math.floor(now.getMonth() / 3);
+            seedStart = new Date(now.getFullYear(), q * 3, 1);
+          } else {
+            seedStart = new Date(now.getFullYear(), 0, 1);
           }
-        } catch (error) {
-          failed.push({
+
+          // Calculate initial accrual (will be done in-memory, not querying DB)
+          const accrual = await this.calculateAccrualForEmployee(
             employeeId,
-            error: error.message,
+            leaveTypeId,
+            seedStart,
+            endDate,
+            policy, // Pass policy to avoid query
+          );
+
+          const nextReset = new Date(now);
+          nextReset.setFullYear(nextReset.getFullYear() + 1);
+
+          entitlementsToCreate.push({
+            employeeId: new Types.ObjectId(employeeId),
+            leaveTypeId: new Types.ObjectId(leaveTypeId),
+            yearlyEntitlement: accrual.rounded,
+            accruedActual: accrual.actual,
+            accruedRounded: accrual.rounded,
+            carryForward: 0,
+            taken: 0,
+            pending: 0,
+            remaining: accrual.rounded,
+            lastAccrualDate: now,
+            nextResetDate: nextReset,
           });
+        } catch (error) {
+          this.logger.warn(`Failed to seed entitlement for employee ${employeeId}, leave type ${leaveTypeId}: ${error.message}`);
         }
       }
     }
 
-    // Get all entitlements
-    const entitlements = await this.leaveEntitlementModel.find().exec();
+    // Bulk insert new entitlements
+    if (entitlementsToCreate.length > 0) {
+      this.logger.log(`Creating ${entitlementsToCreate.length} new entitlements`);
+      const created = await this.leaveEntitlementModel.insertMany(entitlementsToCreate);
+      // DON'T add newly created entitlements to processing loop
+      // They already have their initial balances calculated
+      this.logger.log(`Successfully created ${created.length} entitlements with initial balances`);
+    }
 
-    for (const entitlement of entitlements) {
+    // OPTIMIZATION: Process entitlements using bulk operations
+    const entitlementsToUpdate: any[] = [];
+    let processedCount = 0;
+    const totalEntitlements = existingEntitlements.length;
+
+    this.logger.log(`Processing ${totalEntitlements} existing entitlements for periodic accrual`);
+
+    for (const entitlement of existingEntitlements) {
       try {
-        const employeeId = entitlement.employeeId.toString();
-        const leaveTypeId = entitlement.leaveTypeId.toString();
+        const empId = entitlement.employeeId?.toString();
+        const ltId = entitlement.leaveTypeId?.toString();
 
-        // Get policy to check accrual method
-        const policy = await this.leavePolicyModel
-          .findOne({ leaveTypeId })
-          .exec();
-        if (!policy) continue;
+        if (!empId || !ltId) continue;
 
-        // Validate employee status - skip if not active
-        const employee = await this.employeeProfileModel
-          .findById(employeeId)
-          .select('status')
-          .lean()
-          .exec();
+        // Use cached data instead of querying
+        const policy = policyMap.get(ltId);
+        const employee = employeeMap.get(empId);
 
-        if (!employee) {
-          this.logger.warn(
-            `Employee ${employeeId} not found during accrual processing`,
-          );
-          failed.push({
-            employeeId,
-            error: 'Employee not found',
-          });
-          continue;
-        }
+        if (!policy || !employee) continue;
 
+        // Skip inactive employees (already filtered but double-check)
         if (employee.status !== EmployeeStatus.ACTIVE) {
-          this.logger.log(
-            `Skipping accrual for employee ${employeeId}: status is ${employee.status}`,
-          );
+          this.logger.log(`Skipping accrual for employee ${empId}: status is ${employee.status}`);
           continue;
         }
 
-        // Re-validate eligibility before processing
-        const validation = await this.validateEmployeeEligibility(
-          employeeId,
-          leaveTypeId,
-        );
-        if (!validation.eligible) {
+        // OPTIMIZATION: Re-validate eligibility using fast in-memory check (no DB queries)
+        if (!checkEligibilityFast(empId, policy)) {
           this.logger.warn(
-            `Skipping accrual for employee ${employeeId}, leave type ${leaveTypeId}: ` +
-              `no longer eligible. Reasons: ${validation.reasons.join('; ')}`,
+            `Skipping accrual for employee ${empId}, leave type ${ltId}: no longer eligible`,
           );
           continue;
         }
 
         // Reset if nextResetDate has passed
+        let resetFields: any = {};
         if (!entitlement.nextResetDate) {
           const nextReset = new Date(now);
           nextReset.setFullYear(nextReset.getFullYear() + 1);
-          entitlement.nextResetDate = nextReset;
+          resetFields.nextResetDate = nextReset;
         } else if (entitlement.nextResetDate <= now) {
           const carryForward =
             policy.carryForwardAllowed && policy.maxCarryForward !== undefined
@@ -4368,17 +4848,20 @@ export class LeavesService {
                 ? entitlement.remaining || 0
                 : 0;
 
-          entitlement.carryForward = carryForward;
-          entitlement.taken = 0;
-          entitlement.pending = 0;
-          entitlement.accruedActual = 0;
-          entitlement.accruedRounded = 0;
-          entitlement.yearlyEntitlement = 0;
-          entitlement.remaining = carryForward;
           const nextReset = new Date(now);
           nextReset.setFullYear(nextReset.getFullYear() + 1);
-          entitlement.nextResetDate = nextReset;
-          entitlement.lastAccrualDate = now;
+
+          resetFields = {
+            carryForward,
+            taken: 0,
+            pending: 0,
+            accruedActual: 0,
+            accruedRounded: 0,
+            yearlyEntitlement: 0,
+            remaining: carryForward,
+            nextResetDate: nextReset,
+            lastAccrualDate: now,
+          };
         }
 
         // Determine accrual window based on last accrual date and policy method
@@ -4406,16 +4889,17 @@ export class LeavesService {
             nextAccrual.setFullYear(nextAccrual.getFullYear() + 1);
           }
           if (now < nextAccrual) {
-            continue;
+            continue; // Not yet due for accrual
           }
         }
 
-        // Calculate accrual
+        // Calculate accrual (pass policy to avoid duplicate query)
         const accrual = await this.calculateAccrualForEmployee(
-          employeeId,
-          leaveTypeId,
+          empId,
+          ltId,
           startDate,
           endDate,
+          policy, // OPTIMIZATION: Pass pre-loaded policy
         );
 
         // Carry forward from previous remaining with cap if allowed
@@ -4430,36 +4914,69 @@ export class LeavesService {
               ? entitlement.remaining || 0
               : 0;
 
-        entitlement.carryForward = carryForward;
+        // Prepare bulk update operation
+        const updateFields: any = {
+          ...resetFields,
+          lastAccrualDate: now,
+        };
 
-        // Update entitlement according to requested logic
-        entitlement.yearlyEntitlement =
-          (entitlement.yearlyEntitlement || 0) + accrual.rounded;
-        entitlement.accruedActual = accrual.actual;
-        entitlement.accruedRounded = accrual.rounded;
+        // Increment accruals
+        const incrementFields: any = {
+          yearlyEntitlement: accrual.rounded,
+          accruedActual: accrual.actual,
+          accruedRounded: accrual.rounded,
+        };
 
-        // Remaining = new accrual + carry forward minus already taken/pending
-        entitlement.remaining = Math.max(
+        // Calculate new remaining balance
+        const newRemaining = Math.max(
           0,
           accrual.rounded +
             carryForward -
             (entitlement.taken || 0) -
             (entitlement.pending || 0),
         );
-        entitlement.lastAccrualDate = now;
 
-        await entitlement.save();
-        processed.push(1);
+        updateFields.remaining = newRemaining;
+        updateFields.carryForward = carryForward;
+        updateFields.accruedActual = accrual.actual;
+        updateFields.accruedRounded = accrual.rounded;
+
+        // Add to bulk update array
+        entitlementsToUpdate.push({
+          updateOne: {
+            filter: { _id: entitlement._id },
+            update: {
+              $set: updateFields,
+              $inc: { yearlyEntitlement: accrual.rounded },
+            }
+          }
+        });
+
+        processedCount++;
+
+        // Progress logging
+        if (processedCount % 50 === 0) {
+          this.logger.log(`Accrual progress: ${processedCount}/${totalEntitlements} entitlements processed`);
+        }
       } catch (error) {
+        this.logger.error(`Accrual failed for entitlement ${entitlement._id}`, error);
         failed.push({
-          employeeId: entitlement.employeeId.toString(),
-          error: error.message,
+          employeeId: entitlement.employeeId?.toString() || 'unknown',
+          error: error.message || 'Unknown error',
         });
       }
     }
 
+    // OPTIMIZATION: Bulk update all entitlements at once instead of individual saves
+    if (entitlementsToUpdate.length > 0) {
+      this.logger.log(`Performing bulk update for ${entitlementsToUpdate.length} entitlements`);
+      await this.leaveEntitlementModel.bulkWrite(entitlementsToUpdate);
+    }
+
+    this.logger.log(`Accrual process completed: ${processedCount} processed, ${failed.length} failed`);
+
     return {
-      processed: processed.length,
+      processed: processedCount,
       failed,
     };
   }
@@ -4475,17 +4992,48 @@ export class LeavesService {
     failed: Array<{ employeeId: string; error: string }>;
   }> {
     const now = new Date();
-    const entitlements = await this.leaveEntitlementModel.find().exec();
+
+    // OPTIMIZATION: Batch load all entitlements and policies upfront to avoid N+1 queries
+    const [entitlements, policies] = await Promise.all([
+      this.leaveEntitlementModel.find().lean().exec(),
+      this.leavePolicyModel.find().lean().exec(),
+    ]);
+
+    // OPTIMIZATION: Create policy map for O(1) lookups instead of querying in loop
+    const policyMap = new Map<string, any>();
+    policies.forEach(policy => {
+      const leaveTypeId = (policy.leaveTypeId as any)?.toString();
+      if (leaveTypeId) {
+        policyMap.set(leaveTypeId, policy);
+      }
+    });
+
     const failed: Array<{ employeeId: string; error: string }> = [];
-    let reset = 0;
-    let accrued = 0;
+    let resetCount = 0;
+    let accruedCount = 0;
+
+    // OPTIMIZATION: Collect all updates for bulk write instead of sequential saves
+    const entitlementsToUpdate: any[] = [];
+
+    // OPTIMIZATION: Collect notifications to batch later
+    const notificationsToSend: Array<{ employeeId: string; type: string; message: string }> = [];
+
+    this.logger.log(`Starting daily reset and accrual for ${entitlements.length} entitlements`);
 
     for (const entitlement of entitlements) {
       try {
-        const employeeId = entitlement.employeeId.toString();
-        const leaveTypeId = entitlement.leaveTypeId.toString();
-        const policy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+        const employeeId = entitlement.employeeId?.toString();
+        const leaveTypeId = entitlement.leaveTypeId?.toString();
+
+        if (!employeeId || !leaveTypeId) continue;
+
+        // OPTIMIZATION: Use cached policy from map instead of querying
+        const policy = policyMap.get(leaveTypeId);
         if (!policy) continue;
+
+        // Track if this entitlement will be updated
+        let needsUpdate = false;
+        const updates: any = {};
 
         // Notify employee as reset date approaches (month/week/day) with a 24h window to avoid missing by time-of-day
         if (entitlement.nextResetDate) {
@@ -4498,14 +5046,15 @@ export class LeavesService {
           );
           if (shouldNotify) {
             const daysLeft = Math.max(1, Math.ceil(diffDays));
-            await this.logNotification(
+            notificationsToSend.push({
               employeeId,
-              'LEAVE_RESET_REMINDER',
-              `Your ${leaveTypeId} balance resets in ${daysLeft} day(s). Consider using or encashing remaining balance.`,
-            );
+              type: 'LEAVE_RESET_REMINDER',
+              message: `Your ${leaveTypeId} balance resets in ${daysLeft} day(s). Consider using or encashing remaining balance.`,
+            });
           }
         }
 
+        // Check if reset is needed
         if (entitlement.nextResetDate && entitlement.nextResetDate <= now) {
           const carryForward =
             policy.carryForwardAllowed && policy.maxCarryForward !== undefined
@@ -4518,22 +5067,23 @@ export class LeavesService {
                 ? entitlement.remaining || 0
                 : 0;
 
-          entitlement.carryForward = carryForward;
-          entitlement.taken = 0;
-          entitlement.pending = 0;
-          entitlement.accruedActual = 0;
-          entitlement.accruedRounded = 0;
-          entitlement.yearlyEntitlement = 0;
-          entitlement.remaining = carryForward;
+          // Apply reset
+          updates.carryForward = carryForward;
+          updates.taken = 0;
+          updates.pending = 0;
+          updates.accruedActual = 0;
+          updates.accruedRounded = 0;
+          updates.yearlyEntitlement = 0;
+          updates.remaining = carryForward;
 
           const nextReset = new Date(now);
           nextReset.setFullYear(nextReset.getFullYear() + 1);
-          entitlement.nextResetDate = nextReset;
-          entitlement.lastAccrualDate = now;
+          updates.nextResetDate = nextReset;
+          updates.lastAccrualDate = now;
 
           // Apply policy accrual from scratch for the new cycle
           let startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          let endDate = now;
+          const endDate = now;
           if (policy.accrualMethod === AccrualMethod.YEARLY) {
             startDate = new Date(now.getFullYear(), 0, 1);
           } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
@@ -4546,100 +5096,132 @@ export class LeavesService {
             leaveTypeId,
             startDate,
             endDate,
+            policy, // OPTIMIZATION: Pass pre-loaded policy to avoid duplicate query
           );
 
-          entitlement.yearlyEntitlement =
-            (entitlement.yearlyEntitlement || 0) + accrual.rounded;
-          entitlement.accruedActual = accrual.actual;
-          entitlement.accruedRounded = accrual.rounded;
-          entitlement.remaining = Math.max(
+          updates.yearlyEntitlement = (updates.yearlyEntitlement || 0) + accrual.rounded;
+          updates.accruedActual = accrual.actual;
+          updates.accruedRounded = accrual.rounded;
+          updates.remaining = Math.max(
             0,
             accrual.rounded +
-              (entitlement.carryForward || 0) -
-              (entitlement.taken || 0) -
-              (entitlement.pending || 0),
+              (updates.carryForward || 0) -
+              (updates.taken || 0) -
+              (updates.pending || 0),
           );
-          entitlement.lastAccrualDate = now;
-          await entitlement.save();
-          reset++;
+          updates.lastAccrualDate = now;
+
+          needsUpdate = true;
+          resetCount++;
+        }
+        // Check if accrual is needed (only if reset didn't happen - avoid double processing)
+        else {
+          // Accrual check based on lastAccrualDate and policy interval (month/quarter/year)
+          const lastAccrual = entitlement.lastAccrualDate
+            ? new Date(entitlement.lastAccrualDate)
+            : null;
+          const nextAccrual = (() => {
+            if (!lastAccrual) return now;
+            const d = new Date(lastAccrual);
+            if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+              d.setMonth(d.getMonth() + 1);
+            } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+              d.setMonth(d.getMonth() + 3);
+            } else {
+              d.setFullYear(d.getFullYear() + 1);
+            }
+            return d;
+          })();
+
+          if (now >= nextAccrual) {
+            let startDate: Date;
+            if (lastAccrual) {
+              startDate = new Date(lastAccrual);
+            } else {
+              // initial accrual window if none exists
+              if (policy.accrualMethod === AccrualMethod.MONTHLY) {
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+              } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
+                const quarter = Math.floor(now.getMonth() / 3);
+                startDate = new Date(now.getFullYear(), quarter * 3, 1);
+              } else {
+                startDate = new Date(now.getFullYear(), 0, 1);
+              }
+            }
+
+            const accrual = await this.calculateAccrualForEmployee(
+              employeeId,
+              leaveTypeId,
+              startDate,
+              now,
+              policy, // OPTIMIZATION: Pass pre-loaded policy to avoid duplicate query
+            );
+
+            const carryForwardAccrual =
+              policy.carryForwardAllowed && policy.maxCarryForward !== undefined
+                ? Math.min(
+                    entitlement.remaining || 0,
+                    policy.maxCarryForward ||
+                      parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
+                  )
+                : policy.carryForwardAllowed
+                  ? entitlement.remaining || 0
+                  : 0;
+
+            updates.carryForward = carryForwardAccrual;
+            updates.yearlyEntitlement = (entitlement.yearlyEntitlement || 0) + accrual.rounded;
+            updates.accruedActual = accrual.actual;
+            updates.accruedRounded = accrual.rounded;
+            updates.remaining = Math.max(
+              0,
+              accrual.rounded +
+                (updates.carryForward || 0) -
+                (entitlement.taken || 0) -
+                (entitlement.pending || 0),
+            );
+            updates.lastAccrualDate = now;
+
+            needsUpdate = true;
+            accruedCount++;
+          }
         }
 
-        // Accrual check based on lastAccrualDate and policy interval (month/quarter/year)
-        const lastAccrual = entitlement.lastAccrualDate
-          ? new Date(entitlement.lastAccrualDate)
-          : null;
-        const nextAccrual = (() => {
-          if (!lastAccrual) return now;
-          const d = new Date(lastAccrual);
-          if (policy.accrualMethod === AccrualMethod.MONTHLY) {
-            d.setMonth(d.getMonth() + 1);
-          } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
-            d.setMonth(d.getMonth() + 3);
-          } else {
-            d.setFullYear(d.getFullYear() + 1);
-          }
-          return d;
-        })();
-
-        if (now >= nextAccrual) {
-          let startDate: Date;
-          if (lastAccrual) {
-            startDate = new Date(lastAccrual);
-          } else {
-            // initial accrual window if none exists
-            if (policy.accrualMethod === AccrualMethod.MONTHLY) {
-              startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-            } else if (policy.accrualMethod === AccrualMethod.PER_TERM) {
-              const quarter = Math.floor(now.getMonth() / 3);
-              startDate = new Date(now.getFullYear(), quarter * 3, 1);
-            } else {
-              startDate = new Date(now.getFullYear(), 0, 1);
-            }
-          }
-
-          const accrual = await this.calculateAccrualForEmployee(
-            employeeId,
-            leaveTypeId,
-            startDate,
-            now,
-          );
-
-          const carryForwardAccrual =
-            policy.carryForwardAllowed && policy.maxCarryForward !== undefined
-              ? Math.min(
-                  entitlement.remaining || 0,
-                  policy.maxCarryForward ||
-                    parseInt(process.env.MAX_CARRY_FORWARD_DAYS || '45'),
-                )
-              : policy.carryForwardAllowed
-                ? entitlement.remaining || 0
-                : 0;
-
-          entitlement.carryForward = carryForwardAccrual;
-          entitlement.yearlyEntitlement =
-            (entitlement.yearlyEntitlement || 0) + accrual.rounded;
-          entitlement.accruedActual = accrual.actual;
-          entitlement.accruedRounded = accrual.rounded;
-          entitlement.remaining = Math.max(
-            0,
-            accrual.rounded +
-              (entitlement.carryForward || 0) -
-              (entitlement.taken || 0) -
-              (entitlement.pending || 0),
-          );
-          entitlement.lastAccrualDate = now;
-          await entitlement.save();
-          accrued++;
+        // Add to bulk update array if changes were made
+        if (needsUpdate) {
+          entitlementsToUpdate.push({
+            updateOne: {
+              filter: { _id: entitlement._id },
+              update: { $set: updates },
+            },
+          });
         }
       } catch (error) {
         failed.push({
-          employeeId: entitlement.employeeId.toString(),
+          employeeId: entitlement.employeeId?.toString() || 'unknown',
           error: error.message,
         });
       }
     }
 
-    return { reset, accrued, failed };
+    // OPTIMIZATION: Execute bulk write for all updates in a single database operation
+    if (entitlementsToUpdate.length > 0) {
+      this.logger.log(`Performing bulk update for ${entitlementsToUpdate.length} entitlements`);
+      await this.leaveEntitlementModel.bulkWrite(entitlementsToUpdate);
+    }
+
+    // OPTIMIZATION: Send notifications (fire-and-forget, don't await to avoid blocking)
+    if (notificationsToSend.length > 0) {
+      this.logger.log(`Sending ${notificationsToSend.length} reset reminder notifications`);
+      notificationsToSend.forEach(({ employeeId, type, message }) => {
+        this.logNotification(employeeId, type, message).catch(err =>
+          this.logger.warn(`Failed to send notification to ${employeeId}: ${err.message}`)
+        );
+      });
+    }
+
+    this.logger.log(`Daily reset and accrual completed: ${resetCount} reset, ${accruedCount} accrued, ${failed.length} failed`);
+
+    return { reset: resetCount, accrued: accruedCount, failed };
   }
 
   // ==================== APPROVAL WORKFLOW ====================
@@ -4962,7 +5544,7 @@ export class LeavesService {
     pending: number;
     errors: string[];
   }> {
-    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '1');
+    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '48');
     const thresholdDate = new Date();
     thresholdDate.setHours(thresholdDate.getHours() - thresholdHours);
     const hrManagerIds = await this.getHrManagerProfileIds();
@@ -5093,9 +5675,9 @@ export class LeavesService {
             );
           } else {
             // No higher manager available; leave pending and record for monitoring
-            errors.push(
-              `Request ${request._id}: no higher manager found for escalation`,
-            );
+            // errors.push(
+            //   `Request ${request._id}: no higher manager found for escalation`,
+            // );
           }
         } else if (currentStep.role === 'HR') {
           // HR stale: mark for HR alert
@@ -5163,8 +5745,14 @@ export class LeavesService {
     justification: string,
     hrAdminId: string,
   ): Promise<LeaveRequest> {
+    if (!Types.ObjectId.isValid(requestId)) {
+      throw new BadRequestException('Invalid request ID format');
+    }
+
+    const requestObjectId = new Types.ObjectId(requestId);
+
     const request = await this.leaveRequestModel
-      .findById(requestId)
+      .findById(requestObjectId)
       .populate('leaveTypeId')
       .populate('employeeId');
 
@@ -5290,10 +5878,13 @@ export class LeavesService {
       throw new BadRequestException('Invalid request ID format');
     }
 
+    const requestObjectId = new Types.ObjectId(requestId);
+
     // Fetch the leave request
     const request = await this.leaveRequestModel
-      .findById(requestId)
+      .findById(requestObjectId)
       .populate('leaveTypeId')
+      .populate('employeeId')
       .exec();
 
     if (!request) {
@@ -5316,18 +5907,36 @@ export class LeavesService {
       }
     }
 
-    // Store old approval flow for audit logging
+    // Store old approval flow for audit logging and change detection
     const oldApprovalFlow = JSON.parse(JSON.stringify(request.approvalFlow));
 
-    // Update approval flow
-    request.approvalFlow = approvalFlow.map((step) => ({
-      role: step.role,
-      status: step.status,
-      decidedBy: step.decidedBy
-        ? new Types.ObjectId(step.decidedBy)
-        : undefined,
-      decidedAt: step.decidedAt ? new Date(step.decidedAt) : undefined,
-    }));
+    // Track decidedBy changes for notifications
+    const decidedByChanges: Array<{ role: string; oldId?: string; newId?: string }> = [];
+
+    // Update approval flow and detect decidedBy changes
+    request.approvalFlow = approvalFlow.map((step, index) => {
+      const oldStep = oldApprovalFlow[index];
+      const oldDecidedBy = oldStep?.decidedBy?.toString();
+      const newDecidedBy = step.decidedBy;
+
+      // Detect if decidedBy changed
+      if (newDecidedBy && oldDecidedBy !== newDecidedBy) {
+        decidedByChanges.push({
+          role: step.role,
+          oldId: oldDecidedBy,
+          newId: newDecidedBy,
+        });
+      }
+
+      return {
+        role: step.role,
+        status: step.status,
+        decidedBy: step.decidedBy
+          ? new Types.ObjectId(step.decidedBy)
+          : undefined,
+        decidedAt: step.decidedAt ? new Date(step.decidedAt) : undefined,
+      };
+    });
 
     // Recalculate overall status based on updated approval flow
     const hasRejected = request.approvalFlow.some((s) => s.status === 'rejected');
@@ -5390,6 +5999,39 @@ export class LeavesService {
       );
     }
 
+    // Notify new employees when decidedBy is changed (delegated)
+    for (const change of decidedByChanges) {
+      if (change.newId) {
+        // Get employee and leave type details for the notification
+        const employee = request.employeeId as any;
+        const leaveType = request.leaveTypeId as any;
+        const employeeName = employee?.fullName ||
+          (employee?.firstName && employee?.lastName
+            ? `${employee.firstName} ${employee.lastName}`
+            : employee?.firstName || 'Unknown Employee');
+        const leaveTypeName = leaveType?.name || 'Unknown Leave Type';
+        const fromDate = request.dates?.from
+          ? new Date(request.dates.from).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+          : 'N/A';
+        const toDate = request.dates?.to
+          ? new Date(request.dates.to).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+          : 'N/A';
+        const duration = request.durationDays || 0;
+
+        await this.logNotification(
+          change.newId,
+          'LEAVE_REQUEST_DELEGATED',
+          `A leave request has been delegated to you for approval.\n\n` +
+          `Employee: ${employeeName}\n` +
+          `Leave Type: ${leaveTypeName}\n` +
+          `Period: ${fromDate} - ${toDate}\n` +
+          `Duration: ${duration} day${duration !== 1 ? 's' : ''}\n` +
+          `Your Role: ${change.role}\n` +
+          `Status: ${saved.status}`,
+        );
+      }
+    }
+
     // Log audit trail
     this.logger.log(
       `HR Admin ${hrAdminId} updated approval flow for request ${requestId}. ` +
@@ -5408,7 +6050,19 @@ export class LeavesService {
     leaveTypeId: string,
     requestedDays: number,
   ): Promise<{ withinLimit: boolean; used: number; limit: number }> {
-    const policy = await this.leavePolicyModel.findOne({ leaveTypeId });
+    if (
+      !Types.ObjectId.isValid(employeeId) ||
+      !Types.ObjectId.isValid(leaveTypeId)
+    ) {
+      throw new BadRequestException('Invalid ID format');
+    }
+
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const leaveTypeObjectId = new Types.ObjectId(leaveTypeId);
+
+    const policy = await this.leavePolicyModel.findOne({
+      leaveTypeId: leaveTypeObjectId,
+    });
 
     // TODO: Add 'cumulativeLeaveLimit' field to LeavePolicy schema to enable this check
     // For now, skip cumulative limit validation if field doesn't exist
@@ -5424,8 +6078,8 @@ export class LeavesService {
 
     // Get all approved leaves in past 12 months for this type
     const pastLeaves = await this.leaveRequestModel.find({
-      employeeId: new Types.ObjectId(employeeId),
-      leaveTypeId: new Types.ObjectId(leaveTypeId),
+      employeeId: employeeObjectId,
+      leaveTypeId: leaveTypeObjectId,
       status: LeaveStatus.APPROVED,
       'dates.from': { $gte: startDate, $lte: endDate },
     });
@@ -5643,8 +6297,19 @@ export class LeavesService {
   async processFinalSettlementForTerminatedEmployee(
     employeeId: string,
   ): Promise<void> {
+    if (!Types.ObjectId.isValid(employeeId)) {
+      this.logger.warn(
+        `Invalid employee ID format for final settlement: ${employeeId}`,
+      );
+      return;
+    }
+
+    const employeeObjectId = new Types.ObjectId(employeeId);
+
     try {
-      const employee = await this.employeeProfileModel.findById(employeeId);
+      const employee = await this.employeeProfileModel.findById(
+        employeeObjectId,
+      );
       if (!employee) {
         throw new NotFoundException('Employee not found');
       }
@@ -5659,7 +6324,7 @@ export class LeavesService {
 
       // Get all entitlements for the employee
       const entitlements = await this.leaveEntitlementModel
-        .find({ employeeId })
+        .find({ employeeId: employeeObjectId })
         .populate('leaveTypeId')
         .exec();
 

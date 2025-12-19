@@ -7,6 +7,12 @@ export class JobRequisition {
   @Prop({ required: true })
   requisitionId: string;
 
+  @Prop()
+  title?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Department' })
+  departmentId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'JobTemplate' })
   templateId: Types.ObjectId;
 
@@ -16,7 +22,7 @@ export class JobRequisition {
   @Prop()
   location: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'EmployeeProfile', required: true })
   hiringManagerId: Types.ObjectId;
 
   @Prop({
@@ -30,6 +36,9 @@ export class JobRequisition {
 
   @Prop()
   expiryDate?: Date;
+
+  @Prop({ type: [String], default: [] })
+  tags: string[];
 }
 
 export type JobRequisitionDocument = HydratedDocument<JobRequisition>;

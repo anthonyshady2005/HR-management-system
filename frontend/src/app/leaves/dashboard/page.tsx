@@ -58,7 +58,9 @@ import {
     fetchLeaveTypes,
     flagIrregularRequest,
     overrideRequest,
+    runDailyResetAndAccrual,
     runAccrual,
+    runStaleEscalations,
     updateLeaveCategory,
     updateLeaveType,
     createEntitlement,
@@ -143,6 +145,7 @@ const DEFAULT_JOB_POSITION_OPTIONS = [
 ] as const;
 
 const CONTRACT_TYPE_OPTIONS = ["FULL_TIME_CONTRACT", "PART_TIME_CONTRACT"] as const;
+const ATTACHMENT_TYPE_OPTIONS = ["medical", "document", "other"] as const;
 
 const normalizeRole = (role?: string | null) => (role || "").trim().toLowerCase();
 
@@ -155,6 +158,7 @@ type Filters = {
     endDate?: string;
     sortBy?: "dates.from" | "createdAt";
     sortOrder?: "asc" | "desc";
+    paid?: "all" | "paid" | "unpaid";
 };
 
 type PolicyFormState = {
@@ -183,6 +187,7 @@ export default function LeavesDashboardPage() {
     const can = (capability: Capability) =>
         ROLE_CAPABILITIES[capability].map(normalizeRole).includes(normalizedRole);
     const canEditApprovalFlow = ["hr admin", "system admin","department head", "HR Manager"].includes(normalizedRole);
+    const canEditEntitlementsFully = ["hr admin", "system admin"].includes(normalizedRole);
 
     const [filters, setFilters] = useState<Filters>({
         status: "",
@@ -193,6 +198,7 @@ export default function LeavesDashboardPage() {
         endDate: "",
         sortBy: "createdAt",
         sortOrder: "desc",
+        paid: "all",
     });
     const [positionOptions, setPositionOptions] = useState<string[]>([...DEFAULT_JOB_POSITION_OPTIONS]);
     const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
@@ -279,6 +285,12 @@ export default function LeavesDashboardPage() {
         name: "",
         categoryId: "",
         description: "",
+        paid: true,
+        deductible: true,
+        requiresAttachment: false,
+        attachmentType: "",
+        minTenureMonths: "",
+        maxDurationDays: "",
     });
     const [editType, setEditType] = useState({
         id: "",
@@ -286,6 +298,12 @@ export default function LeavesDashboardPage() {
         name: "",
         categoryId: "",
         description: "",
+        paid: true,
+        deductible: true,
+        requiresAttachment: false,
+        attachmentType: "",
+        minTenureMonths: "",
+        maxDurationDays: "",
     });
     const [profile, setProfile] = useState<any | null>(null);
     const [notifications, setNotifications] = useState<NotificationLog[]>([]);
@@ -295,6 +313,9 @@ export default function LeavesDashboardPage() {
     const [auditEmployeeId, setAuditEmployeeId] = useState("");
     const [auditTrail, setAuditTrail] = useState<AuditTrailEntry[]>([]);
     const [auditLoading, setAuditLoading] = useState(false);
+    const [auditFromDate, setAuditFromDate] = useState("");
+    const [auditToDate, setAuditToDate] = useState("");
+    const [auditTypeFilter, setAuditTypeFilter] = useState("all");
 
     // Bulk selection state
     const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
@@ -317,6 +338,8 @@ export default function LeavesDashboardPage() {
     });
     const [batchResult, setBatchResult] = useState<BatchEntitlementResponse | null>(null);
     const [batchSubmitting, setBatchSubmitting] = useState(false);
+    const [runningEscalations, setRunningEscalations] = useState(false);
+    const [runningDailyReset, setRunningDailyReset] = useState(false);
 
 
     // Approval flow editing state
@@ -336,6 +359,33 @@ export default function LeavesDashboardPage() {
         () => requests.reduce((sum, req) => sum + getRequestDurationDays(req), 0),
         [requests],
     );
+    const filteredAuditTrail = useMemo(() => {
+        if (!auditTrail.length) return [];
+        const typeFilter = (auditTypeFilter || "all").toLowerCase();
+        const from = auditFromDate ? new Date(auditFromDate) : null;
+        const to = auditToDate ? new Date(auditToDate) : null;
+        if (from) from.setHours(0, 0, 0, 0);
+        if (to) to.setHours(23, 59, 59, 999);
+
+        return auditTrail.filter((entry) => {
+            const entryType = (entry.adjustmentType || "").toString().toLowerCase();
+            if (typeFilter !== "all" && entryType !== typeFilter) return false;
+            if (!from && !to) return true;
+            if (!entry.createdAt) return false;
+            const createdAt = new Date(entry.createdAt);
+            if (Number.isNaN(createdAt.getTime())) return false;
+            if (from && createdAt < from) return false;
+            if (to && createdAt > to) return false;
+            return true;
+        });
+    }, [auditTrail, auditTypeFilter, auditFromDate, auditToDate]);
+    const filteredAuditAmountTotal = useMemo(() => {
+        if (!filteredAuditTrail.length) return 0;
+        return filteredAuditTrail.reduce((sum, entry) => {
+            const amount = typeof entry.amount === "number" ? entry.amount : Number(entry.amount);
+            return sum + (Number.isFinite(amount) ? amount : 0);
+        }, 0);
+    }, [filteredAuditTrail]);
 
     useEffect(() => {
         if (status === "unauthenticated") {
@@ -506,6 +556,12 @@ export default function LeavesDashboardPage() {
                 endDate: filters.endDate || undefined,
                 sortBy: filters.sortBy || "createdAt",
                 sortOrder: filters.sortOrder || "desc",
+                paid:
+                    filters.paid === "paid"
+                        ? true
+                        : filters.paid === "unpaid"
+                            ? false
+                            : undefined,
             };
 
             if (!can("canSeeAllRequests")) {
@@ -542,11 +598,9 @@ export default function LeavesDashboardPage() {
         if (!user?.id) return;
         setNotificationsLoading(true);
         try {
-            const toParam =user.id;
-            const data = await fetchNotifications(toParam ? { to: toParam } : undefined);
+            const data = await fetchNotifications(user.id);
             setNotifications(data || []);
         } catch (err) {
-            // Swallow errors for notifications; do not block page
             setNotifications([]);
         } finally {
             setNotificationsLoading(false);
@@ -582,7 +636,6 @@ export default function LeavesDashboardPage() {
     useEffect(() => {
         if (status === "authenticated") {
             void loadRequests();
-            void loadNotifications();
         }
     }, [
         status,
@@ -594,9 +647,15 @@ export default function LeavesDashboardPage() {
         filters.endDate,
         filters.sortBy,
         filters.sortOrder,
+        filters.paid,
         normalizedRole,
     ]);
 
+    useEffect(() => {
+        if (status === "authenticated" && user?.id) {
+            void loadNotifications();
+        }
+    }, [status, user?.id]);
     const stats = useMemo(() => {
         const result = {
             pending: 0,
@@ -820,8 +879,25 @@ export default function LeavesDashboardPage() {
                 name: newType.name,
                 categoryId: newType.categoryId,
                 description: newType.description || undefined,
+                paid: newType.paid,
+                deductible: newType.deductible,
+                requiresAttachment: newType.requiresAttachment,
+                attachmentType: newType.attachmentType || undefined,
+                minTenureMonths: newType.minTenureMonths !== "" ? Number(newType.minTenureMonths) : undefined,
+                maxDurationDays: newType.maxDurationDays !== "" ? Number(newType.maxDurationDays) : undefined,
             });
-            setNewType({ code: "", name: "", categoryId: "", description: "" });
+            setNewType({
+                code: "",
+                name: "",
+                categoryId: "",
+                description: "",
+                paid: true,
+                deductible: true,
+                requiresAttachment: false,
+                attachmentType: "",
+                minTenureMonths: "",
+                maxDurationDays: "",
+            });
             await loadBase();
             setActionMessage("Leave type created.");
         } catch (err: any) {
@@ -841,8 +917,26 @@ export default function LeavesDashboardPage() {
                 name: editType.name || undefined,
                 categoryId: editType.categoryId || undefined,
                 description: editType.description || undefined,
+                paid: editType.paid,
+                deductible: editType.deductible,
+                requiresAttachment: editType.requiresAttachment,
+                attachmentType: editType.attachmentType || undefined,
+                minTenureMonths: editType.minTenureMonths !== "" ? Number(editType.minTenureMonths) : undefined,
+                maxDurationDays: editType.maxDurationDays !== "" ? Number(editType.maxDurationDays) : undefined,
             });
-            setEditType({ id: "", code: "", name: "", categoryId: "", description: "" });
+            setEditType({
+                id: "",
+                code: "",
+                name: "",
+                categoryId: "",
+                description: "",
+                paid: true,
+                deductible: true,
+                requiresAttachment: false,
+                attachmentType: "",
+                minTenureMonths: "",
+                maxDurationDays: "",
+            });
             await loadBase();
             setActionMessage("Leave type updated.");
         } catch (err: any) {
@@ -1201,6 +1295,26 @@ export default function LeavesDashboardPage() {
 
         const payload: any = {};
 
+        if (canEditEntitlementsFully) {
+            const numericFields: Array<{ key: keyof typeof entitlementEditForm; name: string }> = [
+                { key: "yearlyEntitlement", name: "yearlyEntitlement" },
+                { key: "accruedActual", name: "accruedActual" },
+                { key: "accruedRounded", name: "accruedRounded" },
+                { key: "carryForward", name: "carryForward" },
+                { key: "taken", name: "taken" },
+                { key: "pending", name: "pending" },
+            ];
+            numericFields.forEach(({ key, name }) => {
+                const raw = entitlementEditForm[key];
+                if (raw !== undefined && raw !== null && raw !== "") {
+                    const num = Number(raw);
+                    if (Number.isFinite(num)) {
+                        payload[name] = num;
+                    }
+                }
+            });
+        }
+
         if (entitlementEditForm.lastAccrualDate) {
             const d = new Date(entitlementEditForm.lastAccrualDate);
             if (!Number.isNaN(d.getTime())) {
@@ -1336,6 +1450,28 @@ export default function LeavesDashboardPage() {
         }
     };
 
+    const handleRunDailyReset = async () => {
+        if (!can("canRunOps")) return;
+        setActionMessage(null);
+        setError(null);
+        setRunningDailyReset(true);
+        try {
+            const res = await runDailyResetAndAccrual();
+            if (res?.message) {
+                setActionMessage(res.message);
+            } else if (typeof res?.reset === "number" || typeof res?.accrued === "number") {
+                setActionMessage(`Daily reset completed. Reset: ${res?.reset ?? 0}, accrued: ${res?.accrued ?? 0}.`);
+            } else {
+                setActionMessage("Daily reset and accrual triggered.");
+            }
+            await loadRequests();
+        } catch (err: any) {
+            setError(err?.response?.data?.message || "Operation failed.");
+        } finally {
+            setRunningDailyReset(false);
+        }
+    };
+
     const handleRunAccrual = async () => {
         if (!can("canRunOps")) return;
         setActionMessage(null);
@@ -1349,6 +1485,22 @@ export default function LeavesDashboardPage() {
             setError(err?.response?.data?.message || "Operation failed.");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRunStaleEscalations = async () => {
+        if (!can("canRunOps")) return;
+        setActionMessage(null);
+        setError(null);
+        setRunningEscalations(true);
+        try {
+            const res = await runStaleEscalations();
+            setActionMessage(res?.message || "Stale approvals escalation triggered.");
+            await loadRequests();
+        } catch (err: any) {
+            setError(err?.response?.data?.message || "Operation failed.");
+        } finally {
+            setRunningEscalations(false);
         }
     };
 
@@ -1652,7 +1804,7 @@ export default function LeavesDashboardPage() {
                                                     <div className="flex items-center justify-between">
                                                         <div>
                                                             <p className="font-medium text-xs">
-                                                                {renderEmployee(req.employeeId)}
+                                                                {renderEmployee(req, { allowId: false })}
                                                             </p>
                                                             <p className="text-xs text-slate-400">
                                                                 {req.leaveType?.name || "Leave"} •{" "}
@@ -1685,11 +1837,11 @@ export default function LeavesDashboardPage() {
                                                     return (
                                                         <div key={`${overlap.requestA}-${overlap.requestB}-${idx}`} className="text-xs p-2 bg-white/5 rounded border border-amber-500/20">
                                                             <p className="text-slate-300">
-                                                                <span className="font-medium">{renderEmployee(reqA?.employeeId)}</span>{" "}
+                                                                <span className="font-medium">{renderEmployee(reqA, { allowId: false })}</span>{" "}
                                                                 <span className="text-amber-400">({reqA?.status || "pending"})</span>
                                                                 <br />
                                                                 overlaps with{" "}
-                                                                <span className="font-medium">{renderEmployee(reqB?.employeeId)}</span>{" "}
+                                                                <span className="font-medium">{renderEmployee(reqB, { allowId: false })}</span>{" "}
                                                                 <span className={reqB?.status === "approved" ? "text-emerald-400" : "text-amber-400"}>
                                                                     ({reqB?.status || "pending"})
                                                                 </span>
@@ -1783,6 +1935,27 @@ export default function LeavesDashboardPage() {
                                                     </SelectItem>
                                                 );
                                             })}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Paid status</Label>
+                                    <Select
+                                        value={filters.paid || "all"}
+                                        onValueChange={(value) =>
+                                            setFilters((prev) => ({
+                                                ...prev,
+                                                paid: value as Filters["paid"],
+                                            }))
+                                        }
+                                    >
+                                        <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                            <SelectValue placeholder="Any" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-slate-900 text-white border-white/10">
+                                            <SelectItem value="all">Any</SelectItem>
+                                            <SelectItem value="paid">Paid</SelectItem>
+                                            <SelectItem value="unpaid">Unpaid</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -2017,7 +2190,7 @@ export default function LeavesDashboardPage() {
                                                             className="whitespace-nowrap text-slate-200 cursor-pointer"
                                                             onClick={() => setSelectedRequest(req)}
                                                         >
-                                                            {renderEmployee(req.employeeId)}
+                                                            {renderEmployee(req, { allowId: false })}
                                                         </TableCell>
                                                         <TableCell>
                                                             <div className="flex items-center gap-2">
@@ -2177,7 +2350,10 @@ export default function LeavesDashboardPage() {
                                                                     <div>
                                                                         <p className="text-slate-400 mb-1">Employee</p>
                                                                         <p className="text-white">
-                                                                            {renderEmployee(selectedRequest.employeeId)}
+                                                                            {renderEmployee((selectedRequest as any).employee || selectedRequest.employeeId, { allowId: false })}
+                                                                        </p>
+                                                                        <p className="text-xs text-slate-400 mt-1">
+                                                                            ID: {normalizeId(selectedRequest.employeeId)}
                                                                         </p>
                                                                     </div>
                                                                     <div>
@@ -2266,7 +2442,7 @@ export default function LeavesDashboardPage() {
                                                                                         >
                                                                                             {step.status}
                                                                                         </Badge>
-                                                                                        {step.decidedBy && <span className="text-slate-400">by {step.decidedBy}</span>}
+                                                                                        {step.decidedBy && <span className="text-slate-400">by {step.decidedByName || step.decidedBy}</span>}
                                                                                         {step.decidedAt && (
                                                                                             <span className="text-slate-400">
                                                                                                 {new Date(step.decidedAt).toLocaleDateString()}
@@ -2529,7 +2705,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.yearlyEntitlement}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        yearlyEntitlement: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2539,7 +2721,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.carryForward}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        carryForward: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2549,7 +2737,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.accruedActual}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        accruedActual: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2559,7 +2753,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.accruedRounded}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        accruedRounded: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2569,7 +2769,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.taken}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        taken: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2579,7 +2785,13 @@ export default function LeavesDashboardPage() {
                                                 type="number"
                                                 step="0.5"
                                                 value={entitlementEditForm.pending}
-                                                disabled
+                                                disabled={!canEditEntitlementsFully}
+                                                onChange={(e) =>
+                                                    setEntitlementEditForm((p) => ({
+                                                        ...p,
+                                                        pending: e.target.value,
+                                                    }))
+                                                }
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
                                         </div>
@@ -2711,6 +2923,119 @@ export default function LeavesDashboardPage() {
                                         className="bg-white/5 border-white/10 text-white"
                                     />
                                 </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Paid</Label>
+                                        <Select
+                                            value={newType.paid ? "true" : "false"}
+                                            onValueChange={(value) =>
+                                                setNewType((p) => ({ ...p, paid: value === "true" }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="true">Yes</SelectItem>
+                                                <SelectItem value="false">No</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Deductible</Label>
+                                        <Select
+                                            value={newType.deductible ? "true" : "false"}
+                                            onValueChange={(value) =>
+                                                setNewType((p) => ({ ...p, deductible: value === "true" }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="true">Yes</SelectItem>
+                                                <SelectItem value="false">No</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Requires attachment</Label>
+                                        <Select
+                                            value={newType.requiresAttachment ? "true" : "false"}
+                                            onValueChange={(value) =>
+                                                setNewType((p) => ({ ...p, requiresAttachment: value === "true" }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="true">Yes</SelectItem>
+                                                <SelectItem value="false">No</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Attachment type</Label>
+                                        <Select
+                                            value={newType.attachmentType || "__none"}
+                                            onValueChange={(value) =>
+                                                setNewType((p) => ({
+                                                    ...p,
+                                                    attachmentType: value === "__none" ? "" : value,
+                                                }))
+                                            }
+                                        >
+                                            <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                <SelectValue placeholder="Select attachment type" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                <SelectItem value="__none">None</SelectItem>
+                                                {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                                    <SelectItem key={opt} value={opt}>
+                                                        {opt}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Min tenure (months)</Label>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            value={newType.minTenureMonths}
+                                            onChange={(e) =>
+                                                setNewType((p) => ({
+                                                    ...p,
+                                                    minTenureMonths: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="e.g., 6"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Max duration (days)</Label>
+                                        <Input
+                                            type="number"
+                                            min={0}
+                                            value={newType.maxDurationDays}
+                                            onChange={(e) =>
+                                                setNewType((p) => ({
+                                                    ...p,
+                                                    maxDurationDays: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="e.g., 30"
+                                            className="bg-white/5 border-white/10 text-white"
+                                        />
+                                    </div>
+                                </div>
                                 <Button type="submit">Create leave type</Button>
                             </form>
 
@@ -2720,7 +3045,19 @@ export default function LeavesDashboardPage() {
                                     value={editType.id || "__none"}
                                     onValueChange={(value) => {
                                         if (value === "__none") {
-                                            setEditType({ id: "", code: "", name: "", categoryId: "", description: "" });
+                                            setEditType({
+                                                id: "",
+                                                code: "",
+                                                name: "",
+                                                categoryId: "",
+                                                description: "",
+                                                paid: true,
+                                                deductible: true,
+                                                requiresAttachment: false,
+                                                attachmentType: "",
+                                                minTenureMonths: "",
+                                                maxDurationDays: "",
+                                            });
                                             return;
                                         }
                                         const found = leaveTypes.find((lt) => {
@@ -2739,6 +3076,23 @@ export default function LeavesDashboardPage() {
                                             name: found?.name || "",
                                             categoryId: catId ? catId.toString() : "",
                                             description: found?.description || "",
+                                            paid: typeof found?.paid === "boolean" ? !!found?.paid : true,
+                                            deductible: typeof found?.deductible === "boolean" ? !!found?.deductible : true,
+                                            requiresAttachment:
+                                                typeof found?.requiresAttachment === "boolean"
+                                                    ? !!found?.requiresAttachment
+                                                    : false,
+                                            attachmentType: (found as any)?.attachmentType || "",
+                                            minTenureMonths:
+                                                (found as any)?.minTenureMonths !== undefined &&
+                                                (found as any)?.minTenureMonths !== null
+                                                    ? (found as any)?.minTenureMonths?.toString?.() || ""
+                                                    : "",
+                                            maxDurationDays:
+                                                (found as any)?.maxDurationDays !== undefined &&
+                                                (found as any)?.maxDurationDays !== null
+                                                    ? (found as any)?.maxDurationDays?.toString?.() || ""
+                                                    : "",
                                         });
                                     }}
                                 >
@@ -2816,6 +3170,119 @@ export default function LeavesDashboardPage() {
                                                 placeholder="Description"
                                                 className="bg-white/5 border-white/10 text-white"
                                             />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Paid</Label>
+                                                <Select
+                                                    value={editType.paid ? "true" : "false"}
+                                                    onValueChange={(value) =>
+                                                        setEditType((p) => ({ ...p, paid: value === "true" }))
+                                                    }
+                                                >
+                                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                        <SelectValue placeholder="Select" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                        <SelectItem value="true">Yes</SelectItem>
+                                                        <SelectItem value="false">No</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Deductible</Label>
+                                                <Select
+                                                    value={editType.deductible ? "true" : "false"}
+                                                    onValueChange={(value) =>
+                                                        setEditType((p) => ({ ...p, deductible: value === "true" }))
+                                                    }
+                                                >
+                                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                        <SelectValue placeholder="Select" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                        <SelectItem value="true">Yes</SelectItem>
+                                                        <SelectItem value="false">No</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Requires attachment</Label>
+                                                <Select
+                                                    value={editType.requiresAttachment ? "true" : "false"}
+                                                    onValueChange={(value) =>
+                                                        setEditType((p) => ({ ...p, requiresAttachment: value === "true" }))
+                                                    }
+                                                >
+                                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                        <SelectValue placeholder="Select" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                        <SelectItem value="true">Yes</SelectItem>
+                                                        <SelectItem value="false">No</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Attachment type</Label>
+                                                <Select
+                                                    value={editType.attachmentType || "__none"}
+                                                    onValueChange={(value) =>
+                                                        setEditType((p) => ({
+                                                            ...p,
+                                                            attachmentType: value === "__none" ? "" : value,
+                                                        }))
+                                                    }
+                                                >
+                                                    <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                        <SelectValue placeholder="Select attachment type" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                        <SelectItem value="__none">None</SelectItem>
+                                                        {ATTACHMENT_TYPE_OPTIONS.map((opt) => (
+                                                            <SelectItem key={opt} value={opt}>
+                                                                {opt}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Min tenure (months)</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    value={editType.minTenureMonths}
+                                                    onChange={(e) =>
+                                                        setEditType((p) => ({
+                                                            ...p,
+                                                            minTenureMonths: e.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="e.g., 6"
+                                                    className="bg-white/5 border-white/10 text-white"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Max duration (days)</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    value={editType.maxDurationDays}
+                                                    onChange={(e) =>
+                                                        setEditType((p) => ({
+                                                            ...p,
+                                                            maxDurationDays: e.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="e.g., 30"
+                                                    className="bg-white/5 border-white/10 text-white"
+                                                />
+                                            </div>
                                         </div>
                                         <div className="flex gap-2">
                                             <Button type="button" variant="secondary" onClick={handleUpdateType}>
@@ -3117,26 +3584,93 @@ export default function LeavesDashboardPage() {
                                             {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Load audit"}
                                         </Button>
                                     </div>
-                                    {auditTrail.length ? (
-                                        <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
-                                            {auditTrail.map((entry) => (
-                                                <div
-                                                    key={entry.adjustmentId}
-                                                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
-                                                >
-                                                    <div className="text-sm space-y-1">
-                                                        <p className="font-semibold">{entry.leaveType}</p>
-                                                        <p className="text-xs text-slate-300">
-                                                            {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
-                                                        </p>
-                                                        <p className="text-xs text-slate-400">
-                              HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
-                                                            {entry.createdAt ? formatDate(entry.createdAt) : ""}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">From</Label>
+                                            <Input
+                                                type="date"
+                                                value={auditFromDate}
+                                                onChange={(e) => setAuditFromDate(e.target.value)}
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
                                         </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">To</Label>
+                                            <Input
+                                                type="date"
+                                                value={auditToDate}
+                                                onChange={(e) => setAuditToDate(e.target.value)}
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Type</Label>
+                                            <Select
+                                                value={auditTypeFilter}
+                                                onValueChange={(value) => setAuditTypeFilter(value)}
+                                            >
+                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                    <SelectValue placeholder="All types" />
+                                                </SelectTrigger>
+                                                <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                    <SelectItem value="all">All types</SelectItem>
+                                                    <SelectItem value="add">Add</SelectItem>
+                                                    <SelectItem value="deduct">Deduct</SelectItem>
+                                                    <SelectItem value="encashment">Encashment</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs text-slate-400">
+                                        <span>
+                                            Showing {filteredAuditTrail.length} of {auditTrail.length}
+                                        </span>
+                                        <span>
+                                            Total amount:{" "}
+                                            {filteredAuditAmountTotal.toLocaleString(undefined, {
+                                                maximumFractionDigits: 2,
+                                            })}
+                                        </span>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => {
+                                                setAuditFromDate("");
+                                                setAuditToDate("");
+                                                setAuditTypeFilter("all");
+                                            }}
+                                            disabled={!auditFromDate && !auditToDate && auditTypeFilter === "all"}
+                                        >
+                                            Clear filters
+                                        </Button>
+                                    </div>
+                                    {auditTrail.length ? (
+                                        filteredAuditTrail.length ? (
+                                            <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
+                                                {filteredAuditTrail.map((entry) => (
+                                                    <div
+                                                        key={entry.adjustmentId}
+                                                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
+                                                    >
+                                                        <div className="text-sm space-y-1">
+                                                            <p className="font-semibold">{entry.leaveType}</p>
+                                                            <p className="text-xs text-slate-300">
+                                                                {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
+                                                            </p>
+                                                            <p className="text-xs text-slate-400">
+                                                                HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
+                                                                {entry.createdAt ? formatDate(entry.createdAt) : ""}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-slate-400">
+                                                No audit entries match the current filters.
+                                            </p>
+                                        )
                                     ) : (
                                         <p className="text-xs text-slate-400">No audit entries loaded.</p>
                                     )}
@@ -3515,6 +4049,7 @@ export default function LeavesDashboardPage() {
                                                         <Label className="text-xs">Leave type</Label>
                                                         <Select
                                                             value={form.leaveTypeId || "__none"}
+                                                            disabled
                                                             onValueChange={(value) =>
                                                                 setPolicyEditState(pid, { leaveTypeId: value === "__none" ? "" : value })
                                                             }
@@ -4207,17 +4742,47 @@ export default function LeavesDashboardPage() {
                     {can("canRunOps") ? (
                         <Card className="bg-white/5 border-white/10 text-white">
                             <CardHeader>
-                                <CardTitle>Run accrual</CardTitle>
+                                <CardTitle>Run operations </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2">
                                 <Button
                                     size ="full"
                                     onClick={handleRunAccrual}
-                                    disabled={loading}
+                                    disabled={loading || runningEscalations || runningDailyReset}
                                 >
                                     Run accrual
                                 </Button>
-                            </CardContent>
+                                <Button
+                                    size="full"
+                                    variant="secondary"
+                                    onClick={handleRunDailyReset}
+                                    disabled={runningDailyReset || loading || runningEscalations}
+                                >
+                                    {runningDailyReset ? (
+                                        <span className="flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Running daily reset...
+                                        </span>
+                                    ) : (
+                                        "Run daily reset & accrual"
+                                    )}
+                                </Button>
+                                <Button
+                                    size="full"
+                                    variant="outline"
+                                    onClick={handleRunStaleEscalations}
+                                    disabled={runningEscalations || loading || runningDailyReset}
+                                >
+                                    {runningEscalations ? (
+                                        <span className="flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Escalating...
+                                        </span>
+                                    ) : (
+                                        "Escalate stale approvals"
+                                    )}
+                                </Button>
+                             </CardContent>
                         </Card>
                         ) : null}
                 </aside>
@@ -4246,13 +4811,44 @@ function formatDate(value: string) {
     return d.toLocaleDateString();
 }
 
-function renderEmployee(employee: any) {
-    if (typeof employee === "string") return employee;
+function renderEmployee(employee: any, opts?: { allowId?: boolean }): string {
+    if (!employee) return "Unknown";
+
+    // If this is a request object, prefer computed display name or nested employee
+    if ((employee as any).employeeDisplayName) {
+        const disp = (employee as any).employeeDisplayName;
+        if (opts?.allowId === false && isLikelyId(disp)) return "Unknown";
+        return disp;
+    }
+    if ((employee as any).employee) {
+        const nested: string = renderEmployee((employee as any).employee, opts);
+        if (nested && nested !== "Unknown") return nested;
+    }
+
+    // Direct employee object fields
+    if (employee?.displayName) return employee.displayName;
     if (employee?.fullName) return employee.fullName;
     if (employee?.firstName && employee?.lastName) {
         return `${employee.firstName} ${employee.lastName}`;
     }
     if (employee?.firstName) return employee.firstName;
-    if (employee?._id) return employee._id;
+
+    const id =
+        typeof employee === "string"
+            ? employee
+            : employee?._id?.toString?.() ||
+              employee?.id?.toString?.() ||
+              employee?.employeeId?.toString?.();
+    if (id) {
+        if (opts?.allowId === false) {
+            return "Unknown";
+        }
+        return id;
+    }
     return "Unknown";
+}
+
+function isLikelyId(value?: string) {
+    if (!value) return false;
+    return /^[0-9a-fA-F]{24}$/.test(value);
 }

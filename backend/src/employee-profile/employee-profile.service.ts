@@ -1601,9 +1601,14 @@ export class EmployeeProfileService {
       if (dto.status === ProfileChangeStatus.APPROVED && request.fieldChanges?.length > 0) {
         const update: Record<string, unknown> = {};
         const newValues: Record<string, unknown> = {};
-        const currentProfile = await this.profileModel.findById(request.employeeProfileId).lean().exec();
+        const currentProfile = await this.profileModel.findById(request.employeeProfileId).lean().exec() as EmployeeProfileDocument;
 
-        for (const change of request.fieldChanges) {
+        // Determine which fields to apply
+        const fieldsToApply = dto.approvedFields && dto.approvedFields.length > 0
+          ? request.fieldChanges.filter(change => dto.approvedFields!.includes(change.fieldName))
+          : request.fieldChanges;
+
+        for (const change of fieldsToApply) {
           // Skip if newValue is undefined, null, or empty string
           if (change.newValue === undefined || change.newValue === null || change.newValue === '') {
             continue;
@@ -1642,10 +1647,15 @@ export class EmployeeProfileService {
           newValues[change.fieldName] = change.newValue;
         }
 
+        // Log if partial approval
+        if (dto.approvedFields && dto.approvedFields.length < request.fieldChanges.length) {
+          console.log(`[Service] Partial approval: ${dto.approvedFields.length}/${request.fieldChanges.length} fields approved`);
+        }
+
         // Keep fullName in sync when first/last name change
         if (update['firstName'] !== undefined || update['lastName'] !== undefined) {
           const newFirst = (update['firstName'] as string | undefined) ?? currentProfile?.firstName ?? '';
-          const newLast = (update['lastName'] as string | undefined) ?? currentProfile?.lastName ?? '';
+          const newLast = (update['lastName'] as string | undefined) ?? currentProfile?.lastName ?? ''; // currentProfile is guaranteed here
           update['fullName'] = `${newFirst} ${newLast}`.trim();
           newValues['fullName'] = update['fullName'];
         }
@@ -1923,6 +1933,53 @@ export class EmployeeProfileService {
       .exec();
 
     return roles || { roles: [], permissions: [], isActive: false };
+  }
+
+  /**
+   * Get list of HR Managers for dropdown selection.
+   * Returns employees with HR_MANAGER role.
+   */
+  async getHrManagersList() {
+    // Find all active system roles with HR_MANAGER role
+    const hrManagerRoles = await this.systemRoleModel
+      .find({
+        roles: { $in: [SystemRole.HR_MANAGER] },
+        isActive: true,
+      })
+      .lean()
+      .exec();
+
+    if (hrManagerRoles.length === 0) {
+      return [];
+    }
+
+    // Extract employee profile IDs
+    const employeeIds = hrManagerRoles
+      .map((role) => role.employeeProfileId)
+      .filter((id) => id)
+      .map((id) => (id instanceof Types.ObjectId ? id : new Types.ObjectId(id)));
+
+    // Get employee profiles
+    const employees = await this.profileModel
+      .find({
+        _id: { $in: employeeIds },
+        status: EmployeeStatus.ACTIVE,
+      })
+      .select('employeeNumber firstName lastName fullName workEmail')
+      .lean()
+      .exec();
+
+    // Format response
+    return employees.map((emp) => ({
+      _id: emp._id.toString(),
+      id: emp._id.toString(),
+      employeeNumber: emp.employeeNumber,
+      name: emp.fullName || `${emp.firstName} ${emp.lastName}`,
+      firstName: emp.firstName,
+      lastName: emp.lastName,
+      fullName: emp.fullName || `${emp.firstName} ${emp.lastName}`,
+      workEmail: emp.workEmail,
+    }));
   }
 
   /**

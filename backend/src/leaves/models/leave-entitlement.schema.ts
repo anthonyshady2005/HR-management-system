@@ -50,3 +50,7 @@ export class LeaveEntitlement {
 
 export const LeaveEntitlementSchema =
     SchemaFactory.createForClass(LeaveEntitlement);
+
+// Indexes for query performance
+LeaveEntitlementSchema.index({ employeeId: 1, leaveTypeId: 1 });
+LeaveEntitlementSchema.index({ employeeId: 1 });

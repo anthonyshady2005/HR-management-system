@@ -54,7 +54,8 @@ export interface JobRequisition {
   _id: string;
   requisitionId: string;
   title?: string;
-  department?: string;
+  department?: string | { _id: string; name: string; code?: string };
+  departmentId?: any;
   location?: string;
   openings?: number;
   publishStatus?: string;
@@ -62,6 +63,7 @@ export interface JobRequisition {
   expiryDate?: string;
   hiringManagerId?: any;
   templateId?: any;
+  tags?: string[];
 }
 
 export interface Application {
@@ -398,7 +400,6 @@ export const recruitmentApi = {
   },
 
   // Get HR Managers for dropdown selection
-  // waiting for the endpoint to be implemented , khalaso it is not implemented yet
   getHrManagers: async (): Promise<Array<{
     _id: string;
     id: string;
@@ -413,7 +414,7 @@ export const recruitmentApi = {
       const response = await api.get(`/employee-profile/hr-managers/list`);
       return response.data || [];
     } catch (error) {
-      console.warn('HR Managers endpoint not yet implemented:', error);
+      console.error('Error loading HR Managers:', error);
       return [];
     }
   },
@@ -421,6 +422,8 @@ export const recruitmentApi = {
   // Create Job Requisition
   createJobRequisition: async (data: {
     requisitionId: string;
+    title?: string;
+    departmentId?: string;
     templateId?: string;
     openings: number;
     location?: string;
@@ -428,8 +431,14 @@ export const recruitmentApi = {
     publishStatus?: "draft" | "published" | "closed";
     postingDate?: string;
     expiryDate?: string;
+    tags?: string;
   }): Promise<JobRequisition> => {
     const response = await api.post("/recruitment/job-requisitions", data);
+    return response.data;
+  },
+
+  getPublicJobRequisitions: async (): Promise<JobRequisition[]> => {
+    const response = await api.get(`/recruitment/job-requisitions/public`);
     return response.data;
   },
 
@@ -456,7 +465,20 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  deleteJobRequisition: async (id: string): Promise<void> => {
+    await api.delete(`/recruitment/job-requisitions/${id}`);
+  },
+
   // Application methods
+  createApplication: async (data: {
+    candidateId: string;
+    requisitionId: string;
+    assignedHr?: string;
+  }): Promise<Application> => {
+    const response = await api.post(`/recruitment/applications`, data);
+    return response.data;
+  },
+
   getApplicationById: async (id: string): Promise<Application> => {
     const response = await api.get(`/recruitment/applications/${id}`);
     return response.data;

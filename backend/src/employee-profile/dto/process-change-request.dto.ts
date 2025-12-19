@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsOptional } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProfileChangeStatus } from '../enums/employee-profile.enums';
 
@@ -17,4 +17,14 @@ export class ProcessChangeRequestDto {
   @IsOptional()
   @IsString()
   comments?: string;
+
+  @ApiPropertyOptional({ 
+    description: 'Array of field names to approve (for partial approval). If omitted, all fields are approved.',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  approvedFields?: string[];
 }
+
