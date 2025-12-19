@@ -4590,43 +4590,126 @@ export class LeavesService {
     const endDate: Date = now;
     const failed: Array<{ employeeId: string; error: string }> = [];
 
-    // OPTIMIZATION: Batch load all data upfront instead of querying inside loops
-    await this.runDailyResetAndAccrual();
-
-    // Load all policies once with populated leave types
-    const policies = await this.leavePolicyModel
-      .find()
-      .populate('leaveTypeId')
-      .lean()
-      .exec();
+    // OPTIMIZATION: Batch load all data needed for eligibility validation upfront
+    const [policies, activeEmployees, allPositions, allAssignments] = await Promise.all([
+      this.leavePolicyModel.find().populate('leaveTypeId').lean().exec(),
+      this.employeeProfileModel
+        .find({ status: EmployeeStatus.ACTIVE })
+        .select('_id dateOfHire contractType primaryDepartmentId status')
+        .lean()
+        .exec(),
+      this.positionModel.find().select('_id title code name').lean().exec(),
+      this.positionAssignmentModel
+        .find({
+          startDate: { $lte: now },
+          $or: [
+            { endDate: { $exists: false } },
+            { endDate: null },
+            { endDate: { $gte: now } },
+          ],
+        })
+        .populate('positionId')
+        .lean()
+        .exec(),
+    ]);
 
     if (!policies || policies.length === 0) {
       return { processed: 0, failed: [] };
     }
 
-    // Create policy map for O(1) lookups: leaveTypeId -> policy
+    if (!activeEmployees || activeEmployees.length === 0) {
+      return { processed: 0, failed: [] };
+    }
+
+    // OPTIMIZATION: Create policy map for O(1) lookups
     const policyMap = new Map();
     policies.forEach(p => {
       const leaveTypeId = (p.leaveTypeId as any)?._id?.toString() || (p.leaveTypeId as any)?.toString();
       if (leaveTypeId) policyMap.set(leaveTypeId, p);
     });
 
-    // Load all active employees once
-    const activeEmployees = await this.employeeProfileModel
-      .find({ status: EmployeeStatus.ACTIVE })
-      .select('_id dateOfHire contractType primaryDepartmentId status')
-      .lean()
-      .exec();
-
-    if (!activeEmployees || activeEmployees.length === 0) {
-      return { processed: 0, failed: [] };
-    }
-
-    // Create employee map for O(1) lookups: employeeId -> employee
+    // OPTIMIZATION: Create employee map for O(1) lookups
     const employeeMap = new Map();
     activeEmployees.forEach(e => {
       employeeMap.set(e._id.toString(), e);
     });
+
+    // OPTIMIZATION: Build position assignment map: employeeId -> assignment
+    const assignmentMap = new Map();
+    allAssignments.forEach(a => {
+      const empId = (a as any).employeeProfileId?.toString();
+      if (empId) {
+        assignmentMap.set(empId, a);
+      }
+    });
+
+    // OPTIMIZATION: Build position options set for eligibility checking
+    const positionOptionsSet = new Set<string>();
+    Object.values(JobPosition).forEach(p => positionOptionsSet.add(p.toString().toLowerCase()));
+    allPositions.forEach(p => {
+      const title = p.title || (p as any).name || (p as any).code;
+      if (title) positionOptionsSet.add(title.toLowerCase());
+    });
+
+    // OPTIMIZATION: Pre-calculate employee eligibility data (tenure, position, contract)
+    const employeeEligibilityData = new Map();
+    for (const emp of activeEmployees) {
+      const employeeId = emp._id.toString();
+      const assignment = assignmentMap.get(employeeId);
+      const positionDoc = assignment?.positionId as any;
+      const position = positionDoc?.title || positionDoc?.code || positionDoc?.name;
+
+      const hireDate = emp.dateOfHire ? new Date(emp.dateOfHire) : null;
+      const tenureMonths = hireDate && !isNaN(hireDate.getTime())
+        ? Math.max(0, Math.floor((now.getTime() - hireDate.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+        : 0;
+
+      employeeEligibilityData.set(employeeId, {
+        tenureMonths,
+        position: position?.toLowerCase(),
+        contractType: emp.contractType,
+      });
+    }
+
+    // OPTIMIZATION: Fast in-memory eligibility checker (no database queries)
+    const checkEligibilityFast = (employeeId: string, policy: any): boolean => {
+      const eligibility = policy.eligibility;
+      if (!eligibility) return true; // No restrictions
+
+      // Check if all criteria are open
+      const tenureOpen = eligibility.minTenureMonths === null || eligibility.minTenureMonths === 0;
+      const positionsOpen = !eligibility.positionsAllowed ||
+        (Array.isArray(eligibility.positionsAllowed) && eligibility.positionsAllowed.length === 0) ||
+        (Array.isArray(eligibility.positionsAllowed) &&
+         Array.from(positionOptionsSet).every(p =>
+           eligibility.positionsAllowed.map((x: any) => String(x).toLowerCase()).includes(p)
+         ));
+      const contractsOpen = !eligibility.contractTypesAllowed ||
+        (Array.isArray(eligibility.contractTypesAllowed) && eligibility.contractTypesAllowed.length === 0);
+
+      if (tenureOpen && positionsOpen && contractsOpen) return true;
+
+      const empData = employeeEligibilityData.get(employeeId);
+      if (!empData) return false; // No data = not eligible
+
+      // Check tenure
+      if (eligibility.minTenureMonths !== undefined && eligibility.minTenureMonths !== null) {
+        if (empData.tenureMonths < eligibility.minTenureMonths) return false;
+      }
+
+      // Check position
+      if (eligibility.positionsAllowed && Array.isArray(eligibility.positionsAllowed) && eligibility.positionsAllowed.length > 0) {
+        const allowed = eligibility.positionsAllowed.map((p: any) => String(p).toLowerCase());
+        if (!empData.position || !allowed.includes(empData.position)) return false;
+      }
+
+      // Check contract type
+      if (eligibility.contractTypesAllowed && Array.isArray(eligibility.contractTypesAllowed) && eligibility.contractTypesAllowed.length > 0) {
+        if (!empData.contractType || !eligibility.contractTypesAllowed.includes(empData.contractType)) return false;
+      }
+
+      return true;
+    };
 
     // Load ALL existing entitlements at once
     const existingEntitlements = await this.leaveEntitlementModel
@@ -4660,8 +4743,9 @@ export class LeavesService {
         if (entitlementMap.has(key)) continue;
 
         try {
-          // OPTIMIZATION: Skip detailed eligibility validation during seeding
-          // Just create the entitlement - it will be validated when employee requests leave
+          // OPTIMIZATION: Use fast in-memory eligibility check (no DB queries)
+          if (!checkEligibilityFast(employeeId, policy)) continue;
+
           let seedStart: Date;
           if (policy.accrualMethod === AccrualMethod.MONTHLY) {
             seedStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -4738,8 +4822,13 @@ export class LeavesService {
           continue;
         }
 
-        // OPTIMIZATION: Skip detailed eligibility validation during accrual
-        // (already validated when entitlement was created - trust existing entitlements)
+        // OPTIMIZATION: Re-validate eligibility using fast in-memory check (no DB queries)
+        if (!checkEligibilityFast(empId, policy)) {
+          this.logger.warn(
+            `Skipping accrual for employee ${empId}, leave type ${ltId}: no longer eligible`,
+          );
+          continue;
+        }
 
         // Reset if nextResetDate has passed
         let resetFields: any = {};
@@ -5455,7 +5544,7 @@ export class LeavesService {
     pending: number;
     errors: string[];
   }> {
-    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '1');
+    const thresholdHours = parseInt(process.env.AUTO_ESCALATION_HOURS || '48');
     const thresholdDate = new Date();
     thresholdDate.setHours(thresholdDate.getHours() - thresholdHours);
     const hrManagerIds = await this.getHrManagerProfileIds();
@@ -5586,9 +5675,9 @@ export class LeavesService {
             );
           } else {
             // No higher manager available; leave pending and record for monitoring
-            errors.push(
-              `Request ${request._id}: no higher manager found for escalation`,
-            );
+            // errors.push(
+            //   `Request ${request._id}: no higher manager found for escalation`,
+            // );
           }
         } else if (currentStep.role === 'HR') {
           // HR stale: mark for HR alert

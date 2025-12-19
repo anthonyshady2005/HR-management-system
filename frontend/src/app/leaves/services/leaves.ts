@@ -464,6 +464,37 @@ export async function fetchAuditTrail(employeeId: string): Promise<AuditTrailEnt
     return res.data;
 }
 
+export async function fetchEmployeeAuditTrail(employeeId: string): Promise<AuditTrailEntry[]> {
+    const res = await api.get(`/leaves/adjustments/employee/${employeeId}`);
+    const adjustments = (res.data || []) as any[];
+    return adjustments.map((adj) => ({
+        adjustmentId:
+            adj?._id?.toString?.() ||
+            adj?.id?.toString?.() ||
+            adj?.adjustmentId?.toString?.() ||
+            "",
+        employeeId:
+            adj?.employeeId?._id?.toString?.() ||
+            adj?.employeeId?.id?.toString?.() ||
+            (typeof adj?.employeeId === "string" ? adj.employeeId : ""),
+        leaveType:
+            adj?.leaveTypeId?.name ||
+            adj?.leaveType?.name ||
+            adj?.leaveTypeId?.code ||
+            adj?.leaveType?.code ||
+            "Leave",
+        adjustmentType: adj?.adjustmentType,
+        amount: adj?.amount,
+        reason: adj?.reason,
+        hrUserId:
+            adj?.hrUserId?._id?.toString?.() ||
+            adj?.hrUserId?.id?.toString?.() ||
+            (typeof adj?.hrUserId === "string" ? adj.hrUserId : undefined),
+        hrUserName: adj?.hrUserId?.fullName || adj?.hrUserName,
+        createdAt: adj?.createdAt,
+    }));
+}
+
 
 export async function submitLeaveRequest(payload: {
     employeeId: string;
@@ -516,6 +547,16 @@ export async function calculateNetDays(employeeId: string, from: string, to: str
 export async function checkIfDateBlocked(date: string) {
     const res = await api.get("/leaves/calendars/check-blocked", { params: { date } });
     return res.data as { date: string; isBlocked: boolean };
+}
+
+export async function runDailyResetAndAccrual() {
+    const res = await api.post("/leaves/accrual/daily-reset", {});
+    return res.data as {
+        message?: string;
+        reset?: number;
+        accrued?: number;
+        failed?: Array<{ employeeId: string; error: string }>;
+    };
 }
 
 export async function runAccrual(period?: "monthly" | "quarterly" | "yearly") {
