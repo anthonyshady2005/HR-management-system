@@ -145,6 +145,7 @@ export interface OnboardingTask {
 export interface Onboarding {
   _id: string;
   employeeId: any;
+  offerId?: any;
   tasks: OnboardingTask[];
   completed: boolean;
   createdAt?: string;
