@@ -170,12 +170,12 @@ export function ChangeRequestForm({ request, onSuccess, onCancel }: ChangeReques
         requestType: formData.requestType,
       };
 
-      if (formData.details) {
-        payload.details = formData.details;
+      if (formData.details && formData.details.trim()) {
+        payload.details = formData.details.trim();
       }
 
-      if (formData.reason) {
-        payload.reason = formData.reason;
+      if (formData.reason && formData.reason.trim()) {
+        payload.reason = formData.reason.trim();
       }
 
       // Add target IDs based on request type
@@ -183,7 +183,7 @@ export function ChangeRequestForm({ request, onSuccess, onCancel }: ChangeReques
         formData.requestType === StructureRequestType.NEW_DEPARTMENT ||
         formData.requestType === StructureRequestType.UPDATE_DEPARTMENT
       ) {
-        if (formData.targetDepartmentId) {
+        if (formData.targetDepartmentId && formData.targetDepartmentId.trim()) {
           payload.targetDepartmentId = formData.targetDepartmentId;
         }
       }
@@ -193,14 +193,16 @@ export function ChangeRequestForm({ request, onSuccess, onCancel }: ChangeReques
         formData.requestType === StructureRequestType.UPDATE_POSITION ||
         formData.requestType === StructureRequestType.CLOSE_POSITION
       ) {
-        if (formData.targetPositionId) {
+        if (formData.targetPositionId && formData.targetPositionId.trim()) {
           payload.targetPositionId = formData.targetPositionId;
         }
         // Include department ID for all position-related requests
-        if (formData.targetDepartmentId) {
+        if (formData.targetDepartmentId && formData.targetDepartmentId.trim()) {
           payload.targetDepartmentId = formData.targetDepartmentId;
         }
       }
+
+      console.log('[ChangeRequestForm] Submitting payload:', payload);
 
       if (isEditing) {
         await api.patch(`/organization-structure/change-requests/${request._id}`, payload);

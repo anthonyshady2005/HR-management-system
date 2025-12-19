@@ -426,10 +426,7 @@ export function OrgChart() {
             Select a department to view its reporting structure and hierarchy
           </p>
         </div>
-        <Button onClick={fetchDepartments} variant="outline" size="sm">
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </Button>
+        
       </div>
 
       {/* Department Selector - Only show if user can view all departments */}

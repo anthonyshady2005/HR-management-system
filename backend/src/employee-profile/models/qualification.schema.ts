@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { GraduationType } from '../enums/employee-profile.enums';
+import { EmployeeProfile } from './employee-profile.schema';
 
 @Schema({ collection: 'employee_qualifications', timestamps: true })
 export class EmployeeQualification {
