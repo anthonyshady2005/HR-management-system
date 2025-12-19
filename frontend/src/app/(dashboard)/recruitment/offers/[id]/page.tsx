@@ -189,8 +189,8 @@ export default function OfferDetailPage() {
       activeRole === 'HR Employee' ||
       activeRole === 'System Admin';
 
-    // Check if current role is a Manager role (using actual backend enum values)
-    const hasManagerRole = activeRole === 'department head' ||
+    // Manager signature can only be signed by HR Manager (not department head)
+    const hasManagerRole = activeRole === 'HR Manager' ||
       activeRole === 'System Admin';
 
     // Determine which signature they can provide

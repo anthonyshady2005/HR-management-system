@@ -34,17 +34,18 @@ const navigationCards = [
     icon: Calendar,
     color: "from-green-500 to-emerald-500",
   },
+ {
+  title: "Holiday Requests",
+  description: "Request, view, and manage employee holidays and leave days",
+  href: "/time-management/holiday-overview",
+  icon: Calendar,
+  color: "from-emerald-500 to-green-600",
+},
+
   {
-    title: "Exception Requests",
-    description: "Submit and track attendance exception requests",
-    href: "/time-management/exception-requests",
-    icon: FileText,
-    color: "from-orange-500 to-red-500",
-  },
-  {
-    title: "Exception Approval",
-    description: "Review and approve pending exception requests",
-    href: "/time-management/exception-approval",
+    title: "Report Generation",
+    description: "Generate and download reports for various HR metrics",
+    href: "/time-management/report-generation",
     icon: CheckCircle,
     color: "from-purple-500 to-pink-500",
   },

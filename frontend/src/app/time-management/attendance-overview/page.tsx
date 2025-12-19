@@ -20,7 +20,7 @@ import {
   Edit3,
   ClipboardCheck,
 } from "lucide-react";
-const normalizeRole = (role?: string | null) => (role || "").trim().toLowerCase();
+
 /* ✅ USE REAL SERVICE */
 import { attendanceOverviewService as attendanceService } from "../services/attendance.service";
 
@@ -33,26 +33,7 @@ import {
   TimeExceptionStatus,
   TimeExceptionType,
 } from "../models";
-type Capability =
-    | "canApprove"
-    | "canOverride"
-    | "canAdjust"
-    | "canRunOps"
-    | "canViewEntitlements"
-    | "canManageCatalog"
-    | "canManagePolicies"
-    | "canSeeAllRequests";
 
-const ROLE_CAPABILITIES: Record<Capability, string[]> = {
-    canApprove: ["department head", "HR Manager", "HR Admin", "System Admin"],
-    canOverride: ["HR Admin", "HR Manager", "System Admin"],
-    canAdjust: ["HR Manager", "HR Admin", "System Admin"],
-    canRunOps: ["HR Admin", "System Admin"],
-    canViewEntitlements: ["department head", "HR Manager", "HR Admin", "System Admin"],
-    canManageCatalog: ["HR Manager", "HR Admin", "System Admin"],
-    canManagePolicies: ["HR Admin", "System Admin"],
-    canSeeAllRequests: ["HR Manager", "HR Admin", "System Admin"],
-};
 /* ✅ Auth (to get current logged-in user) */
 import { useAuth } from "@/providers/auth-provider";
 
@@ -64,14 +45,11 @@ export default function AttendanceManagementPage() {
 
   /* ===================== AUTH: CURRENT EMPLOYEE / REVIEWER ID ===================== */
 
-  const { user, currentRole } = useAuth();
-  const normalizedRole = normalizeRole(currentRole);
-    const can = (capability: Capability) =>
-        ROLE_CAPABILITIES[capability].map(normalizeRole).includes(normalizedRole);
+  const { user } = useAuth();
 
   const reviewerId = useMemo(() => {
     if (!user) {
-      console.log(" No user found");
+      console.log("No user found");
       return null;
     }
 
@@ -137,6 +115,9 @@ export default function AttendanceManagementPage() {
   /* ===================== FINALIZE STATE (US9) ===================== */
   const [finalizingId, setFinalizingId] = useState<string | null>(null);
   const [finalizingAll, setFinalizingAll] = useState(false);
+
+  /* ===================== ESCALATION STATE (US18) ===================== */
+  const [escalatingPayroll, setEscalatingPayroll] = useState(false);
 
   /* ===================== FIX HELPERS (DATE + TIME) ===================== */
 
@@ -495,6 +476,38 @@ export default function AttendanceManagementPage() {
     }
   };
 
+  /* ===================== ESCALATION HANDLER (US18) ===================== */
+
+  const handleEscalateForPayroll = async () => {
+    if (!confirm(
+      "This will escalate all pending correction requests and time exceptions that haven't been reviewed.\n\n" +
+      "Escalated requests will be flagged for urgent attention before payroll cutoff.\n\n" +
+      "Continue?"
+    )) {
+      return;
+    }
+
+    setEscalatingPayroll(true);
+    try {
+      const result = await attendanceService.escalateForCurrentMonth();
+      alert(
+        `Escalation completed:\n\n` +
+        `✅ ${result.correctionRequestsEscalated} correction requests escalated\n` +
+        `✅ ${result.timeExceptionsEscalated} time exceptions escalated\n\n` +
+        `These requests are now marked as urgent and ready for review.`
+      );
+      
+      // Refresh both tabs to show updated statuses
+      await loadCorrectionRequests();
+      await loadPermissionRequests();
+    } catch (err: any) {
+      console.error("Failed to escalate:", err);
+      alert(err?.response?.data?.message || "Failed to escalate requests. Please try again.");
+    } finally {
+      setEscalatingPayroll(false);
+    }
+  };
+
   /* ===================== EDIT ATTENDANCE FROM REQUEST ===================== */
 
   const handleEditAttendanceFromRequest = (req: AttendanceCorrectionRequest) => {
@@ -508,6 +521,28 @@ export default function AttendanceManagementPage() {
     const record = {
       _id: recordDetails._id,
       employeeId: (req as any).employeeId || recordDetails.employeeId,
+      punches: recordDetails.punches || [],
+      totalWorkMinutes: recordDetails.totalWorkMinutes || 0,
+      hasMissedPunch: recordDetails.hasMissedPunch || false,
+      createdAt: recordDetails.createdAt,
+    };
+
+    handleEditAttendance(record);
+  };
+
+  /* ===================== EDIT ATTENDANCE FROM PERMISSION (NEW) ===================== */
+
+  const handleEditAttendanceFromPermission = (perm: TimeException) => {
+    const recordDetails = getAttendanceRecordDetails(perm);
+
+    if (!recordDetails) {
+      alert("Attendance record details not available for editing.");
+      return;
+    }
+
+    const record = {
+      _id: recordDetails._id,
+      employeeId: (perm as any).employeeId || recordDetails.employeeId,
       punches: recordDetails.punches || [],
       totalWorkMinutes: recordDetails.totalWorkMinutes || 0,
       hasMissedPunch: recordDetails.hasMissedPunch || false,
@@ -608,6 +643,7 @@ export default function AttendanceManagementPage() {
       await attendanceService.correctAttendanceManually(payload);
       await loadRecords();
       await loadCorrectionRequests();
+      await loadPermissionRequests();
       setIsEditOpen(false);
       alert("Attendance corrected successfully!");
     } catch (err) {
@@ -701,8 +737,6 @@ export default function AttendanceManagementPage() {
                 <Clock className="w-4 h-4" />
                 Records
               </button>
-              {can("canRunOps") ? (
-
               <button
                 onClick={() => setViewMode("import")}
                 className={`px-4 py-2 rounded-md flex items-center gap-2 text-sm ${
@@ -714,7 +748,6 @@ export default function AttendanceManagementPage() {
                 <Upload className="w-4 h-4" />
                 Excel Import
               </button>
-         ) : null}
               <button
                 onClick={() => setViewMode("corrections")}
                 className={`px-4 py-2 rounded-md flex items-center gap-2 text-sm ${
@@ -740,6 +773,17 @@ export default function AttendanceManagementPage() {
             </div>
 
             <div className="flex flex-wrap gap-2 justify-end">
+              <button
+                onClick={handleEscalateForPayroll}
+                disabled={escalatingPayroll}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg
+                           bg-red-600 hover:bg-red-700 text-white text-sm
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <AlertTriangle size={16} className={escalatingPayroll ? "animate-spin" : ""} />
+                {escalatingPayroll ? "Escalating..." : "Escalate for Payroll"}
+              </button>
+
               <button
                 onClick={refreshDailyLateness}
                 disabled={refreshingDaily}
@@ -1198,13 +1242,13 @@ export default function AttendanceManagementPage() {
                             <span
                               className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${permissionTypeBadgeClass(
                                 perm.type,
-                              )}`}
+                              )}` }
                             >
                               {perm.type}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-400">
-                              {(perm as any).employeeId?.personalEmail || (perm as any).employeeId?.workEmail}
+                            {(perm as any).employeeId?.personalEmail || (perm as any).employeeId?.workEmail}
                           </p>
                           <p className="text-xs text-slate-300 mt-1">
                             Requested: <span className="font-medium">{(perm as any).minutesRequested || 0} minutes</span> ({(((perm as any).minutesRequested || 0) / 60).toFixed(2)}h)
@@ -1280,6 +1324,17 @@ export default function AttendanceManagementPage() {
 
                       {isActionableStatus(perm.status) && (
                         <div className="mt-3 flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleEditAttendanceFromPermission(perm)}
+                            disabled={!!reviewingId}
+                            className="inline-flex items-center gap-1 px-3 py-1 rounded-md text-xs
+                                     bg-blue-500/10 text-blue-300 border border-blue-500/40
+                                     hover:bg-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            Edit
+                          </button>
+
                           <button
                             onClick={() => handleReviewPermission(String(perm._id), TimeExceptionStatus.REJECTED)}
                             disabled={!!reviewingId}
