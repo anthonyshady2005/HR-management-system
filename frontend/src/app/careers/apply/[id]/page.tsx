@@ -22,7 +22,7 @@ import { api } from "@/lib/api";
 export default function ApplyPage() {
   const router = useRouter();
   const params = useParams();
-  const requisitionId = params.id as string;
+  const requisitionId = params?.id as string;
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);

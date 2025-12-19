@@ -161,9 +161,13 @@ export type TerminationType = "resignation" | "termination" | "retirement" | "en
 export interface TerminationRequest {
   _id: string;
   employeeId: any;
-  type: TerminationType;
+  offerId?: any; // Reference to the offer (was contractId)
+  initiator?: string; // 'employee' | 'hr' | 'manager'
+  type?: TerminationType; // Deprecated, use initiator instead
   status: TerminationStatus;
   reason?: string;
+  employeeComments?: string;
+  hrComments?: string;
   requestDate?: string;
   terminationDate?: string;
   lastWorkingDay?: string;
@@ -171,9 +175,9 @@ export interface TerminationRequest {
   createdAt?: string;
   updatedAt?: string;
   requestedBy?: any;
-  initiatedBy?: "employee" | "hr";
+  initiatedBy?: "employee" | "hr"; // Deprecated, use initiator instead
   approvedBy?: any;
-  comments?: string;
+  comments?: string; // Deprecated, use employeeComments/hrComments instead
 }
 
 export interface TerminationStats {
@@ -750,7 +754,7 @@ export const onboardingApi = {
   },
 
   getOnboardingById: async (id: string): Promise<Onboarding> => {
-    const response = await api.get(`/recruitment/onboarding/${id}`);
+    const response = await api.get(`/recruitment/onboarding/by-id/${id}`);
     return response.data;
   },
 
@@ -764,6 +768,19 @@ export const onboardingApi = {
     data: Partial<Onboarding>
   ): Promise<Onboarding> => {
     const response = await api.patch(`/recruitment/onboarding/${id}`, data);
+    return response.data;
+  },
+
+  updateOnboardingTask: async (
+    onboardingId: string,
+    taskId: string,
+    data: {
+      status?: 'pending' | 'in_progress' | 'completed';
+      completedAt?: string;
+      notes?: string;
+    }
+  ): Promise<Onboarding> => {
+    const response = await api.patch(`/recruitment/onboarding/${onboardingId}/tasks/${taskId}`, data);
     return response.data;
   },
 };
@@ -834,12 +851,12 @@ export const offboardingApi = {
   // Create termination request
   createTerminationRequest: async (data: {
     employeeId: string;
-    type: TerminationType;
-    reason?: string;
+    offerId: string; // Required: reference to the offer/contract
+    initiator: string; // Required: 'employee' | 'employer'
+    reason: string; // Required
+    employeeComments?: string;
+    hrComments?: string;
     terminationDate?: string;
-    lastWorkingDay?: string;
-    noticePeriod?: number;
-    comments?: string;
   }): Promise<TerminationRequest> => {
     const response = await api.post("/recruitment/termination-requests", data);
     return response.data;

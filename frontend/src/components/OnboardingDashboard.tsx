@@ -108,42 +108,32 @@ export default function OnboardingDashboard() {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      // TODO: Backend needs to add an endpoint to get all onboarding records
-      // Suggested endpoint: GET /recruitment/onboarding
-      // Query params: status, department, startDate, endDate
-      // Response should include populated employee information (name, department)
+      const endDate = new Date().toISOString();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - parseInt(dateRange));
+      const startDateStr = startDate.toISOString();
       
-      // Once the endpoint is available, uncomment and use this:
-      // const endDate = new Date().toISOString();
-      // const startDate = new Date();
-      // startDate.setDate(startDate.getDate() - parseInt(dateRange));
-      // const startDateStr = startDate.toISOString();
-      // 
-      // const response = await api.get('/recruitment/onboarding', {
-      //   params: { 
-      //     status: statusFilter !== 'all' ? statusFilter : undefined,
-      //     department: departmentFilter !== 'all' ? departmentFilter : undefined,
-      //     startDate: startDateStr,
-      //     endDate
-      //   }
-      // });
-      // const onboardingsWithEmployee = await Promise.all(
-      //   response.data.map(async (onboarding: Onboarding) => {
-      //     // If backend doesn't populate, fetch employee data
-      //     const employee = await api.get(`/employee-profile/${onboarding.employeeId}`);
-      //     return {
-      //       ...onboarding,
-      //       employeeName: employee.data.name,
-      //       employeeDepartment: employee.data.primaryDepartmentId?.name,
-      //     };
-      //   })
-      // );
-      // setOnboardings(onboardingsWithEmployee);
-      // calculateStats(onboardingsWithEmployee);
+      const response = await onboardingApi.getOnboardings({
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        department: departmentFilter !== 'all' ? departmentFilter : undefined,
+        startDate: startDateStr,
+        endDate
+      });
       
-      // For now, set empty data until API is available
-      setOnboardings([]);
-      calculateStats([]);
+      // Map the response to include employee information
+      const onboardingsWithEmployee = response.map((onboarding: Onboarding) => {
+        const employee = onboarding.employeeId as any;
+        const department = employee?.primaryDepartmentId;
+        return {
+          ...onboarding,
+          employeeName: employee?.fullName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim(),
+          employeeDepartment: typeof department === 'object' ? department?.name : undefined,
+          startDate: onboarding.createdAt || new Date().toISOString(),
+        };
+      });
+      
+      setOnboardings(onboardingsWithEmployee);
+      calculateStats(onboardingsWithEmployee);
     } catch (error) {
       console.error("Error loading onboarding data:", error);
       setOnboardings([]);
@@ -287,6 +277,10 @@ export default function OnboardingDashboard() {
 
     return matchesSearch && matchesDepartment && matchesStatus;
   });
+
+  // Separate active (incomplete) and completed onboarding records
+  const activeOnboardings = filteredOnboardings.filter((o) => !o.completed);
+  const completedOnboardings = filteredOnboardings.filter((o) => o.completed);
 
   const getProgress = (onboarding: Onboarding) => {
     if (onboarding.tasks.length === 0) return 0;
@@ -466,9 +460,9 @@ export default function OnboardingDashboard() {
                 style={{ backgroundColor: 'rgba(15, 23, 42, 0.5)' }}
               >
                 <option value="all" className="bg-slate-900 text-white">All Departments</option>
-                {Array.from(new Set(onboardings.map((o) => o.employeeDepartment))).map(
-                  (dept) => (
-                    <option key={dept} value={dept} className="bg-slate-900 text-white">
+                {Array.from(new Set(onboardings.map((o) => o.employeeDepartment).filter(Boolean))).map(
+                  (dept, index) => (
+                    <option key={dept || `dept-${index}`} value={dept} className="bg-slate-900 text-white">
                       {dept || "Unknown"}
                     </option>
                   )
@@ -590,19 +584,25 @@ export default function OnboardingDashboard() {
           <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl text-white font-bold">Active Onboarding</h2>
-              <Link
-                href="/recruitment/onboarding"
-                className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1"
-              >
-                View All <ArrowUpRight className="h-4 w-4" />
-              </Link>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 h-4 w-4" />
+                <input
+                  type="text"
+                  placeholder="Search employees..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-400 focus:outline-none focus:border-slate-500/50 text-sm w-64"
+                />
+              </div>
             </div>
-            {filteredOnboardings.length === 0 ? (
+            {activeOnboardings.length === 0 ? (
               <div className="text-center py-12 text-slate-400">
                 <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No onboarding records found</p>
+                <p>No active onboarding records found</p>
                 <p className="text-sm mt-2">
-                  Onboarding records will appear here once they are created
+                  {statusFilter === "completed" 
+                    ? "Switch to 'All' or 'In Progress' status filter to see active onboarding records"
+                    : "Onboarding records will appear here once they are created"}
                 </p>
               </div>
             ) : (
@@ -619,7 +619,7 @@ export default function OnboardingDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                    {filteredOnboardings.slice(0, 10).map((onboarding) => {
+                    {activeOnboardings.slice(0, 10).map((onboarding) => {
                       const progress = getProgress(onboarding);
                       const status = getStatusBadge(onboarding);
                       const daysSince = getDaysSinceStart(onboarding);
@@ -743,16 +743,15 @@ export default function OnboardingDashboard() {
               <h2 className="text-xl text-white font-bold">At-Risk Onboarding</h2>
               <AlertTriangle className="h-5 w-5 text-orange-400" />
             </div>
-            {filteredOnboardings.filter(
+            {activeOnboardings.filter(
               (o) =>
-                !o.completed &&
-                (o.tasks.some(
+                o.tasks.some(
                   (t) =>
                     t.status !== "completed" &&
                     t.deadline &&
                     new Date(t.deadline) < new Date()
                 ) ||
-                  getProgress(o) < 50)
+                getProgress(o) < 50
             ).length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 <CheckCircle className="h-12 w-12 mx-auto mb-4 text-green-400 opacity-50" />
@@ -760,17 +759,16 @@ export default function OnboardingDashboard() {
               </div>
             ) : (
               <div className="space-y-3">
-                {filteredOnboardings
+                {activeOnboardings
                   .filter(
                     (o) =>
-                      !o.completed &&
-                      (o.tasks.some(
+                      o.tasks.some(
                         (t) =>
                           t.status !== "completed" &&
                           t.deadline &&
                           new Date(t.deadline) < new Date()
                       ) ||
-                        getProgress(o) < 50)
+                      getProgress(o) < 50
                   )
                   .slice(0, 5)
                   .map((onboarding) => {

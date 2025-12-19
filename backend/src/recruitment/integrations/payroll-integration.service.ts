@@ -4,6 +4,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { employeeSigningBonus } from '../../payroll-execution/models/EmployeeSigningBonus.schema';
 import { signingBonus } from '../../payroll-configuration/models/signingBonus.schema';
+import { ConfigStatus } from '../../payroll-configuration/enums/payroll-configuration-enums';
+import { BonusStatus } from '../../payroll-execution/enums/payroll-execution-enum';
 
 @Injectable()
 export class PayrollIntegrationService {
@@ -37,7 +39,7 @@ export class PayrollIntegrationService {
       // Find signing bonus configuration by amount
       // Note: In production, you might want to match by position or create a generic one
       let bonusConfig = await this.signingBonusConfigModel
-        .findOne({ amount: bonusAmount, status: 'APPROVED' })
+        .findOne({ amount: bonusAmount, status: ConfigStatus.APPROVED })
         .exec();
 
       if (!bonusConfig) {
@@ -46,7 +48,7 @@ export class PayrollIntegrationService {
         bonusConfig = new this.signingBonusConfigModel({
           positionName: `Generic - ${bonusAmount}`,
           amount: bonusAmount,
-          status: 'APPROVED',
+          status: ConfigStatus.APPROVED,
         });
         await bonusConfig.save();
       }
@@ -56,7 +58,7 @@ export class PayrollIntegrationService {
         employeeId: new Types.ObjectId(employeeId),
         signingBonusId: bonusConfig._id,
         givenAmount: bonusAmount,
-        status: 'PENDING',
+        status: BonusStatus.PENDING,
       });
 
       await employeeBonus.save();

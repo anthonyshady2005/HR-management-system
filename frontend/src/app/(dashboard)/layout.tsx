@@ -34,9 +34,12 @@ export default function DashboardLayout({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const isRecruitment = pathname?.startsWith("/recruitment");
-  const isOnboarding = pathname?.startsWith("/onboarding");
-  const isOffboarding = pathname?.startsWith("/offboarding");
+  // Exclude onboarding/offboarding routes from recruitment check
+  const isRecruitment = pathname?.startsWith("/recruitment") 
+    && !pathname?.startsWith("/recruitment/onboarding")
+    && !pathname?.startsWith("/recruitment/offboarding");
+  const isOnboarding = pathname?.startsWith("/onboarding") || pathname?.startsWith("/recruitment/onboarding");
+  const isOffboarding = pathname?.startsWith("/offboarding") || pathname?.startsWith("/recruitment/offboarding");
   const showSidebar = isRecruitment || isOnboarding || isOffboarding;
 
   // Define allowed roles for recruitment module (matching backend SystemRole enum values)
@@ -80,10 +83,22 @@ export default function DashboardLayout({
               
               <nav className="space-y-2">
                 {NAV_LINKS.map((link) => {
-                  // Fix: Use startsWith for recruitment to keep submenu open
-                  const isActive = link.href === "/recruitment" 
-                    ? pathname?.startsWith("/recruitment")
-                    : pathname === link.href || pathname?.startsWith(link.href + "/");
+                  // Fix: Handle active states properly, excluding onboarding/offboarding from recruitment
+                  let isActive = false;
+                  if (link.href === "/recruitment") {
+                    // Active if pathname starts with /recruitment but NOT onboarding/offboarding
+                    isActive = pathname?.startsWith("/recruitment") 
+                      && !pathname?.startsWith("/recruitment/onboarding")
+                      && !pathname?.startsWith("/recruitment/offboarding");
+                  } else if (link.href === "/onboarding") {
+                    // Active if pathname is /onboarding or starts with /recruitment/onboarding
+                    isActive = pathname === "/onboarding" || pathname?.startsWith("/recruitment/onboarding");
+                  } else if (link.href === "/offboarding") {
+                    // Active if pathname is /offboarding or starts with /recruitment/offboarding
+                    isActive = pathname === "/offboarding" || pathname?.startsWith("/recruitment/offboarding");
+                  } else {
+                    isActive = pathname === link.href || pathname?.startsWith(link.href + "/");
+                  }
                   const Icon = link.icon;
                   return (
                     <div key={link.href}>
