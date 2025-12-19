@@ -46,6 +46,8 @@ export * from './update-onboarding-task.dto';
 export * from './create-termination-request.dto';
 export * from './update-termination-status.dto';
 export * from './update-clearance-checklist.dto';
+export * from './revoke-access.dto';
+export * from './trigger-final-settlement.dto';
 
 export * from './create-referral.dto';
 export * from './create-document.dto';
