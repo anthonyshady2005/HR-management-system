@@ -478,7 +478,12 @@ export default function EmployeeClaimsPage() {
                         </div>
                         <div>
                           <div className="text-white">{c.claimId ?? c._id}</div>
-                          <div className="text-xs text-slate-400 capitalize">{c.claimType} • {formatCurrency(c.amount)}</div>
+                          <div className="text-xs text-slate-400 capitalize">
+                            {c.claimType} • {formatCurrency(c.amount)}
+                            {c.approvedAmount != null && (
+                              <span className="text-emerald-400"> • Approved: {formatCurrency(c.approvedAmount)}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <span
@@ -529,7 +534,12 @@ export default function EmployeeClaimsPage() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
                           <div className="text-white">{c.claimId ?? c._id}</div>
-                          <div className="text-xs text-slate-400 capitalize">{c.claimType} • {formatCurrency(c.amount)}</div>
+                          <div className="text-xs text-slate-400 capitalize">
+                            {c.claimType} • {formatCurrency(c.amount)}
+                            {c.approvedAmount != null && (
+                              <span className="text-emerald-400"> • Approved: {formatCurrency(c.approvedAmount)}</span>
+                            )}
+                          </div>
                           <div className="text-xs text-slate-400">Employee: {getEmployeeName(c)}</div>
                         </div>
                         <span
@@ -594,7 +604,12 @@ export default function EmployeeClaimsPage() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
                           <div className="text-white">{c.claimId ?? c._id}</div>
-                          <div className="text-xs text-slate-400 capitalize">{c.claimType} • {formatCurrency(c.approvedAmount || c.amount)}</div>
+                          <div className="text-xs text-slate-400 capitalize">
+                            {c.claimType} • {formatCurrency(c.amount)}
+                            {c.approvedAmount != null && (
+                              <span className="text-emerald-400"> • Approved: {formatCurrency(c.approvedAmount)}</span>
+                            )}
+                          </div>
                           <div className="text-xs text-slate-400">Employee: {getEmployeeName(c)}</div>
                         </div>
                         <span className="px-3 py-1 rounded-full text-xs border bg-green-500/20 text-green-300 border-green-500/30">
@@ -642,7 +657,12 @@ export default function EmployeeClaimsPage() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
                           <div className="text-white">{c.claimId ?? c._id}</div>
-                          <div className="text-xs text-slate-400 capitalize">{c.claimType} • {formatCurrency(c.amount)}</div>
+                          <div className="text-xs text-slate-400 capitalize">
+                            {c.claimType} • {formatCurrency(c.amount)}
+                            {c.approvedAmount != null && (
+                              <span className="text-emerald-400"> • Approved: {formatCurrency(c.approvedAmount)}</span>
+                            )}
+                          </div>
                           <div className="text-xs text-slate-400">Employee: {getEmployeeName(c)}</div>
                         </div>
                         <span className="px-3 py-1 rounded-full text-xs border bg-amber-500/20 text-amber-300 border-amber-500/30">
@@ -881,7 +901,12 @@ export default function EmployeeClaimsPage() {
                   )}
                   <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-4">
                     <div className="text-white font-medium">{selected.claimId ?? selected._id}</div>
-                    <div className="text-slate-400 text-sm capitalize">{selected.claimType} • {formatCurrency(selected.amount)}</div>
+                    <div className="text-slate-400 text-sm capitalize">
+                      {selected.claimType} • {formatCurrency(selected.amount)}
+                      {selected.approvedAmount != null && (
+                        <span className="text-emerald-400"> • Approved: {formatCurrency(selected.approvedAmount)}</span>
+                      )}
+                    </div>
                     <div className="text-slate-300 text-sm mt-2">{selected.description}</div>
                   </div>
                   <div>
@@ -889,8 +914,8 @@ export default function EmployeeClaimsPage() {
                     <div className="flex gap-3">
                       <button
                         className={`flex-1 px-4 py-3 rounded-xl border transition-all ${managerApproved === true
-                            ? 'bg-green-500/20 border-green-500/50 text-green-300'
-                            : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                          ? 'bg-green-500/20 border-green-500/50 text-green-300'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
                           }`}
                         onClick={() => setManagerApproved(true)}
                       >
@@ -898,8 +923,8 @@ export default function EmployeeClaimsPage() {
                       </button>
                       <button
                         className={`flex-1 px-4 py-3 rounded-xl border transition-all ${managerApproved === false
-                            ? 'bg-red-500/20 border-red-500/50 text-red-300'
-                            : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                          ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
                           }`}
                         onClick={() => setManagerApproved(false)}
                       >
