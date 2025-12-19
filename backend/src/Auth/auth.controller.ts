@@ -43,9 +43,8 @@ export class AuthController {
 
     /**
      * GET /auth/me - Get authenticated user's roles from JWT
-     * Accessible to all authenticated users
+     * Requires authentication - validates JWT cookie
      */
-    @Public()
     @Get('me')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
