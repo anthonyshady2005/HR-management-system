@@ -144,8 +144,7 @@ export function canAccessAdmin(role: string | null | undefined): boolean {
   if (!role) return false;
   const normalizedRole = role.toLowerCase();
   return (
-    normalizedRole === 'system admin' ||
-    normalizedRole === 'hr admin'
+    normalizedRole === 'system admin'
   );
 }
 
