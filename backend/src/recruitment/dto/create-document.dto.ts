@@ -2,6 +2,7 @@
  * # Document – Create DTO
  *
  * DTO used to upload / register new documents in the system.
+ * Supports linking documents to various entities (applications, candidates, etc.)
  */
 
 import {
@@ -22,4 +23,13 @@ export class CreateDocumentDto {
 
   @IsString()
   filePath!: string;
+
+  // Support for linking documents to applications, candidates, etc.
+  @IsOptional()
+  @IsString()
+  entityType?: string; // 'application', 'candidate', 'offer', etc.
+
+  @IsOptional()
+  @IsMongoId()
+  entityId?: string; // ID of the linked entity
 }

@@ -49,6 +49,51 @@ export class OrganizationStructureService {
     private validationService: OrganizationStructureValidationService,
   ) {}
 
+  /**
+   * Resolve the reportsToPositionId for a position based on department head.
+   * Returns undefined if:
+   * - Department has no head position
+   * - The position IS the department head (to avoid self-reference)
+   */
+  private async resolveDepartmentHeadForPosition(
+    departmentId: Types.ObjectId | string,
+    positionId?: Types.ObjectId | string,
+  ): Promise<Types.ObjectId | undefined> {
+    if (!departmentId) {
+      return undefined;
+    }
+
+    const department = await this.departmentModel
+      .findById(departmentId)
+      .select('headPositionId')
+      .lean()
+      .exec();
+
+    if (!department?.headPositionId) {
+      return undefined;
+    }
+
+    // If this position is the department head, don't set reportsToPositionId
+    if (positionId) {
+      const positionObjectId =
+        typeof positionId === 'string'
+          ? new Types.ObjectId(positionId)
+          : positionId;
+      const headObjectId =
+        department.headPositionId instanceof Types.ObjectId
+          ? department.headPositionId
+          : new Types.ObjectId(department.headPositionId);
+
+      if (headObjectId.equals(positionObjectId)) {
+        return undefined;
+      }
+    }
+
+    return department.headPositionId instanceof Types.ObjectId
+      ? department.headPositionId
+      : new Types.ObjectId(department.headPositionId);
+  }
+
   // commented out lel next phase, or for this one later idk
 
   //   private notifyEmployeeProfileSubsystem(
@@ -391,8 +436,21 @@ export class OrganizationStructureService {
     if (dto.code !== undefined) updateData.code = dto.code;
     if (dto.departmentId !== undefined)
       updateData.departmentId = dto.departmentId;
-    if (dto.reportsTo !== undefined)
+    if (dto.reportsTo !== undefined) {
       updateData.reportsToPositionId = dto.reportsTo;
+    } else if (dto.departmentId !== undefined) {
+      // If department is being changed and reportsTo is not provided,
+      // automatically set reportsToPositionId to new department's head
+      const newDepartmentId =
+        dto.departmentId instanceof Types.ObjectId
+          ? dto.departmentId
+          : new Types.ObjectId(dto.departmentId);
+      updateData.reportsToPositionId =
+        await this.resolveDepartmentHeadForPosition(
+          newDepartmentId,
+          position._id,
+        );
+    }
     if (dto.status !== undefined) updateData.isActive = dto.status === 'active';
 
     // Handle payGradeId update
@@ -472,10 +530,22 @@ export class OrganizationStructureService {
       unknown
     >;
 
-    // Update department (pre-save hook will auto-update reportsToPositionId)
+    // Update department and automatically set reportsToPositionId to new department's head
+    const newDepartmentId =
+      dto.newDepartmentId instanceof Types.ObjectId
+        ? dto.newDepartmentId
+        : new Types.ObjectId(dto.newDepartmentId);
+    const reportsToPositionId = await this.resolveDepartmentHeadForPosition(
+      newDepartmentId,
+      position._id,
+    );
+
     const updatedPosition = await this.positionModel.findByIdAndUpdate(
       id,
-      { departmentId: dto.newDepartmentId },
+      {
+        departmentId: newDepartmentId,
+        reportsToPositionId,
+      },
       { new: true },
     );
 

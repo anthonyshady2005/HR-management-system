@@ -98,16 +98,23 @@ export default function ApplyPage() {
       });
       const candidateId = candidateResponse.data._id;
 
-      // Step 2: Upload resume if provided
-      let resumeUrl = "";
+      // Step 2: Create application first (we need the application ID for document linking)
+      const applicationResponse = await recruitmentApi.createApplication({
+        candidateId,
+        requisitionId,
+      });
+      const applicationId = applicationResponse._id;
+
+      // Step 3: Upload resume if provided (now we can link it to the application)
       if (formData.resume) {
         const formDataUpload = new FormData();
         formDataUpload.append("file", formData.resume);
+        formDataUpload.append("type", "cv");
         formDataUpload.append("entityType", "application");
-        formDataUpload.append("entityId", requisitionId);
+        formDataUpload.append("entityId", applicationId);
 
         try {
-          const uploadResponse = await api.post(
+          await api.post(
             "/recruitment/documents",
             formDataUpload,
             {
@@ -116,18 +123,12 @@ export default function ApplyPage() {
               },
             }
           );
-          resumeUrl = uploadResponse.data.filePath || "";
+          // Resume uploaded successfully and linked to application
         } catch (uploadError) {
           console.error("Resume upload error:", uploadError);
           // Continue without resume - not critical
         }
       }
-
-      // Step 3: Create application
-      await recruitmentApi.createApplication({
-        candidateId,
-        requisitionId,
-      });
 
       setSuccess(true);
       setTimeout(() => {

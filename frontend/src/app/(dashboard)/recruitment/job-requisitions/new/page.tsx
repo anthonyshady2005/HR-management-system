@@ -14,8 +14,10 @@ import {
   Save,
   Eye,
   X,
+  Tag,
 } from "lucide-react";
 import { recruitmentApi } from "@/lib/recruitment-api";
+import { getDepartments } from "@/app/employee/api";
 
 interface JobTemplate {
   _id: string;
@@ -34,6 +36,12 @@ interface HrManager {
   workEmail?: string;
 }
 
+interface Department {
+  _id: string;
+  name: string;
+  code: string;
+}
+
 export default function NewJobPostingPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -41,8 +49,12 @@ export default function NewJobPostingPage() {
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [hrManagers, setHrManagers] = useState<HrManager[]>([]);
   const [loadingHrManagers, setLoadingHrManagers] = useState(true);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [loadingDepartments, setLoadingDepartments] = useState(true);
   const [formData, setFormData] = useState({
     requisitionId: "",
+    title: "",
+    departmentId: "",
     templateId: "",
     openings: 1,
     location: "",
@@ -50,6 +62,7 @@ export default function NewJobPostingPage() {
     publishStatus: "draft" as "draft" | "published" | "closed",
     postingDate: "",
     expiryDate: "",
+    tags: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showPreview, setShowPreview] = useState(false);
@@ -57,6 +70,7 @@ export default function NewJobPostingPage() {
   useEffect(() => {
     loadTemplates();
     loadHrManagers();
+    loadDepartments();
   }, []);
 
   const loadTemplates = async () => {
@@ -80,6 +94,18 @@ export default function NewJobPostingPage() {
       console.error("Error loading HR Managers:", error);
     } finally {
       setLoadingHrManagers(false);
+    }
+  };
+
+  const loadDepartments = async () => {
+    try {
+      setLoadingDepartments(true);
+      const data = await getDepartments();
+      setDepartments(data || []);
+    } catch (error) {
+      console.error("Error loading departments:", error);
+    } finally {
+      setLoadingDepartments(false);
     }
   };
 
@@ -118,6 +144,14 @@ export default function NewJobPostingPage() {
       newErrors.requisitionId = "Requisition ID is required";
     }
 
+    if (!formData.title.trim()) {
+      newErrors.title = "Title is required";
+    }
+
+    if (!formData.departmentId.trim()) {
+      newErrors.departmentId = "Department is required";
+    }
+
     if (!formData.openings || formData.openings < 1) {
       newErrors.openings = "Number of openings must be at least 1";
     }
@@ -149,6 +183,8 @@ export default function NewJobPostingPage() {
       setLoading(true);
       const response = await recruitmentApi.createJobRequisition({
         requisitionId: formData.requisitionId,
+        title: formData.title || undefined,
+        departmentId: formData.departmentId || undefined,
         templateId: formData.templateId || undefined,
         openings: formData.openings,
         location: formData.location || undefined,
@@ -156,6 +192,7 @@ export default function NewJobPostingPage() {
         publishStatus: formData.publishStatus,
         postingDate: formData.postingDate || undefined,
         expiryDate: formData.expiryDate || undefined,
+        tags: formData.tags || undefined,
       });
 
       // Redirect to the requisition detail page or back to dashboard
@@ -253,6 +290,64 @@ export default function NewJobPostingPage() {
                   )}
                 </div>
 
+                {/* Title */}
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2">
+                    Title *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.title}
+                    onChange={(e) =>
+                      setFormData({ ...formData, title: e.target.value })
+                    }
+                    placeholder="e.g., Senior Software Engineer"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500/50"
+                    required
+                  />
+                  {errors.title && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.title}
+                    </p>
+                  )}
+                </div>
+
+                {/* Department */}
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2">
+                    Department *
+                  </label>
+                  <select
+                    value={formData.departmentId}
+                    onChange={(e) =>
+                      setFormData({ ...formData, departmentId: e.target.value })
+                    }
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50 [&>option]:bg-slate-900 [&>option]:text-white"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'white',
+                    }}
+                    required
+                    disabled={loadingDepartments}
+                  >
+                    <option value="" className="bg-slate-900 text-white">
+                      {loadingDepartments
+                        ? "Loading departments..."
+                        : "Select a department"}
+                    </option>
+                    {departments.map((dept) => (
+                      <option key={dept._id} value={dept._id} className="bg-slate-900 text-white">
+                        {dept.name} {dept.code ? `(${dept.code})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.departmentId && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.departmentId}
+                    </p>
+                  )}
+                </div>
+
                 {/* Template Selection */}
                 <div>
                   <label className="block text-sm text-slate-300 mb-2">
@@ -261,14 +356,18 @@ export default function NewJobPostingPage() {
                   <select
                     value={formData.templateId}
                     onChange={(e) => handleTemplateSelect(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50 [&>option]:bg-slate-900 [&>option]:text-white"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'white',
+                    }}
                   >
-                    <option value="">Select a template (optional)</option>
+                    <option value="" className="bg-slate-900 text-white">Select a template (optional)</option>
                     {loadingTemplates ? (
-                      <option disabled>Loading templates...</option>
+                      <option disabled className="bg-slate-900 text-white">Loading templates...</option>
                     ) : (
                       templates.map((template) => (
-                        <option key={template._id} value={template._id}>
+                        <option key={template._id} value={template._id} className="bg-slate-900 text-white">
                           {template.title || template._id} {template.department ? `- ${template.department}` : ""}
                         </option>
                       ))
@@ -320,6 +419,26 @@ export default function NewJobPostingPage() {
                     className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500/50"
                   />
                 </div>
+
+                {/* Tags */}
+                <div>
+                  <label className="block text-sm text-slate-300 mb-2 flex items-center gap-2">
+                    <Tag className="w-4 h-4" />
+                    Tags (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.tags}
+                    onChange={(e) =>
+                      setFormData({ ...formData, tags: e.target.value })
+                    }
+                    placeholder="e.g., Full-time, Remote, Senior, JavaScript, React"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500/50"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">
+                    Enter tags separated by commas (e.g., Full-time, Remote, Senior)
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -344,17 +463,21 @@ export default function NewJobPostingPage() {
                         hiringManagerId: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50 [&>option]:bg-slate-900 [&>option]:text-white"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'white',
+                    }}
                     required
                     disabled={loadingHrManagers}
                   >
-                    <option value="">
+                    <option value="" className="bg-slate-900 text-white">
                       {loadingHrManagers
                         ? "Loading HR Managers..."
                         : "Select a hiring manager"}
                     </option>
                     {hrManagers.map((manager) => (
-                      <option key={manager._id} value={manager._id}>
+                      <option key={manager._id} value={manager._id} className="bg-slate-900 text-white">
                         {manager.fullName} ({manager.employeeNumber})
                         {manager.workEmail ? ` - ${manager.workEmail}` : ""}
                       </option>
@@ -365,11 +488,11 @@ export default function NewJobPostingPage() {
                       {errors.hiringManagerId}
                     </p>
                   )}
-                  <p className="text-xs text-slate-400 mt-1">
-                    {hrManagers.length === 0 && !loadingHrManagers
-                      ? "No HR Managers found. Please ensure the backend endpoint is implemented."
-                      : "Select an HR Manager from the list"}
-                  </p>
+                  {hrManagers.length === 0 && !loadingHrManagers && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      No HR Managers available
+                    </p>
+                  )}
                 </div>
 
                 {/* Publish Status */}
@@ -388,11 +511,15 @@ export default function NewJobPostingPage() {
                           | "closed",
                       })
                     }
-                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50"
+                    className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50 [&>option]:bg-slate-900 [&>option]:text-white"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'white',
+                    }}
                   >
-                    <option value="draft">Draft</option>
-                    <option value="published">Published</option>
-                    <option value="closed">Closed</option>
+                    <option value="draft" className="bg-slate-900 text-white">Draft</option>
+                    <option value="published" className="bg-slate-900 text-white">Published</option>
+                    <option value="closed" className="bg-slate-900 text-white">Closed</option>
                   </select>
                   <p className="text-xs text-slate-400 mt-1">
                     Draft: Not visible to candidates. Published: Visible on
@@ -495,6 +622,18 @@ export default function NewJobPostingPage() {
                   <span className="text-white">{formData.requisitionId || "N/A"}</span>
                 </div>
                 <div>
+                  <span className="text-slate-400">Title:</span>{" "}
+                  <span className="text-white">{formData.title || "N/A"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400">Department:</span>{" "}
+                  <span className="text-white">
+                    {formData.departmentId
+                      ? departments.find((d) => d._id === formData.departmentId)?.name || formData.departmentId
+                      : "N/A"}
+                  </span>
+                </div>
+                <div>
                   <span className="text-slate-400">Openings:</span>{" "}
                   <span className="text-white">{formData.openings}</span>
                 </div>
@@ -502,6 +641,12 @@ export default function NewJobPostingPage() {
                   <span className="text-slate-400">Location:</span>{" "}
                   <span className="text-white">
                     {formData.location || "Not specified"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400">Tags:</span>{" "}
+                  <span className="text-white">
+                    {formData.tags || "No tags"}
                   </span>
                 </div>
                 <div>

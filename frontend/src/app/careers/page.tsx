@@ -117,12 +117,12 @@ export default function CareersPage() {
                 className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
               />
             </div>
-            <Select value={locationFilter} onValueChange={setLocationFilter}>
+            <Select value={locationFilter || "all"} onValueChange={(value) => setLocationFilter(value === "all" ? "" : value)}>
               <SelectTrigger className="w-full md:w-64 bg-white/5 border-white/10 text-white">
                 <SelectValue placeholder="All Locations" />
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-white/10">
-                <SelectItem value="" className="text-white">
+                <SelectItem value="all" className="text-white">
                   All Locations
                 </SelectItem>
                 {locations.map((location) => (

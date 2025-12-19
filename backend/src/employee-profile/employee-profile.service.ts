@@ -1936,6 +1936,53 @@ export class EmployeeProfileService {
   }
 
   /**
+   * Get list of HR Managers for dropdown selection.
+   * Returns employees with HR_MANAGER role.
+   */
+  async getHrManagersList() {
+    // Find all active system roles with HR_MANAGER role
+    const hrManagerRoles = await this.systemRoleModel
+      .find({
+        roles: { $in: [SystemRole.HR_MANAGER] },
+        isActive: true,
+      })
+      .lean()
+      .exec();
+
+    if (hrManagerRoles.length === 0) {
+      return [];
+    }
+
+    // Extract employee profile IDs
+    const employeeIds = hrManagerRoles
+      .map((role) => role.employeeProfileId)
+      .filter((id) => id)
+      .map((id) => (id instanceof Types.ObjectId ? id : new Types.ObjectId(id)));
+
+    // Get employee profiles
+    const employees = await this.profileModel
+      .find({
+        _id: { $in: employeeIds },
+        status: EmployeeStatus.ACTIVE,
+      })
+      .select('employeeNumber firstName lastName fullName workEmail')
+      .lean()
+      .exec();
+
+    // Format response
+    return employees.map((emp) => ({
+      _id: emp._id.toString(),
+      id: emp._id.toString(),
+      employeeNumber: emp.employeeNumber,
+      name: emp.fullName || `${emp.firstName} ${emp.lastName}`,
+      firstName: emp.firstName,
+      lastName: emp.lastName,
+      fullName: emp.fullName || `${emp.firstName} ${emp.lastName}`,
+      workEmail: emp.workEmail,
+    }));
+  }
+
+  /**
    * Get audit history for an employee (BR 22).
    */
   async getAuditHistory(employeeId: string, page = 1, limit = 50) {
