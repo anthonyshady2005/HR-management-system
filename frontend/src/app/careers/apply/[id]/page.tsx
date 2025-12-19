@@ -110,6 +110,7 @@ export default function ApplyPage() {
         candidateId,
         requisitionId: requisitionIdStr,
       });
+      
       const applicationId = typeof applicationResponse._id === 'string'
         ? applicationResponse._id
         : (applicationResponse._id ? (applicationResponse._id as unknown as { toString: () => string }).toString() : String(applicationResponse._id));
