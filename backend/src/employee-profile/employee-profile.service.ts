@@ -654,27 +654,60 @@ export class EmployeeProfileService {
   // ========== MANAGER TEAM VIEW (US-E4-01, US-E4-02) ==========
 
   /**
-   * Get team members who report to the manager's position.
+   * Get team members for a department head (US-E4-01).
+   * Includes:
+   * 1. Employees who report to the manager's position (via reportsToPositionId or supervisorPositionId)
+   * 2. Employees in the manager's department (for department heads)
    * Excludes sensitive fields per BR 18b (privacy restrictions for line managers).
-   * BR 41b: Direct managers see their team only.
    */
   async getTeamMembers(managerId: string) {
     if (!Types.ObjectId.isValid(managerId)) {
       throw new BadRequestException('Invalid manager id');
     }
 
-    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    if (!managerPositionId) {
-      return { teamMembers: [], count: 0 };
+    // Get manager's profile to find their department
+    const manager = await this.profileModel
+      .findById(managerId)
+      .select('primaryDepartmentId primaryPositionId')
+      .lean()
+      .exec();
+
+    if (!manager) {
+      throw new NotFoundException('Manager profile not found');
     }
 
-    const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-    if (directReportEmployeeIds.length === 0) {
+    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
+    
+    // Build query to find team members
+    // For department heads: include all employees in their department
+    // Also include direct reports via position hierarchy
+    const queryConditions: any[] = [];
+
+    // Condition 1: Employees in the same department (excluding the manager themselves)
+    if (manager.primaryDepartmentId) {
+      queryConditions.push({
+        primaryDepartmentId: manager.primaryDepartmentId,
+        _id: { $ne: new Types.ObjectId(managerId) },
+      });
+    }
+
+    // Condition 2: Direct reports via position reporting lines or supervisorPositionId
+    if (managerPositionId) {
+      const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
+      if (directReportEmployeeIds.length > 0) {
+        queryConditions.push({
+          _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) },
+        });
+      }
+    }
+
+    // If no conditions, return empty
+    if (queryConditions.length === 0) {
       return { teamMembers: [], count: 0 };
     }
 
     const teamMembers = await this.profileModel
-      .find({ _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) } })
+      .find({ $or: queryConditions })
       .populate('primaryPositionId', 'code title')
       .populate('primaryDepartmentId', 'code name')
       .select(
@@ -684,8 +717,13 @@ export class EmployeeProfileService {
       .lean()
       .exec();
 
+    // Deduplicate by _id (in case an employee matches multiple conditions)
+    const uniqueMembers = Array.from(
+      new Map(teamMembers.map((m) => [m._id.toString(), m])).values()
+    );
+
     return {
-      teamMembers: teamMembers.map((member) => ({
+      teamMembers: uniqueMembers.map((member) => ({
         _id: member._id,
         id: member._id,
         employeeId: member.employeeNumber,
@@ -701,12 +739,13 @@ export class EmployeeProfileService {
         workEmail: member.workEmail,
         profilePictureUrl: member.profilePictureUrl,
       })),
-      count: teamMembers.length,
+      count: uniqueMembers.length,
     };
   }
 
   /**
    * Get summary of team's job titles and departments (US-E4-02).
+   * Includes employees in the manager's department + direct reports.
    * Aggregated view without individual employee details.
    */
   async getTeamSummary(managerId: string) {
@@ -726,7 +765,30 @@ export class EmployeeProfileService {
     }
 
     const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    if (!managerPositionId) {
+    
+    // Build query conditions for team members (same logic as getTeamMembers)
+    const queryConditions: any[] = [];
+
+    // Condition 1: Employees in the same department (excluding the manager themselves)
+    if (manager.primaryDepartmentId) {
+      queryConditions.push({
+        primaryDepartmentId: manager.primaryDepartmentId,
+        _id: { $ne: new Types.ObjectId(managerId) },
+      });
+    }
+
+    // Condition 2: Direct reports via position reporting lines or supervisorPositionId
+    if (managerPositionId) {
+      const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
+      if (directReportEmployeeIds.length > 0) {
+        queryConditions.push({
+          _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) },
+        });
+      }
+    }
+
+    // If no conditions, return empty summary
+    if (queryConditions.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -738,8 +800,18 @@ export class EmployeeProfileService {
       };
     }
 
-    const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-    if (directReportEmployeeIds.length === 0) {
+    // Get unique team member IDs
+    const allTeamMembers = await this.profileModel
+      .find({ $or: queryConditions })
+      .select('_id')
+      .lean()
+      .exec();
+
+    const teamMemberObjectIds = Array.from(
+      new Set(allTeamMembers.map((m) => m._id.toString()))
+    ).map((id) => new Types.ObjectId(id));
+
+    if (teamMemberObjectIds.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -750,12 +822,10 @@ export class EmployeeProfileService {
         department: manager.primaryDepartmentId ? (manager.primaryDepartmentId as any).name : null,
       };
     }
-
-    const directReportObjectIds = directReportEmployeeIds.map((id) => new Types.ObjectId(id));
 
     // Aggregate team by position
     const byPosition = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: teamMemberObjectIds } } },
       {
         $lookup: {
           from: 'positions',
@@ -778,7 +848,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by department
     const byDepartment = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: teamMemberObjectIds } } },
       {
         $lookup: {
           from: 'departments',
@@ -801,7 +871,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by status
     const byStatus = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: teamMemberObjectIds } } },
       {
         $group: {
           _id: '$status',
@@ -814,8 +884,8 @@ export class EmployeeProfileService {
     const totalTeamMembers = byStatus.reduce((sum, s) => sum + s.count, 0);
 
     // Get team members for additional analytics
-    const teamMembers = await this.profileModel
-      .find({ _id: { $in: directReportObjectIds } })
+    const teamMembersForAnalytics = await this.profileModel
+      .find({ _id: { $in: teamMemberObjectIds } })
       .select('dateOfHire contractType workType status')
       .lean()
       .exec();
@@ -825,18 +895,18 @@ export class EmployeeProfileService {
     const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
     
-    const newHires = teamMembers.filter(m => {
+    const newHires = teamMembersForAnalytics.filter(m => {
       const hireDate = m.dateOfHire ? new Date(m.dateOfHire) : null;
       return hireDate && hireDate >= oneYearAgo;
     }).length;
 
-    const recentHires = teamMembers.filter(m => {
+    const recentHires = teamMembersForAnalytics.filter(m => {
       const hireDate = m.dateOfHire ? new Date(m.dateOfHire) : null;
       return hireDate && hireDate >= sixMonthsAgo;
     }).length;
 
     // Calculate average tenure (in months)
-    const tenures = teamMembers
+    const tenures = teamMembersForAnalytics
       .filter(m => m.dateOfHire)
       .map(m => {
         const hireDate = new Date(m.dateOfHire);
@@ -850,21 +920,21 @@ export class EmployeeProfileService {
       : 0;
 
     // Contract type breakdown
-    const byContractType = teamMembers.reduce((acc, member) => {
+    const byContractType = teamMembersForAnalytics.reduce((acc, member) => {
       const type = member.contractType || 'NOT_SPECIFIED';
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     // Work type breakdown
-    const byWorkType = teamMembers.reduce((acc, member) => {
+    const byWorkType = teamMembersForAnalytics.reduce((acc, member) => {
       const type = member.workType || 'NOT_SPECIFIED';
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     // Hire date distribution (by year)
-    const byHireYear = teamMembers
+    const byHireYear = teamMembersForAnalytics
       .filter(m => m.dateOfHire)
       .reduce((acc, member) => {
         const year = new Date(member.dateOfHire).getFullYear();
