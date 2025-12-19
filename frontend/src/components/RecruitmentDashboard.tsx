@@ -307,13 +307,6 @@ export default function RecruitmentDashboard() {
                 >
                   Refresh
                 </button>
-                <Link
-                  href="/recruitment/job-requisitions/new"
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 transition-all flex items-center gap-2"
-                >
-                <Plus className="w-4 h-4" />
-                <span>New Job Posting</span>
-                </Link>
               </div>
             </div>
           </div>

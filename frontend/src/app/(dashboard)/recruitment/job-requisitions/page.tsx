@@ -14,6 +14,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Trash2,
 } from "lucide-react";
 import { recruitmentApi, type JobRequisition } from "@/lib/recruitment-api";
 
@@ -54,11 +55,17 @@ export default function JobRequisitionsPage() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
-        (req) =>
-          req.title?.toLowerCase().includes(query) ||
-          req.requisitionId?.toLowerCase().includes(query) ||
-          req.department?.toLowerCase().includes(query) ||
-          req.location?.toLowerCase().includes(query)
+        (req) => {
+          const departmentName = typeof req.department === 'object' && req.department?.name
+            ? req.department.name
+            : req.department || req.departmentId?.name || '';
+          return (
+            req.title?.toLowerCase().includes(query) ||
+            req.requisitionId?.toLowerCase().includes(query) ||
+            departmentName.toLowerCase().includes(query) ||
+            req.location?.toLowerCase().includes(query)
+          );
+        }
       );
     }
 
@@ -67,7 +74,12 @@ export default function JobRequisitionsPage() {
     }
 
     if (filters.department) {
-      filtered = filtered.filter((req) => req.department === filters.department);
+      filtered = filtered.filter((req) => {
+        const departmentName = typeof req.department === 'object' && req.department?.name
+          ? req.department.name
+          : req.department || req.departmentId?.name || '';
+        return departmentName === filters.department;
+      });
     }
 
     setFilteredRequisitions(filtered);
@@ -90,6 +102,21 @@ export default function JobRequisitionsPage() {
     } catch (error) {
       console.error("Error closing requisition:", error);
       alert("Failed to close requisition");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this job requisition? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await recruitmentApi.deleteJobRequisition(id);
+      await loadRequisitions();
+    } catch (error: any) {
+      console.error("Error deleting requisition:", error);
+      const errorMessage = error.response?.data?.message || "Failed to delete requisition";
+      alert(errorMessage);
     }
   };
 
@@ -244,7 +271,9 @@ export default function JobRequisitionsPage() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-slate-300">
-                            {req.department || "N/A"}
+                            {typeof req.department === 'object' && req.department?.name
+                              ? req.department.name
+                              : req.department || req.departmentId?.name || "N/A"}
                           </span>
                         </td>
                         <td className="px-6 py-4">
@@ -299,6 +328,13 @@ export default function JobRequisitionsPage() {
                                 <XCircle className="w-4 h-4 text-red-300" />
                               </button>
                             )}
+                            <button
+                              onClick={() => handleDelete(req._id)}
+                              className="w-8 h-8 rounded-lg backdrop-blur-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center hover:bg-red-500/30 transition-all"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-300" />
+                            </button>
                           </div>
                         </td>
                       </tr>
