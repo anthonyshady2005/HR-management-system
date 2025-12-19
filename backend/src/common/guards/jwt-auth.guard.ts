@@ -28,9 +28,18 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   handleRequest(err: any, user: any, info: any) {
-    if (err || !user) {
-      throw err || new UnauthorizedException('Invalid or expired token');
+    // Log error details in production for debugging
+    if (err) {
+      console.error('[JwtAuthGuard] Error:', err.message || err);
+      throw err;
     }
+    
+    if (!user) {
+      // Log info for debugging (JWT might be missing, expired, or invalid)
+      console.error('[JwtAuthGuard] No user found. Info:', info?.message || 'Token validation failed');
+      throw new UnauthorizedException('Invalid or expired token. Please login again.');
+    }
+    
     return user;
   }
 }

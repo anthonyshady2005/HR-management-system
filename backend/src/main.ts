@@ -13,17 +13,32 @@ async function bootstrap() {
   
   app.enableCors({
     origin: (origin, callback) => {
+      // In production, log CORS attempts for debugging
+      if (process.env.NODE_ENV === 'production' && origin) {
+        console.log('[CORS] Request from origin:', origin);
+        console.log('[CORS] Allowed origins:', allowedOrigins);
+      }
+      
       // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true);
+      if (!origin) {
+        // In production, be more strict about no-origin requests
+        if (process.env.NODE_ENV === 'production') {
+          console.warn('[CORS] Request with no origin in production');
+        }
+        return callback(null, true);
+      }
       
       // Check if origin is in allowed list
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        console.error('[CORS] Origin not allowed:', origin);
+        callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
       }
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Current-Role'],
   });
 
   // Parse cookies for JWT strategy to read auth_token

@@ -25,10 +25,12 @@ export class AuthController {
     async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
         const result = await this.authService.login(dto);
         // Set cookie for 7 days
+        // Use secure: true in production (HTTPS), false in development
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie('auth_token', result.token, {
             httpOnly: true,
-            secure: false, // set true if using HTTPS
-            sameSite: 'lax',
+            secure: isProduction, // true for HTTPS in production
+            sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin in production
             maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         });
@@ -46,6 +48,11 @@ export class AuthController {
     @ApiOperation({ summary: 'Get current user roles from JWT token' })
     async getMe(@Req() req: Request) {
         const user = req.user as any; // Type from JwtStrategy: {_id, roles}
+
+        // Defensive check: ensure user exists
+        if (!user || !user._id) {
+            throw new UnauthorizedException('User not authenticated. Please login again.');
+        }
 
         // Fetch latest roles from database
         const roles = await this.authService.getMyRoles(user._id.toString());
@@ -71,6 +78,15 @@ export class AuthController {
     ) {
         const user = req.user as any; // {_id, roles} from JwtStrategy
 
+        // Defensive check: ensure user and roles exist
+        if (!user) {
+            throw new UnauthorizedException('User not authenticated. Please login again.');
+        }
+
+        if (!user.roles || !Array.isArray(user.roles) || user.roles.length === 0) {
+            throw new UnauthorizedException('User has no assigned roles. Please contact administrator.');
+        }
+
         // Validate role exists in user's JWT roles
         const isValid = this.authService.validateRoleSelection(user.roles, dto.role);
 
@@ -81,10 +97,11 @@ export class AuthController {
         }
 
         // Store in HTTP-only cookie (7 days, same as auth_token)
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie('current_role', dto.role, {
             httpOnly: true,
-            secure: false, // set true if using HTTPS
-            sameSite: 'lax',
+            secure: isProduction, // true for HTTPS in production
+            sameSite: isProduction ? 'none' : 'lax', // 'none' required for cross-origin in production
             maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         });
@@ -105,6 +122,11 @@ export class AuthController {
     async getCurrentRole(@Req() req: Request) {
         const currentRole = req.cookies?.current_role || null;
         const user = req.user as any;
+
+        // Defensive check: ensure user exists
+        if (!user || !user.roles || !Array.isArray(user.roles)) {
+            throw new UnauthorizedException('User not authenticated or has no roles.');
+        }
 
         // If no current role in cookie, or invalid, return first role
         if (!currentRole || !user.roles.includes(currentRole)) {
