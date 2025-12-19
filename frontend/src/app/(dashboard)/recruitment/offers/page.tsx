@@ -54,9 +54,12 @@ export default function OffersPage() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
-        (offer) =>
-          offer._id.toLowerCase().includes(query) ||
-          offer.candidateId?.toString().toLowerCase().includes(query)
+        (offer) => {
+          const candidateIdStr = typeof offer.candidateId === 'object' && offer.candidateId?._id
+            ? offer.candidateId._id.toString().toLowerCase()
+            : offer.candidateId?.toString().toLowerCase() || "";
+          return offer._id.toLowerCase().includes(query) || candidateIdStr.includes(query);
+        }
       );
     }
 
@@ -209,16 +212,24 @@ export default function OffersPage() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-slate-300">
-                            {offer.candidateId?.toString().slice(-8) || "N/A"}
+                            {typeof offer.candidateId === 'object' && offer.candidateId?._id
+                              ? offer.candidateId._id.toString().slice(-8)
+                              : offer.candidateId?.toString().slice(-8) || "N/A"}
                           </span>
                         </td>
                         <td className="px-6 py-4">
                           <Link
-                            href={`/recruitment/applications/${offer.applicationId}`}
+                            href={`/recruitment/applications/${
+                              typeof offer.applicationId === 'object' && offer.applicationId?._id
+                                ? offer.applicationId._id
+                                : offer.applicationId
+                            }`}
                             onClick={(e) => e.stopPropagation()}
                             className="text-blue-400 hover:text-blue-300 text-sm"
                           >
-                            {offer.applicationId?.toString().slice(-8) || "N/A"}
+                            {typeof offer.applicationId === 'object' && offer.applicationId?._id
+                              ? offer.applicationId._id.toString().slice(-8)
+                              : offer.applicationId?.toString().slice(-8) || "N/A"}
                           </Link>
                         </td>
                         <td className="px-6 py-4">

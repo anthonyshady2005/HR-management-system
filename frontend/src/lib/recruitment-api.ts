@@ -626,7 +626,7 @@ export const recruitmentApi = {
     grossSalary: number;
     signingBonus?: number;
     benefits?: string[];
-    insurances?: string[];
+    insurances?: string;
     conditions?: string;
     content?: string;
     role?: string;
@@ -673,7 +673,31 @@ export const recruitmentApi = {
   },
 
   sendOfferToCandidate: async (id: string): Promise<any> => {
-    const response = await api.post(`/recruitment/offers/${id}/send-email`);
+    const response = await api.post(`/recruitment/offers/${id}/send`);
+    return response.data;
+  },
+
+  generateOfferSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/offers/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
+    return response.data;
+  },
+
+  generateContractSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/contracts/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
     return response.data;
   },
 };

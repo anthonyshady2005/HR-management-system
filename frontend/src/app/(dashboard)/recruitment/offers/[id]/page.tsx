@@ -12,11 +12,13 @@ import {
   XCircle,
   Clock,
   User,
-  Download,
   Mail,
   Loader,
+  Copy,
+  Link as LinkIcon,
 } from "lucide-react";
 import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
+import { api } from "@/lib/api";
 
 export default function OfferDetailPage() {
   const router = useRouter();
@@ -27,18 +29,24 @@ export default function OfferDetailPage() {
   const [loading, setLoading] = useState(true);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "approval" | "signing">("overview");
-  const [generatingPDF, setGeneratingPDF] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [candidateSigningLink, setCandidateSigningLink] = useState<string | null>(null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
+    // If the ID is "new", redirect to the new offer page
+    if (id === 'new') {
+      router.push('/recruitment/offers/new');
+      return;
+    }
     if (id && id !== '[object Object]' && id.length > 0) {
       loadOffer();
     } else {
       console.error("Invalid offer ID:", id);
       setLoading(false);
     }
-  }, [id]);
+  }, [id, router]);
 
   const loadOffer = async () => {
     // Double-check the ID is valid
@@ -71,21 +79,37 @@ export default function OfferDetailPage() {
     }
   };
 
-  const handleGeneratePDF = async () => {
+  const handleGenerateSigningLink = async () => {
     try {
-      setGeneratingPDF(true);
-      const result = await recruitmentApi.generateOfferPDF(id);
-      if (result.pdfUrl) {
-        setPdfUrl(result.pdfUrl);
-        // Open PDF in new tab
-        window.open(result.pdfUrl, '_blank');
-      }
-      alert("PDF generated successfully!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      alert("Failed to generate PDF. Please try again.");
+      setGeneratingLink(true);
+      const result = await recruitmentApi.generateOfferSigningLink(id, 'candidate', 7);
+      setCandidateSigningLink(result.signingUrl);
+      alert("Signing link generated successfully!");
+    } catch (error: any) {
+      console.error("Error generating link:", error);
+      alert(`Failed to generate link: ${error.response?.data?.message || error.message}`);
     } finally {
-      setGeneratingPDF(false);
+      setGeneratingLink(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (candidateSigningLink) {
+      try {
+        await navigator.clipboard.writeText(candidateSigningLink);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } catch (error) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = candidateSigningLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      }
     }
   };
 
@@ -93,6 +117,9 @@ export default function OfferDetailPage() {
     try {
       setSendingEmail(true);
       const result = await recruitmentApi.sendOfferToCandidate(id);
+      if (result.signingUrl) {
+        setCandidateSigningLink(result.signingUrl);
+      }
       alert("Offer email sent successfully to candidate!");
     } catch (error) {
       console.error("Error sending email:", error);
@@ -147,18 +174,6 @@ export default function OfferDetailPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={handleGeneratePDF}
-                  disabled={generatingPDF}
-                  className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
-                >
-                  {generatingPDF ? (
-                    <Loader className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  {generatingPDF ? "Generating..." : "Generate PDF"}
-                </button>
                 <button
                   onClick={handleSendEmail}
                   disabled={sendingEmail}
@@ -223,15 +238,25 @@ export default function OfferDetailPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Candidate ID</p>
-                  <p className="text-white">{offer.candidateId?.toString() || "N/A"}</p>
+                  <p className="text-white">
+                    {typeof offer.candidateId === 'object' && offer.candidateId?._id
+                      ? offer.candidateId._id.toString()
+                      : offer.candidateId?.toString() || "N/A"}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Application ID</p>
                   <Link
-                    href={`/recruitment/applications/${offer.applicationId}`}
+                    href={`/recruitment/applications/${
+                      typeof offer.applicationId === 'object' && offer.applicationId?._id
+                        ? offer.applicationId._id
+                        : offer.applicationId
+                    }`}
                     className="text-blue-400 hover:text-blue-300"
                   >
-                    {offer.applicationId?.toString() || "N/A"}
+                    {typeof offer.applicationId === 'object' && offer.applicationId?._id
+                      ? offer.applicationId._id.toString()
+                      : offer.applicationId?.toString() || "N/A"}
                   </Link>
                 </div>
                 <div>
@@ -281,20 +306,86 @@ export default function OfferDetailPage() {
                   </div>
                 </div>
               )}
-              {pdfUrl && (
-                <div className="mt-6 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
-                  <p className="text-green-400 text-sm mb-2">PDF Generated</p>
-                  <a
-                    href={pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Offer PDF
-                  </a>
+
+              {/* Candidate Signing Link Section */}
+              <div className="mt-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <LinkIcon className="w-5 h-5 text-blue-400" />
+                    <p className="text-blue-400 font-semibold">Candidate Signing Link</p>
+                  </div>
+                  {!candidateSigningLink && (
+                    <button
+                      onClick={handleGenerateSigningLink}
+                      disabled={generatingLink}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      {generatingLink ? (
+                        <>
+                          <Loader className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="w-4 h-4" />
+                          Generate Link
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-              )}
+                {candidateSigningLink ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 p-2 bg-white/5 rounded border border-white/10">
+                      <input
+                        type="text"
+                        value={candidateSigningLink}
+                        readOnly
+                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                      />
+                      <button
+                        onClick={handleCopyLink}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                        title="Copy link"
+                      >
+                        {linkCopied ? (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={candidateSigningLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+                      >
+                        <LinkIcon className="w-4 h-4" />
+                        Open in new tab
+                      </a>
+                      <span className="text-slate-400 text-xs">•</span>
+                      <span className="text-slate-400 text-xs">Link expires in 7 days</span>
+                    </div>
+                    {!offer.candidateSignedAt && (
+                      <p className="text-yellow-400 text-xs mt-2">
+                        ⚠️ Share this link with the candidate to sign the offer
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">
+                    Generate a signing link to share with the candidate
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -310,9 +401,231 @@ export default function OfferDetailPage() {
           {activeTab === "signing" && (
             <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
               <h2 className="text-xl text-white mb-6">Signing Status</h2>
-              <p className="text-slate-400">
-                Signature management coming soon
-              </p>
+              
+              <div className="space-y-6">
+                {/* Candidate Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">Candidate Signature</h3>
+                    {offer.candidateSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.candidateSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.candidateSignedAt).toLocaleString()}
+                      </p>
+                      {offer.candidateTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.candidateTypedName}
+                        </p>
+                      )}
+                      {offer.candidateSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.candidateSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.candidateSignedAt && !candidateSigningLink && (
+                    <button
+                      onClick={handleGenerateSigningLink}
+                      disabled={generatingLink}
+                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors flex items-center gap-2"
+                    >
+                      {generatingLink ? (
+                        <>
+                          <Loader className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="w-4 h-4" />
+                          Generate Signing Link
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {candidateSigningLink && !offer.candidateSignedAt && (
+                    <div className="mt-2 space-y-2">
+                      <div className="flex items-center gap-2 p-2 bg-white/5 rounded border border-white/10">
+                        <input
+                          type="text"
+                          value={candidateSigningLink}
+                          readOnly
+                          className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                        />
+                        <button
+                          onClick={handleCopyLink}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                          title="Copy link"
+                        >
+                          {linkCopied ? (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              Copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <a
+                        href={candidateSigningLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+                      >
+                        <LinkIcon className="w-4 h-4" />
+                        Open in new tab
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* HR Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">HR Signature</h3>
+                    {offer.hrSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.hrSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.hrSignedAt).toLocaleString()}
+                      </p>
+                      {offer.hrTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.hrTypedName}
+                        </p>
+                      )}
+                      {offer.hrSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.hrSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.hrSignedAt && (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        id="hrTypedName"
+                        placeholder="Enter your full name"
+                        className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400"
+                      />
+                      <button
+                        onClick={async () => {
+                          const typedName = (document.getElementById('hrTypedName') as HTMLInputElement)?.value;
+                          if (!typedName) {
+                            alert('Please enter your full name');
+                            return;
+                          }
+                          try {
+                            await api.post(`/recruitment/offers/${id}/sign`, {
+                              signerType: 'hr',
+                              typedName,
+                            });
+                            alert('Offer signed successfully!');
+                            loadOffer();
+                          } catch (error: any) {
+                            alert(`Failed to sign: ${error.response?.data?.message || error.message}`);
+                          }
+                        }}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors"
+                      >
+                        Sign as HR
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manager Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">Manager Signature</h3>
+                    {offer.managerSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.managerSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.managerSignedAt).toLocaleString()}
+                      </p>
+                      {offer.managerTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.managerTypedName}
+                        </p>
+                      )}
+                      {offer.managerSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.managerSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.managerSignedAt && (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        id="managerTypedName"
+                        placeholder="Enter your full name"
+                        className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400"
+                      />
+                      <button
+                        onClick={async () => {
+                          const typedName = (document.getElementById('managerTypedName') as HTMLInputElement)?.value;
+                          if (!typedName) {
+                            alert('Please enter your full name');
+                            return;
+                          }
+                          try {
+                            await api.post(`/recruitment/offers/${id}/sign`, {
+                              signerType: 'manager',
+                              typedName,
+                            });
+                            alert('Offer signed successfully!');
+                            loadOffer();
+                          } catch (error: any) {
+                            alert(`Failed to sign: ${error.response?.data?.message || error.message}`);
+                          }
+                        }}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors"
+                      >
+                        Sign as Manager
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </main>
