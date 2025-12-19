@@ -21,6 +21,9 @@ import {
 } from '@nestjs/common';
 import express from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import * as path from 'path';
+import * as path from 'path';
 import {
   ApiTags,
   ApiOperation,
@@ -834,10 +837,22 @@ export class RecruitmentController {
   }
 
   @Post('documents')
-  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.RECRUITER, SystemRole.JOB_CANDIDATE, SystemRole.SYSTEM_ADMIN)
-  @UseInterceptors(FileInterceptor('file'))
+  @Public()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads/documents',
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = path.extname(file.originalname);
+          cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    }),
+  )
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Upload document', description: 'Uploads a document (resume, certificate, etc.) with metadata' })
+  @ApiOperation({ summary: 'Upload document', description: 'Uploads a document (resume, certificate, etc.) with metadata. Public endpoint for candidates to upload resumes.' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -850,7 +865,8 @@ export class RecruitmentController {
         },
         entityType: { type: 'string', description: 'Entity type (application, candidate, offer, etc.)' },
         entityId: { type: 'string', description: 'Entity ID' },
-        documentType: { type: 'string', description: 'Document type' },
+        type: { type: 'string', description: 'Document type (cv, contract, id, certificate, resignation)' },
+        ownerId: { type: 'string', description: 'Owner ID (EmployeeProfile ID, optional)' },
       },
     },
   })

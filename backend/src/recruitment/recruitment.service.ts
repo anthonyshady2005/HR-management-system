@@ -2786,13 +2786,22 @@ export class RecruitmentService {
       fileSize: number;
     },
   ): Promise<DocumentDocument> {
+    // Ensure filePath is relative to project root for consistency
+    const filePath = createDto.filePath.startsWith('./')
+      ? createDto.filePath
+      : `./${createDto.filePath}`;
+
     const document = new this.documentModel({
       ownerId: createDto.ownerId
         ? new Types.ObjectId(createDto.ownerId)
         : undefined,
       type: createDto.type,
-      filePath: createDto.filePath,
+      filePath: filePath,
       uploadedAt: new Date(),
+      entityType: createDto.entityType,
+      entityId: createDto.entityId
+        ? new Types.ObjectId(createDto.entityId)
+        : undefined,
     });
 
     return await document.save();

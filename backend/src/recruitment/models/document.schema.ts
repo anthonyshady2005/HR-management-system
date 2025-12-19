@@ -6,7 +6,7 @@ import { DocumentType } from '../enums/document-type.enum';
 export class Document {
 
   @Prop({ type: Types.ObjectId, ref: 'EmployeeProfile' })
-  ownerId: Types.ObjectId;
+  ownerId?: Types.ObjectId;
 
   @Prop({
     enum: DocumentType,
@@ -19,6 +19,13 @@ export class Document {
 
   @Prop()
   uploadedAt: Date;
+
+  // Support for linking documents to applications, candidates, etc.
+  @Prop({ type: String })
+  entityType?: string; // 'application', 'candidate', 'offer', etc.
+
+  @Prop({ type: Types.ObjectId })
+  entityId?: Types.ObjectId; // ID of the linked entity
 }
 
 export type DocumentDocument = HydratedDocument<Document>;

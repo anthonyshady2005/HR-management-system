@@ -470,6 +470,15 @@ export const recruitmentApi = {
   },
 
   // Application methods
+  createApplication: async (data: {
+    candidateId: string;
+    requisitionId: string;
+    assignedHr?: string;
+  }): Promise<Application> => {
+    const response = await api.post(`/recruitment/applications`, data);
+    return response.data;
+  },
+
   getApplicationById: async (id: string): Promise<Application> => {
     const response = await api.get(`/recruitment/applications/${id}`);
     return response.data;
