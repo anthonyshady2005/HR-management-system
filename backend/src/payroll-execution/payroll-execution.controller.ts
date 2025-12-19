@@ -41,6 +41,12 @@ export class PayrollExecutionController {
     return this.payrollExecutionService.getAllRuns();
   }
 
+  @Roles('Payroll Specialist', 'Payroll Manager', 'Finance Staff')
+  @Get('departments')
+  async getDepartments() {
+    return this.payrollExecutionService.getDepartments();
+  }
+
   @Roles('Payroll Specialist')
   @Get('pending-items')
   async getPendingItems() {

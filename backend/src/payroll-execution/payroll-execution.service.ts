@@ -669,6 +669,10 @@ export class PayrollExecutionService {
     return run;
   }
 
+  async getDepartments() {
+    return this.departmentModel.find({ isActive: true }).select('name code').exec();
+  }
+
   async getAllRuns() {
     return this.payrollRunsModel
       .find()
