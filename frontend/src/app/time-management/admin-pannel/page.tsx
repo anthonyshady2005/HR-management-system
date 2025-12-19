@@ -16,9 +16,13 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { timeManagementService } from "../services/time-management.service";
+import { useAuth } from "@/providers/auth-provider";
+import { useRequireRole } from "@/hooks/use-require-role";
+
+/* ===================== RBAC ===================== */
+const ALLOWED_ROLES = ["HR Manager", "HR Admin", "System Admin"];
 
 /* ===================== NAV CARDS ===================== */
-
 const navigationCards = [
   {
     title: "Attendance Overview",
@@ -113,61 +117,83 @@ function getUrgencyStyles(days: number) {
 /* ===================== PAGE ===================== */
 
 export default function TimeManagementPage() {
+  const { status } = useAuth();
+  useRequireRole(ALLOWED_ROLES, "/");
+  
   const LIMIT = 5;
 
-  const [notifications, setNotifications] =
-    useState<ShiftExpiryNotification[]>([]);
+  const [notifications, setNotifications] = useState<ShiftExpiryNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
 
   /* ===================== DATA ===================== */
 
   const refreshNotifications = async () => {
-    await timeManagementService.notifyUpcomingShiftExpiry(3);
+    setRefreshing(true);
+    try {
+      // This triggers the backend to create new notifications
+      await timeManagementService.notifyUpcomingShiftExpiry(3);
+      // Then reload the notifications list
+      await loadNotifications(page);
+    } catch (error) {
+      console.error("Failed to refresh notifications:", error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const loadNotifications = async (pageIndex: number) => {
     setLoading(true);
     try {
-      const data =
-        await timeManagementService.getShiftExpiryNotifications(
-          LIMIT,
-          pageIndex * LIMIT
-        );
+      const data = await timeManagementService.getShiftExpiryNotifications(
+        LIMIT,
+        pageIndex * LIMIT
+      );
 
       const normalized: ShiftExpiryNotification[] = Array.isArray(data)
-  ? data.map((n: any) => ({
-      _id: n._id,
-      assignmentId: n.assignmentId,
-      title: n.title,
-      message: n.message,
-      createdAt: n.createdAt,
-    }))
-  : [];
+        ? data.map((n: any) => ({
+            _id: n._id,
+            assignmentId: n.assignmentId,
+            title: n.title,
+            message: n.message,
+            createdAt: n.createdAt,
+          }))
+        : [];
 
-setNotifications(normalized);
-
+      setNotifications(normalized);
       setPage(pageIndex);
+    } catch (error) {
+      console.error("Failed to load notifications:", error);
+      setNotifications([]);
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ FIXED: Only load existing notifications on mount, don't trigger notify endpoint
   useEffect(() => {
-    (async () => {
-      await refreshNotifications();
-      await loadNotifications(0);
-    })();
-  }, []);
+    if (status === "authenticated") {
+      loadNotifications(0);
+    }
+  }, [status]);
 
   /* ===================== UI ===================== */
+
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-400">
+        Loading...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black relative overflow-hidden">
       {/* TOP NAV */}
       <div className="fixed top-4 left-4 z-50 flex gap-4">
         <a
-          href="/home"
+          href="/"
           className="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 border-2 border-slate-500 rounded-xl text-white font-semibold hover:bg-slate-700"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -227,14 +253,12 @@ setNotifications(normalized);
               <h3 className="text-2xl text-white">Shift Expiry Notifications</h3>
             </div>
             <button
-              onClick={async () => {
-                await refreshNotifications();
-                await loadNotifications(page);
-              }}
-              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white flex items-center gap-2"
+              onClick={refreshNotifications}
+              disabled={refreshing}
+              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white flex items-center gap-2 disabled:opacity-50"
             >
-              <RefreshCw className={loading ? "animate-spin" : ""} />
-              Refresh
+              <RefreshCw className={refreshing ? "animate-spin" : ""} />
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
           </div>
 

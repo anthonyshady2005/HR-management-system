@@ -3188,6 +3188,7 @@ export class RecruitmentService {
     try {
       await this.payrollIntegration.processTerminationBenefits(
         employeeId,
+        termination._id.toString(),
         terminationDate,
       );
     } catch (error) {
@@ -3520,6 +3521,7 @@ export class RecruitmentService {
       try {
         await this.payrollIntegration.processTerminationBenefits(
           employeeId,
+          termination._id.toString(),
           terminationDate,
         );
         terminationBenefitsProcessed = true;

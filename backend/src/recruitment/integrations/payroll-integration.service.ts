@@ -4,8 +4,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { employeeSigningBonus } from '../../payroll-execution/models/EmployeeSigningBonus.schema';
 import { signingBonus } from '../../payroll-configuration/models/signingBonus.schema';
+import { EmployeeTerminationResignation } from '../../payroll-execution/models/EmployeeTerminationResignation.schema';
+import { terminationAndResignationBenefits } from '../../payroll-configuration/models/terminationAndResignationBenefits';
 import { ConfigStatus } from '../../payroll-configuration/enums/payroll-configuration-enums';
-import { BonusStatus } from '../../payroll-execution/enums/payroll-execution-enum';
+import { BonusStatus, BenefitStatus } from '../../payroll-execution/enums/payroll-execution-enum';
 
 @Injectable()
 export class PayrollIntegrationService {
@@ -18,6 +20,10 @@ export class PayrollIntegrationService {
     private signingBonusModel: Model<any>,
     @InjectModel(signingBonus.name)
     private signingBonusConfigModel: Model<any>,
+    @InjectModel(EmployeeTerminationResignation.name)
+    private employeeTerminationModel: Model<any>,
+    @InjectModel(terminationAndResignationBenefits.name)
+    private terminationBenefitsConfigModel: Model<any>,
   ) {}
 
   /**
@@ -101,22 +107,82 @@ export class PayrollIntegrationService {
 
   /**
    * Process termination benefits
+   * Creates termination benefit records for all approved termination benefit configurations
+   * Similar to how signing bonuses are created for new employees
    */
   async processTerminationBenefits(
     employeeId: string,
+    terminationId: string,
     terminationDate: Date,
   ): Promise<void> {
     try {
       this.logger.log(
-        `Termination benefits will be processed for employee ${employeeId} on termination date ${terminationDate.toISOString()}`,
+        `Processing termination benefits for employee ${employeeId}, termination ${terminationId} on ${terminationDate.toISOString()}`,
       );
-      // Termination benefits are handled by PayrollExecutionService
-      // during the next payroll run after termination
+
+      // Find all approved termination benefit configurations
+      const approvedBenefits = await this.terminationBenefitsConfigModel
+        .find({ status: ConfigStatus.APPROVED })
+        .exec();
+
+      if (!approvedBenefits || approvedBenefits.length === 0) {
+        this.logger.log(
+          `No approved termination benefit configurations found for employee ${employeeId}`,
+        );
+        return;
+      }
+
+      // Create termination benefit records for each approved configuration
+      for (const benefitConfig of approvedBenefits) {
+        try {
+          // Check if this benefit is already assigned to this employee for this termination
+          const existingAssignment = await this.employeeTerminationModel
+            .findOne({
+              employeeId: new Types.ObjectId(employeeId),
+              benefitId: benefitConfig._id,
+              terminationId: new Types.ObjectId(terminationId),
+            })
+            .exec();
+
+          if (existingAssignment) {
+            this.logger.log(
+              `Termination benefit ${benefitConfig.name} (${benefitConfig._id}) already assigned to employee ${employeeId} for termination ${terminationId}`,
+            );
+            continue;
+          }
+
+          // Create employee termination benefit record
+          const employeeTerminationBenefit = new this.employeeTerminationModel({
+            employeeId: new Types.ObjectId(employeeId),
+            benefitId: benefitConfig._id,
+            terminationId: new Types.ObjectId(terminationId),
+            givenAmount: benefitConfig.amount,
+            status: BenefitStatus.PENDING,
+          });
+
+          await employeeTerminationBenefit.save();
+
+          this.logger.log(
+            `Termination benefit ${benefitConfig.name} (amount: ${benefitConfig.amount}) created for employee ${employeeId}`,
+          );
+        } catch (benefitError) {
+          this.logger.error(
+            `Failed to create termination benefit ${benefitConfig.name} for employee ${employeeId}:`,
+            benefitError instanceof Error ? benefitError.stack : undefined,
+          );
+          // Continue processing other benefits even if one fails
+        }
+      }
+
+      this.logger.log(
+        `Termination benefits processed for employee ${employeeId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to process termination benefits for employee ${employeeId}:`,
         error instanceof Error ? error.stack : undefined,
       );
+      // Don't throw - termination benefit processing failure shouldn't break termination workflow
     }
   }
 }
