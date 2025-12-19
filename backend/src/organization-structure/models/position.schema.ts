@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types, UpdateQuery } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 
 export type PositionDocument = HydratedDocument<Position>;
 
@@ -30,15 +30,9 @@ export class Position {
 
 export const PositionSchema = SchemaFactory.createForClass(Position);
 
-// UTILITY TYPE GUARDS (keep these)
-function isPositionUpdate(update: unknown): update is UpdateQuery<Position> {
-  return Boolean(update) && typeof update === 'object' && !Array.isArray(update);
-}
 
-function isObjectIdLike(value: unknown): value is Types.ObjectId | string {
-  return typeof value === 'string' || value instanceof Types.ObjectId;
-}
-
-// Note: remove all pre('save') and pre('findOneAndUpdate') hooks from here.
-// Hooks that depend on Department must be handled in a service where DepartmentModel
-// is injected via NestJS DI.
+// this is not AI generated note, it's me aly hossam saying that hooks here caused
+// circular dependency issues, so we need to remove them and handle them in the service.
+// Note: Hooks that depend on Department (e.g., auto-setting reportsToPositionId)
+// are handled in OrganizationStructureService where DepartmentModel is injected
+// via NestJS dependency injection.
