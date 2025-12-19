@@ -654,27 +654,54 @@ export class EmployeeProfileService {
   // ========== MANAGER TEAM VIEW (US-E4-01, US-E4-02) ==========
 
   /**
-   * Get team members who report to the manager's position.
+   * Get team members for a department head (US-E4-01).
+   * Returns employees in the same department with "Department Employee" role.
    * Excludes sensitive fields per BR 18b (privacy restrictions for line managers).
-   * BR 41b: Direct managers see their team only.
    */
   async getTeamMembers(managerId: string) {
     if (!Types.ObjectId.isValid(managerId)) {
       throw new BadRequestException('Invalid manager id');
     }
 
-    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    if (!managerPositionId) {
+    // Get manager's profile to find their department
+    const manager = await this.profileModel
+      .findById(managerId)
+      .select('primaryDepartmentId')
+      .lean()
+      .exec();
+
+    if (!manager) {
+      throw new NotFoundException('Manager profile not found');
+    }
+
+    if (!manager.primaryDepartmentId) {
       return { teamMembers: [], count: 0 };
     }
 
-    const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-    if (directReportEmployeeIds.length === 0) {
+    // Find all employees with "Department Employee" role
+    const departmentEmployeeRoles = await this.systemRoleModel
+      .find({
+        roles: SystemRole.DEPARTMENT_EMPLOYEE,
+        isActive: true,
+      })
+      .select('employeeProfileId')
+      .lean()
+      .exec();
+
+    const departmentEmployeeIds = departmentEmployeeRoles.map(
+      (r) => r.employeeProfileId,
+    );
+
+    if (departmentEmployeeIds.length === 0) {
       return { teamMembers: [], count: 0 };
     }
 
+    // Get employees in the same department with "Department Employee" role (excluding the manager)
     const teamMembers = await this.profileModel
-      .find({ _id: { $in: directReportEmployeeIds.map((id) => new Types.ObjectId(id)) } })
+      .find({
+        _id: { $in: departmentEmployeeIds, $ne: new Types.ObjectId(managerId) },
+        primaryDepartmentId: manager.primaryDepartmentId,
+      })
       .populate('primaryPositionId', 'code title')
       .populate('primaryDepartmentId', 'code name')
       .select(
@@ -707,6 +734,7 @@ export class EmployeeProfileService {
 
   /**
    * Get summary of team's job titles and departments (US-E4-02).
+   * Returns summary for employees in the same department with "Department Employee" role.
    * Aggregated view without individual employee details.
    */
   async getTeamSummary(managerId: string) {
@@ -725,8 +753,33 @@ export class EmployeeProfileService {
       throw new NotFoundException('Manager profile not found');
     }
 
-    const managerPositionId = await this.getManagerCurrentPositionId(managerId);
-    if (!managerPositionId) {
+    if (!manager.primaryDepartmentId) {
+      return {
+        managerDepartment: null,
+        totalTeamMembers: 0,
+        byPosition: [],
+        byDepartment: [],
+        byStatus: [],
+        totalCount: 0,
+        department: null,
+      };
+    }
+
+    // Find all employees with "Department Employee" role
+    const departmentEmployeeRoles = await this.systemRoleModel
+      .find({
+        roles: SystemRole.DEPARTMENT_EMPLOYEE,
+        isActive: true,
+      })
+      .select('employeeProfileId')
+      .lean()
+      .exec();
+
+    const departmentEmployeeIds = departmentEmployeeRoles.map(
+      (r) => r.employeeProfileId,
+    );
+
+    if (departmentEmployeeIds.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -738,8 +791,24 @@ export class EmployeeProfileService {
       };
     }
 
-    const directReportEmployeeIds = await this.getDirectReportEmployeeIds(managerPositionId);
-    if (directReportEmployeeIds.length === 0) {
+    // Get team member IDs (same department + Department Employee role, excluding manager)
+    const teamMemberObjectIds = departmentEmployeeIds.filter(
+      (id) => id.toString() !== managerId,
+    );
+
+    // Filter to only those in the same department
+    const teamMembersInDept = await this.profileModel
+      .find({
+        _id: { $in: teamMemberObjectIds },
+        primaryDepartmentId: manager.primaryDepartmentId,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+
+    const filteredTeamMemberIds = teamMembersInDept.map((m) => m._id);
+
+    if (filteredTeamMemberIds.length === 0) {
       return {
         managerDepartment: manager.primaryDepartmentId || null,
         totalTeamMembers: 0,
@@ -750,12 +819,10 @@ export class EmployeeProfileService {
         department: manager.primaryDepartmentId ? (manager.primaryDepartmentId as any).name : null,
       };
     }
-
-    const directReportObjectIds = directReportEmployeeIds.map((id) => new Types.ObjectId(id));
 
     // Aggregate team by position
     const byPosition = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $lookup: {
           from: 'positions',
@@ -778,7 +845,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by department
     const byDepartment = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $lookup: {
           from: 'departments',
@@ -801,7 +868,7 @@ export class EmployeeProfileService {
 
     // Aggregate team by status
     const byStatus = await this.profileModel.aggregate([
-      { $match: { _id: { $in: directReportObjectIds } } },
+      { $match: { _id: { $in: filteredTeamMemberIds } } },
       {
         $group: {
           _id: '$status',
@@ -814,8 +881,8 @@ export class EmployeeProfileService {
     const totalTeamMembers = byStatus.reduce((sum, s) => sum + s.count, 0);
 
     // Get team members for additional analytics
-    const teamMembers = await this.profileModel
-      .find({ _id: { $in: directReportObjectIds } })
+    const teamMembersForAnalytics = await this.profileModel
+      .find({ _id: { $in: filteredTeamMemberIds } })
       .select('dateOfHire contractType workType status')
       .lean()
       .exec();
@@ -825,18 +892,18 @@ export class EmployeeProfileService {
     const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
     
-    const newHires = teamMembers.filter(m => {
+    const newHires = teamMembersForAnalytics.filter(m => {
       const hireDate = m.dateOfHire ? new Date(m.dateOfHire) : null;
       return hireDate && hireDate >= oneYearAgo;
     }).length;
 
-    const recentHires = teamMembers.filter(m => {
+    const recentHires = teamMembersForAnalytics.filter(m => {
       const hireDate = m.dateOfHire ? new Date(m.dateOfHire) : null;
       return hireDate && hireDate >= sixMonthsAgo;
     }).length;
 
     // Calculate average tenure (in months)
-    const tenures = teamMembers
+    const tenures = teamMembersForAnalytics
       .filter(m => m.dateOfHire)
       .map(m => {
         const hireDate = new Date(m.dateOfHire);
@@ -850,21 +917,21 @@ export class EmployeeProfileService {
       : 0;
 
     // Contract type breakdown
-    const byContractType = teamMembers.reduce((acc, member) => {
+    const byContractType = teamMembersForAnalytics.reduce((acc, member) => {
       const type = member.contractType || 'NOT_SPECIFIED';
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     // Work type breakdown
-    const byWorkType = teamMembers.reduce((acc, member) => {
+    const byWorkType = teamMembersForAnalytics.reduce((acc, member) => {
       const type = member.workType || 'NOT_SPECIFIED';
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     // Hire date distribution (by year)
-    const byHireYear = teamMembers
+    const byHireYear = teamMembersForAnalytics
       .filter(m => m.dateOfHire)
       .reduce((acc, member) => {
         const year = new Date(member.dateOfHire).getFullYear();

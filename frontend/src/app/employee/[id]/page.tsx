@@ -220,19 +220,6 @@ export default function EmployeeDetailPage() {
     const profilePayGradeId = typeof profile.payGradeId === 'string'
       ? profile.payGradeId
       : (profile.payGradeId as any)?._id;
-    
-    const willTriggerSync =
-      (editData.status && editData.status !== profile.status) ||
-      (editData.primaryPositionId && editData.primaryPositionId !== profilePositionId) ||
-      (editData.primaryDepartmentId && editData.primaryDepartmentId !== profileDepartmentId) ||
-      (editData.payGradeId && editData.payGradeId !== profilePayGradeId);
-
-    if (willTriggerSync) {
-      const confirmed = window.confirm(
-        "⚠️ Warning: These changes will trigger synchronization with Payroll and Time Management systems. Continue?"
-      );
-      if (!confirmed) return;
-    }
 
     try {
       setSaving(true);
