@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import Navbar from "@/components/Navbar";
 import { api } from "@/lib/api";
 
 export default function ApplyPage() {
@@ -87,23 +86,33 @@ export default function ApplyPage() {
     setError("");
     setSubmitting(true);
 
+    let candidateResponse: any = null;
+
     try {
       // Step 1: Create or find candidate profile
-      const candidateResponse = await api.post("/recruitment/candidates", {
+      candidateResponse = await api.post("/recruitment/candidates", {
         firstName: formData.firstName,
         lastName: formData.lastName,
         personalEmail: formData.personalEmail,
         nationalId: formData.nationalId,
         mobilePhone: formData.mobilePhone,
       });
-      const candidateId = candidateResponse.data._id;
+      // Ensure candidateId is a string
+      const candidateId = typeof candidateResponse.data._id === 'string' 
+        ? candidateResponse.data._id 
+        : candidateResponse.data._id?.toString() || String(candidateResponse.data._id);
+
+      // Ensure requisitionId is a string
+      const requisitionIdStr = String(requisitionId);
 
       // Step 2: Create application first (we need the application ID for document linking)
       const applicationResponse = await recruitmentApi.createApplication({
         candidateId,
-        requisitionId,
+        requisitionId: requisitionIdStr,
       });
-      const applicationId = applicationResponse._id;
+      const applicationId = typeof applicationResponse._id === 'string'
+        ? applicationResponse._id
+        : applicationResponse._id?.toString() || String(applicationResponse._id);
 
       // Step 3: Upload resume if provided (now we can link it to the application)
       if (formData.resume) {
@@ -136,10 +145,18 @@ export default function ApplyPage() {
       }, 3000);
     } catch (err: any) {
       console.error("Application submission error:", err);
-      setError(
-        err.response?.data?.message ||
-          "Failed to submit application. Please try again."
-      );
+      console.error("Error details:", {
+        message: err.response?.data?.message,
+        status: err.response?.status,
+        data: err.response?.data,
+        candidateId: candidateResponse?.data?._id,
+        requisitionId: requisitionId,
+      });
+      const errorMessage = err.response?.data?.message || 
+        err.response?.data?.error ||
+        (err.response?.data?.errors ? JSON.stringify(err.response.data.errors) : null) ||
+        "Failed to submit application. Please try again.";
+      setError(errorMessage);
     } finally {
       setSubmitting(false);
     }
@@ -148,7 +165,6 @@ export default function ApplyPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
         <div className="container mx-auto px-4 py-20 text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
           <p className="text-slate-400">Loading job details...</p>
@@ -160,7 +176,6 @@ export default function ApplyPage() {
   if (!job || error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-        <Navbar />
         <div className="container mx-auto px-4 py-20">
           <div className="max-w-2xl mx-auto text-center">
             <XCircle className="w-16 h-16 mx-auto mb-4 text-red-500" />
@@ -182,7 +197,6 @@ export default function ApplyPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-      <Navbar />
       <main className="container mx-auto px-4 py-12">
         <div className="max-w-4xl mx-auto">
           {/* Back Button */}

@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import Navbar from "@/components/Navbar";
 
 export default function CareersPage() {
   const router = useRouter();
@@ -102,7 +101,6 @@ export default function CareersPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-      <Navbar />
       <main className="container mx-auto px-4 py-12">
         {/* Header */}
         <div className="text-center mb-12">
