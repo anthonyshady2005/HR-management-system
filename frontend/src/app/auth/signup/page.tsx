@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Lock, Mail, User, ChevronRight, AlertCircle, Fingerprint } from "lucide-react";
-import axios from "axios";
+import { api } from "@/lib/api";
 
 export default function SignupPage() {
     const router = useRouter();
@@ -24,7 +24,7 @@ export default function SignupPage() {
         const password = formData.get("password");
 
         try {
-            await axios.post("http://localhost:3000/auth/register", {
+            await api.post("/auth/register", {
                 firstName,
                 lastName,
                 personalEmail,
