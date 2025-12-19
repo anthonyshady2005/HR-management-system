@@ -852,14 +852,14 @@ export const offboardingApi = {
   // Create termination request
   createTerminationRequest: async (data: {
     employeeId: string;
-    offerId: string; // Required: reference to the offer/contract
-    initiator: string; // Required: 'employee' | 'employer'
+    offerId?: string; // Optional: will be auto-found from employee's onboarding if not provided
+    initiator: string; // Required: 'employee' | 'hr' | 'manager'
     reason: string; // Required
     employeeComments?: string;
     hrComments?: string;
     terminationDate?: string;
   }): Promise<TerminationRequest> => {
-    const response = await api.post("/recruitment/termination-requests", data);
+    const response = await api.post("/recruitment/terminations", data);
     return response.data;
   },
 

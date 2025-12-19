@@ -36,6 +36,7 @@ export class CreateTerminationRequestDto {
   @IsDateString()
   terminationDate?: string;
 
+  @IsOptional()
   @IsMongoId()
-  offerId!: string;
+  offerId?: string; // Optional: will be auto-found from employee's onboarding if not provided
 }

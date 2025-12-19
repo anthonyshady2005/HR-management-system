@@ -59,7 +59,6 @@ import { StatusBadge } from "../components/StatusBadge";
 import {
   getEmployeeById,
   updateEmployeeById,
-  deactivateEmployee,
   assignRoles,
   getEmployeeRoles,
   getAuditHistory,
@@ -67,6 +66,7 @@ import {
   getDepartments,
   getPositions,
 } from "../api";
+import { recruitmentApi, offboardingApi } from "@/lib/recruitment-api";
 import { getTeamMemberProfile } from "../api-manager";
 import { sanitizeHrUpdatePayload } from "../utils/sanitizeHrUpdate";
 import { SystemRole, PayGradeEnum } from "../types";
@@ -290,28 +290,39 @@ export default function EmployeeDetailPage() {
     }
   };
 
-  const handleDeactivate = async () => {
+  const handleInitiateOffboarding = async () => {
     if (!deactivateData.reason || !deactivateData.notes) {
       toast.error("Please fill in all required fields");
       return;
     }
 
     try {
-      await deactivateEmployee(employeeId, {
-        deactivationReason: deactivateData.reason as DeactivationReason,
-        notes: deactivateData.notes,
-        effectiveDate: deactivateData.effectiveDate,
+      // Map deactivation reason to termination reason
+      const terminationReason = deactivateData.reason === "TERMINATED" 
+        ? "Employee termination" 
+        : deactivateData.reason === "RETIRED"
+        ? "Employee retirement"
+        : "Employee resignation";
+
+      // Create termination request (OFF-001) - this will automatically create clearance checklist (OFF-006)
+      await offboardingApi.createTerminationRequest({
+        employeeId,
+        // offerId is optional - backend will find it from employee's onboarding record
+        initiator: "hr", // HR Manager initiating from employee profile
+        reason: terminationReason,
+        hrComments: deactivateData.notes,
+        terminationDate: deactivateData.effectiveDate,
       });
       
-      toast.success("Employee account permanently deleted");
+      toast.success("Termination/Offboarding workflow initiated successfully");
       setShowDeactivateDialog(false);
       
-      // Redirect to directory since employee no longer exists
-      router.push("/employee/directory");
+      // Redirect to offboarding dashboard to view the initiated termination
+      router.push("/offboarding");
     } catch (error: any) {
-      console.error("Failed to deactivate employee:", error);
+      console.error("Failed to initiate offboarding:", error);
       toast.error(
-        error.response?.data?.message || "Failed to deactivate employee"
+        error.response?.data?.message || "Failed to initiate offboarding workflow"
       );
     }
   };
@@ -408,7 +419,7 @@ export default function EmployeeDetailPage() {
                   }
                 >
                   <Ban className="w-4 h-4 mr-2" />
-                  Deactivate
+                  Initiate Termination/Offboarding
                 </Button>
                 <Button
                   onClick={() => {
@@ -1009,19 +1020,20 @@ export default function EmployeeDetailPage() {
         >
           <AlertDialogContent className="bg-slate-900 border-white/10 text-white">
             <AlertDialogHeader>
-              <AlertDialogTitle className="flex items-center gap-2 text-red-400">
+              <AlertDialogTitle className="flex items-center gap-2 text-orange-400">
                 <AlertTriangle className="w-5 h-5" />
-                Permanently Delete Employee
+                Initiate Termination/Offboarding Workflow
               </AlertDialogTitle>
               <AlertDialogDescription className="text-slate-300">
-                ⚠️ This action will PERMANENTLY DELETE {profile.fullName}'s account and all related data.
-                This cannot be undone. The deletion will trigger synchronization with other systems.
+                This will initiate the offboarding workflow for {profile.fullName}. A termination request will be created,
+                and a clearance checklist will be activated with required sign-offs from IT, Finance, Facilities, and Line Manager.
+                Final settlement will be processed after clearance completion.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="space-y-4 py-4">
               <div>
                 <Label className="text-slate-300 mb-2 block">
-                  Deactivation Reason *
+                  Termination Reason *
                 </Label>
                 <Select
                   value={deactivateData.reason ?? ""}
@@ -1069,7 +1081,7 @@ export default function EmployeeDetailPage() {
                     })
                   }
                   className="bg-white/5 border-white/10 text-white min-h-[100px]"
-                  placeholder="Enter deactivation details..."
+                  placeholder="Enter termination/offboarding details..."
                 />
               </div>
             </div>
@@ -1078,10 +1090,10 @@ export default function EmployeeDetailPage() {
                 Cancel
               </AlertDialogCancel>
               <AlertDialogAction
-                onClick={handleDeactivate}
-                className="bg-red-600 hover:bg-red-700"
+                onClick={handleInitiateOffboarding}
+                className="bg-orange-600 hover:bg-orange-700"
               >
-                Permanently Delete Employee
+                Initiate Offboarding Workflow
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

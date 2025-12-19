@@ -60,6 +60,8 @@ import {
   CreateTerminationRequestDto,
   UpdateTerminationStatusDto,
   UpdateClearanceChecklistDto,
+  RevokeAccessDto,
+  TriggerFinalSettlementDto,
   CreateReferralDto,
   CreateDocumentDto,
   UpdateDocumentDto,
@@ -938,8 +940,10 @@ export class RecruitmentController {
   @ApiResponse({ status: 200, description: 'Termination status updated successfully' })
   @ApiResponse({ status: 404, description: 'Termination request not found' })
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
-  async updateTerminationStatus(@Param('id') id: string, @Body() statusDto: UpdateTerminationStatusDto) {
-    return this.recruitmentService.updateTerminationStatus(id, statusDto.status);
+  async updateTerminationStatus(@Param('id') id: string, @Body() statusDto: UpdateTerminationStatusDto, @Req() req: express.Request) {
+    const user = (req as any).user;
+    const hrAdminId = (user?.sub || user?._id || user?.id)?.toString();
+    return this.recruitmentService.updateTerminationStatus(id, statusDto.status, hrAdminId);
   }
 
   @Get('terminations/:id/clearance')
@@ -962,6 +966,36 @@ export class RecruitmentController {
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
   async updateClearanceChecklist(@Param('id') id: string, @Body() updateDto: UpdateClearanceChecklistDto) {
     return this.recruitmentService.updateClearanceChecklist(id, updateDto);
+  }
+
+  @Post('terminations/:id/revoke-access')
+  @Roles(SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Revoke system access (OFF-007)', description: 'System Admin revokes all system and account access for terminated employee' })
+  @ApiParam({ name: 'id', description: 'Termination request ID' })
+  @ApiBody({ type: RevokeAccessDto })
+  @ApiResponse({ status: 200, description: 'System access revoked successfully' })
+  @ApiResponse({ status: 404, description: 'Termination request not found' })
+  @ApiResponse({ status: 400, description: 'Bad request - validation error' })
+  @ApiResponse({ status: 403, description: 'Forbidden - only System Admin can revoke access' })
+  async revokeSystemAccess(@Param('id') id: string, @Body() revokeDto: RevokeAccessDto, @Req() req: express.Request) {
+    const user = (req as any).user;
+    const systemAdminId = (user?.sub || user?._id || user?.id)?.toString();
+    return this.recruitmentService.revokeSystemAccess(id, systemAdminId, revokeDto);
+  }
+
+  @Post('terminations/:id/final-settlement')
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
+  @ApiOperation({ summary: 'Trigger final settlement (OFF-013)', description: 'HR Manager triggers final settlement including leave balance, benefits termination, and final payroll calculation' })
+  @ApiParam({ name: 'id', description: 'Termination request ID' })
+  @ApiBody({ type: TriggerFinalSettlementDto })
+  @ApiResponse({ status: 200, description: 'Final settlement processed successfully' })
+  @ApiResponse({ status: 404, description: 'Termination request not found' })
+  @ApiResponse({ status: 400, description: 'Bad request - validation error or termination not approved' })
+  @ApiResponse({ status: 403, description: 'Forbidden - only HR Manager/HR Admin can trigger settlement' })
+  async triggerFinalSettlement(@Param('id') id: string, @Body() settlementDto: TriggerFinalSettlementDto, @Req() req: express.Request) {
+    const user = (req as any).user;
+    const hrManagerId = (user?.sub || user?._id || user?.id)?.toString();
+    return this.recruitmentService.triggerFinalSettlement(id, hrManagerId, settlementDto);
   }
 
   // ==================== Supporting Endpoints ====================

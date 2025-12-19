@@ -607,12 +607,16 @@ export default function OffboardingDashboard() {
               <h2 className="text-xl text-white font-bold">
                 Termination Requests
               </h2>
-              <Link
-                href="/recruitment/offboarding"
-                className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1"
-              >
-                View All <ArrowUpRight className="h-4 w-4" />
-              </Link>
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search by employee name..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-400 focus:outline-none focus:border-slate-500/50 text-sm"
+                />
+              </div>
             </div>
             {filteredTerminations.length === 0 ? (
               <div className="text-center py-12 text-slate-400">
