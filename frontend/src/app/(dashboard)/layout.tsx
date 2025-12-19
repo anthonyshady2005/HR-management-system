@@ -11,6 +11,7 @@ import {
   Globe,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
+import ProtectedRoute from "@/components/protected-route";
 
 const NAV_LINKS = [
   { href: "/recruitment", label: "Recruitment", icon: Briefcase },
@@ -35,7 +36,18 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const isRecruitment = pathname?.startsWith("/recruitment");
 
+  // Define allowed roles for recruitment module (matching backend SystemRole enum values)
+  const recruitmentRoles = [
+    "HR Manager",
+    "HR Admin",
+    "HR Employee",
+    "Recruiter",
+    "department head",
+    "System Admin",
+  ];
+
   return (
+    <ProtectedRoute allowedRoles={recruitmentRoles}>
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-foreground relative">
       {/* Navbar */}
       <Navbar />
@@ -122,5 +134,6 @@ export default function DashboardLayout({
         </div>
       </div>
     </div>
+    </ProtectedRoute>
   );
 }
