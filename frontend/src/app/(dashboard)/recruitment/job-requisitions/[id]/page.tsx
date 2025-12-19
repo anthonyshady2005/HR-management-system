@@ -120,6 +120,18 @@ export default function JobRequisitionDetailPage() {
     }
   };
 
+  const getDepartmentLabel = (
+    department: JobRequisition["department"]
+  ): string => {
+    if (!department) {
+      return "N/A";
+    }
+    if (typeof department === "string") {
+      return department;
+    }
+    return department.name || department.code || department._id || "N/A";
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black flex items-center justify-center">
@@ -360,7 +372,9 @@ export default function JobRequisitionDetailPage() {
                 </div>
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Department</p>
-                  <p className="text-white">{requisition.department || "N/A"}</p>
+                  <p className="text-white">
+                    {getDepartmentLabel(requisition.department)}
+                  </p>
                 </div>
               </div>
             )}

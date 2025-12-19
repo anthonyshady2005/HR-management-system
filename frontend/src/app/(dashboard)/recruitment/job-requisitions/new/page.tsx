@@ -39,7 +39,7 @@ interface HrManager {
 interface Department {
   _id: string;
   name: string;
-  code: string;
+  code?: string;
 }
 
 export default function NewJobPostingPage() {

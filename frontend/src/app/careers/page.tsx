@@ -77,7 +77,11 @@ export default function CareersPage() {
   };
 
   const locations = Array.from(
-    new Set(jobs.map((job) => job.location).filter(Boolean))
+    new Set(
+      jobs
+        .map((job) => job.location)
+        .filter((location): location is string => Boolean(location))
+    )
   ).sort();
 
   const getDaysSincePosted = (date?: string) => {

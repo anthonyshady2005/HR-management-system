@@ -102,6 +102,15 @@ export interface Offer {
   role?: string;
   deadline?: string;
   createdAt?: string;
+  candidateSignedAt?: string;
+  candidateTypedName?: string;
+  candidateSigningIp?: string;
+  hrSignedAt?: string;
+  hrTypedName?: string;
+  hrSigningIp?: string;
+  managerSignedAt?: string;
+  managerTypedName?: string;
+  managerSigningIp?: string;
 }
 
 export interface Consent {
@@ -114,6 +123,37 @@ export interface Consent {
   userAgent?: string;
 }
 
+export interface EmployeeForDropdown {
+  _id: string;
+  displayText: string;
+  email: string;
+}
+
+// Onboarding Types
+export type OnboardingTaskStatus = "pending" | "in_progress" | "completed";
+
+export interface OnboardingTask {
+  _id?: string;
+  title?: string;
+  description?: string;
+  status: OnboardingTaskStatus;
+  deadline?: string;
+  completedAt?: string;
+  assignedTo?: any;
+}
+
+export interface Onboarding {
+  _id: string;
+  employeeId: any;
+  tasks: OnboardingTask[];
+  completed: boolean;
+  createdAt?: string;
+  completedAt?: string;
+  startDate?: string;
+  dueDate?: string;
+  notes?: string;
+}
+
 // Offboarding Types
 export type TerminationStatus = "pending" | "approved" | "rejected" | "completed";
 export type TerminationType = "resignation" | "termination" | "retirement" | "end_of_contract";
@@ -124,12 +164,14 @@ export interface TerminationRequest {
   type: TerminationType;
   status: TerminationStatus;
   reason?: string;
+  requestDate?: string;
   terminationDate?: string;
   lastWorkingDay?: string;
   noticePeriod?: number;
   createdAt?: string;
   updatedAt?: string;
   requestedBy?: any;
+  initiatedBy?: "employee" | "hr";
   approvedBy?: any;
   comments?: string;
 }
@@ -196,6 +238,7 @@ export interface DepartmentTurnover {
   terminations: number;
   turnoverRate: number;
   averageTenure: number;
+  trend?: "up" | "down" | "flat";
 }
 
 export interface TerminationReason {
@@ -360,25 +403,6 @@ export const recruitmentApi = {
     const response = await api.get(
       `/recruitment/interviews?${params.toString()}`
     );
-    return response.data;
-  },
-
-  sendCalendarInvite: async (interviewId: string): Promise<any> => {
-    const response = await api.post(`/recruitment/interviews/${interviewId}/send-calendar-invite`);
-    return response.data;
-  },
-
-  createInterview: async (data: {
-    applicationId: string;
-    stage: string;
-    scheduledDate: string;
-    method: string;
-    location?: string;
-    videoLink?: string;
-    panel?: string[];
-    notes?: string;
-  }): Promise<any> => {
-    const response = await api.post(`/recruitment/interviews`, data);
     return response.data;
   },
 
@@ -568,9 +592,11 @@ export const recruitmentApi = {
     stage: string;
     scheduledDate?: string;
     method?: string;
+    location?: string;
     panel?: string[];
     videoLink?: string;
     calendarEventId?: string;
+    notes?: string;
   }): Promise<Interview> => {
     const response = await api.post("/recruitment/interviews", data);
     return response.data;
@@ -596,6 +622,14 @@ export const recruitmentApi = {
 
   deleteInterview: async (id: string): Promise<void> => {
     await api.delete(`/recruitment/interviews/${id}`);
+  },
+
+  sendCalendarInvite: async (interviewId: string): Promise<any> => {
+    const response = await api.post(
+      `/recruitment/interviews/${interviewId}/send-calendar-invite`
+    );
+    return response.data;
+
   },
 
   submitAssessment: async (
@@ -626,7 +660,7 @@ export const recruitmentApi = {
     grossSalary: number;
     signingBonus?: number;
     benefits?: string[];
-    insurances?: string[];
+    insurances?: string;
     conditions?: string;
     content?: string;
     role?: string;
@@ -673,8 +707,96 @@ export const recruitmentApi = {
   },
 
   sendOfferToCandidate: async (id: string): Promise<any> => {
-    const response = await api.post(`/recruitment/offers/${id}/send-email`);
+    const response = await api.post(`/recruitment/offers/${id}/send`);
     return response.data;
+  },
+
+  generateOfferSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/offers/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
+    return response.data;
+  },
+
+  generateContractSigningLink: async (
+    id: string,
+    signerType: string,
+    expiresInDays?: number
+  ): Promise<{ token: string; signingUrl: string; expiresInDays: number }> => {
+    const response = await api.post(`/recruitment/contracts/${id}/generate-signing-link`, {
+      signerType,
+      expiresInDays: expiresInDays || 7,
+    });
+    return response.data;
+  },
+};
+
+export const onboardingApi = {
+  getOnboardings: async (filters?: {
+    status?: string;
+    department?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<Onboarding[]> => {
+    const response = await api.get("/recruitment/onboarding", {
+      params: filters,
+    });
+    return response.data;
+  },
+
+  getOnboardingById: async (id: string): Promise<Onboarding> => {
+    const response = await api.get(`/recruitment/onboarding/${id}`);
+    return response.data;
+  },
+
+  createOnboarding: async (data: Partial<Onboarding>): Promise<Onboarding> => {
+    const response = await api.post("/recruitment/onboarding", data);
+    return response.data;
+  },
+
+  updateOnboarding: async (
+    id: string,
+    data: Partial<Onboarding>
+  ): Promise<Onboarding> => {
+    const response = await api.patch(`/recruitment/onboarding/${id}`, data);
+    return response.data;
+  },
+};
+
+export const employeeApi = {
+  getEmployeesForDropdown: async (
+    status?: string
+  ): Promise<EmployeeForDropdown[]> => {
+    const normalizedStatus = status ? status.toUpperCase() : undefined;
+    const params = new URLSearchParams();
+    if (normalizedStatus) params.append("status", normalizedStatus);
+    params.append("limit", "1000");
+
+    const response = await api.get(
+      `/employee-profile/search?${params.toString()}`
+    );
+
+    const data = response.data?.data ?? response.data ?? [];
+    if (!Array.isArray(data)) {
+      return [];
+    }
+
+    return data.map((employee: any) => ({
+      _id: employee._id ?? employee.id ?? "",
+      displayText:
+        employee.fullName ||
+        [employee.firstName, employee.lastName].filter(Boolean).join(" ") ||
+        employee.workEmail ||
+        employee.personalEmail ||
+        employee.employeeNumber ||
+        "",
+      email: employee.workEmail || employee.personalEmail || "",
+    }));
   },
 };
 

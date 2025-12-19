@@ -73,6 +73,38 @@ export class Offer {
 
   @Prop()
   managerSignedAt?: Date;
+
+  // SIGNING TOKENS (for public signing links)
+  @Prop()
+  candidateSigningToken?: string;
+
+  @Prop()
+  candidateSigningTokenExpiresAt?: Date;
+
+  @Prop()
+  hrSigningToken?: string;
+
+  @Prop()
+  hrSigningTokenExpiresAt?: Date;
+
+  // SIGNATURE DETAILS
+  @Prop()
+  candidateTypedName?: string;
+
+  @Prop()
+  candidateSigningIp?: string;
+
+  @Prop()
+  hrTypedName?: string;
+
+  @Prop()
+  hrSigningIp?: string;
+
+  @Prop()
+  managerTypedName?: string;
+
+  @Prop()
+  managerSigningIp?: string;
 }
 
 export type OfferDocument = HydratedDocument<Offer>;

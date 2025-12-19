@@ -57,7 +57,7 @@ export default function JobRequisitionsPage() {
         (req) =>
           req.title?.toLowerCase().includes(query) ||
           req.requisitionId?.toLowerCase().includes(query) ||
-          req.department?.toLowerCase().includes(query) ||
+          getDepartmentLabel(req.department).toLowerCase().includes(query) ||
           req.location?.toLowerCase().includes(query)
       );
     }
@@ -67,7 +67,9 @@ export default function JobRequisitionsPage() {
     }
 
     if (filters.department) {
-      filtered = filtered.filter((req) => req.department === filters.department);
+      filtered = filtered.filter(
+        (req) => getDepartmentLabel(req.department) === filters.department
+      );
     }
 
     setFilteredRequisitions(filtered);
@@ -104,6 +106,18 @@ export default function JobRequisitionsPage() {
       default:
         return "bg-gray-500/20 text-gray-300 border-gray-500/30";
     }
+  };
+
+  const getDepartmentLabel = (
+    department: JobRequisition["department"]
+  ): string => {
+    if (!department) {
+      return "";
+    }
+    if (typeof department === "string") {
+      return department;
+    }
+    return department.name || department.code || department._id || "";
   };
 
   if (loading) {
@@ -244,7 +258,7 @@ export default function JobRequisitionsPage() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-slate-300">
-                            {req.department || "N/A"}
+                            {getDepartmentLabel(req.department) || "N/A"}
                           </span>
                         </td>
                         <td className="px-6 py-4">
