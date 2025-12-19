@@ -10,6 +10,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Authentication')
 @Controller('auth')
+@Public()
 export class AuthController {
     constructor(private authService: AuthService) {}
 
@@ -38,6 +39,7 @@ export class AuthController {
      * GET /auth/me - Get authenticated user's roles from JWT
      * Accessible to all authenticated users
      */
+    @Public()
     @Get('me')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
