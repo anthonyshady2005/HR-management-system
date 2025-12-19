@@ -52,8 +52,19 @@ export class RolesGuard implements CanActivate {
               ? [user.role]
               : [];
 
-        // Extract X-Current-Role header
-        const currentRole = request.headers['x-current-role'] as string | undefined;
+        // Extract X-Current-Role header (check both lowercase and original case)
+        const currentRole = (request.headers['x-current-role'] || request.headers['X-Current-Role']) as string | undefined;
+
+        // Debug logging for employee-profile endpoints
+        if (request.path?.includes('/employee-profile/') && !request.path?.includes('/me')) {
+            console.log('[RolesGuard] Employee profile access check:', {
+                path: request.path,
+                requiredRoles,
+                userRoles,
+                currentRole,
+                headerKeys: Object.keys(request.headers).filter(k => k.toLowerCase().includes('role') || k.toLowerCase().includes('current')),
+            });
+        }
 
         // If X-Current-Role is provided, validate it
         if (currentRole) {
@@ -65,16 +76,27 @@ export class RolesGuard implements CanActivate {
             }
 
             // Check if the current role satisfies the required roles (case-insensitive)
-            if (this.roleExistsIn(currentRole, requiredRoles)) {
+            const currentRoleMatches = this.roleExistsIn(currentRole, requiredRoles);
+            if (currentRoleMatches) {
+                if (request.path?.includes('/employee-profile/') && !request.path?.includes('/me')) {
+                    console.log('[RolesGuard] Access granted via currentRole');
+                }
                 return true;
             }
 
             // Fallback: If X-Current-Role doesn't match required roles,
             // check if user has ANY of the required roles in their assigned roles
-            if (this.hasAnyMatchingRole(userRoles, requiredRoles)) {
+            const hasRequiredRole = this.hasAnyMatchingRole(userRoles, requiredRoles);
+            if (hasRequiredRole) {
+                if (request.path?.includes('/employee-profile/') && !request.path?.includes('/me')) {
+                    console.log('[RolesGuard] Access granted via userRoles fallback');
+                }
                 return true;
             }
 
+            if (request.path?.includes('/employee-profile/') && !request.path?.includes('/me')) {
+                console.log('[RolesGuard] Access denied - no matching roles');
+            }
             throw new ForbiddenException(
                 `Current role "${currentRole}" does not have permission to access this resource. Required roles: ${requiredRoles.join(', ')}`
             );

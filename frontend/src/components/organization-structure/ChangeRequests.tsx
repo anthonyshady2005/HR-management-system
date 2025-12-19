@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/providers/auth-provider";
 import { api } from "@/lib/api";
 import {
+  canViewChangeRequestsTab,
   canSubmitChangeRequests,
   canApproveChangeRequests,
 } from "@/lib/organization-role-utils";
@@ -75,6 +76,15 @@ export interface ChangeRequest {
 
 export function ChangeRequests() {
   const { currentRole, user } = useAuth();
+
+  // Security: Early return if user doesn't have permission
+  if (!canViewChangeRequestsTab(currentRole)) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-400">Access denied. You do not have permission to view change requests.</p>
+      </div>
+    );
+  }
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
