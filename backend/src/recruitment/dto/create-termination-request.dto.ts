@@ -37,5 +37,5 @@ export class CreateTerminationRequestDto {
   terminationDate?: string;
 
   @IsMongoId()
-  contractId!: string;
+  offerId!: string;
 }

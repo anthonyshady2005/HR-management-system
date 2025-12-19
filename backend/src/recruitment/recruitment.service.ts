@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
 import {
   Injectable,
   NotFoundException,
@@ -75,7 +76,7 @@ import { TerminationStatus } from './enums/termination-status.enum';
 import { EmployeeProfileService } from '../employee-profile/employee-profile.service';
 import { Candidate, CandidateDocument } from '../employee-profile/models/candidate.schema';
 import { EmployeeProfile, EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
-import { EmployeeStatus, DeactivationReason } from '../employee-profile/enums/employee-profile.enums';
+import { EmployeeStatus, DeactivationReason, ContractType } from '../employee-profile/enums/employee-profile.enums';
 import { Logger } from '@nestjs/common';
 import { Consent, ConsentDocument } from './models/consent.schema';
 import { NotificationIntegrationService } from './integrations/notification-integration.service';
@@ -86,6 +87,7 @@ import { EmailIntegrationService } from './integrations/email-integration.servic
 import { PdfIntegrationService } from './integrations/pdf-integration.service';
 import { CalendarIntegrationService } from './integrations/calendar-integration.service';
 import { CreateConsentDto } from './dto/create-consent.dto';
+import { OnboardingTaskStatus } from './enums/onboarding-task-status.enum';
 
 /**
  * Recruitment Service
@@ -1874,13 +1876,33 @@ export class RecruitmentService {
 
     // If both candidate and HR have signed, create employee profile and initialize onboarding
     // Note: Manager signature is optional, so we create employee when candidate + HR sign
+    this.logger.log(
+      `Offer ${updated._id} signing status check - candidate: ${updated.candidateSignedAt ? 'SIGNED' : 'NOT SIGNED'}, HR: ${updated.hrSignedAt ? 'SIGNED' : 'NOT SIGNED'}, Manager: ${updated.managerSignedAt ? 'SIGNED' : 'NOT SIGNED'}`,
+    );
+    
     if (updated.candidateSignedAt && updated.hrSignedAt) {
+      this.logger.log(
+        `Both candidate and HR have signed offer ${updated._id}, triggering employee creation...`,
+      );
       try {
         await this.handleOfferSigned(updated);
+        this.logger.log(
+          `Successfully processed employee creation for offer ${updated._id}`,
+        );
       } catch (error) {
+        // Log detailed error but don't fail offer signing
         this.logger.error(
-          `Failed to process offer signed integration for offer ${updated._id}:`,
-          error instanceof Error ? error.stack : undefined,
+          `CRITICAL: Failed to process offer signed integration for offer ${updated._id}`,
+        );
+        this.logger.error(
+          `Error message: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        this.logger.error(
+          `Error stack: ${error instanceof Error ? error.stack : 'No stack trace available'}`,
+        );
+        // Log offer details for debugging
+        this.logger.error(
+          `Offer details - candidateId: ${updated.candidateId}, applicationId: ${updated.applicationId}`,
         );
         // Don't fail offer signing if integration fails - log and continue
       }
@@ -2078,11 +2100,16 @@ export class RecruitmentService {
    * This is called automatically when both candidate and HR sign the offer
    */
   private async handleOfferSigned(offer: OfferDocument): Promise<void> {
+    this.logger.log(`handleOfferSigned called for offer ${offer._id}`);
+    
     // Get candidate data
     const candidate = await this.candidateModel.findById(offer.candidateId).exec();
     if (!candidate) {
+      this.logger.error(`Candidate not found for offer ${offer._id}, candidateId: ${offer.candidateId}`);
       throw new NotFoundException('Candidate not found for offer');
     }
+
+    this.logger.log(`Found candidate ${candidate._id} (${candidate.fullName || candidate.firstName} ${candidate.lastName})`);
 
     // Check if profile already exists by ID
     const existingProfileDoc = await this.employeeProfileModel
@@ -2091,24 +2118,34 @@ export class RecruitmentService {
 
     if (existingProfileDoc) {
       this.logger.log(
-        `Employee profile already exists for candidate ${candidate._id}, skipping creation`,
+        `Employee profile already exists for candidate ${candidate._id}, skipping creation but ensuring onboarding exists`,
       );
       // Still create onboarding if it doesn't exist
       const existingOnboarding = await this.onboardingModel
         .findOne({ employeeId: candidate._id, offerId: offer._id })
         .exec();
       if (!existingOnboarding) {
+        this.logger.log(`Creating onboarding for existing employee ${candidate._id}`);
         await this.createOnboardingForNewEmployee(
           candidate._id.toString(),
           offer._id.toString(),
         );
+      } else {
+        this.logger.log(`Onboarding already exists for employee ${candidate._id} and offer ${offer._id}`);
       }
       return;
     }
+    
+    this.logger.log(`No existing employee profile found, creating new profile for candidate ${candidate._id}`);
 
     // Create employee profile from candidate
     const employeeNumber = `EMP-${Date.now()}`;
     const dateOfHire = offer.candidateSignedAt || new Date();
+    const fullName = candidate.fullName || `${candidate.firstName} ${candidate.lastName}`;
+    
+    // Generate temporary default password: fullName with no spaces, case sensitive
+    const tempPassword = fullName.replace(/\s+/g, ''); // Remove all spaces
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     // Create employee profile from candidate data
     const employeeProfile = new this.employeeProfileModel({
@@ -2118,9 +2155,10 @@ export class RecruitmentService {
       firstName: candidate.firstName,
       lastName: candidate.lastName,
       middleName: candidate.middleName,
-      fullName: candidate.fullName || `${candidate.firstName} ${candidate.lastName}`,
+      fullName: fullName,
       nationalId: candidate.nationalId,
       personalEmail: candidate.personalEmail,
+      password: hashedPassword, // Set temporary password based on full name (no spaces, case sensitive)
       workEmail: `${candidate.firstName}.${candidate.lastName}@company.com`.toLowerCase(),
       mobilePhone: candidate.mobilePhone,
       dateOfBirth: candidate.dateOfBirth,
@@ -2132,20 +2170,41 @@ export class RecruitmentService {
       status: EmployeeStatus.ACTIVE,
       statusEffectiveFrom: dateOfHire,
       contractStartDate: dateOfHire,
-      contractType: 'FULL_TIME', // Default, can be updated later
+      contractType: ContractType.FULL_TIME_CONTRACT, // Default, can be updated later
     });
 
-    await employeeProfile.save();
-
-    this.logger.log(
-      `Created employee profile ${employeeProfile._id} from candidate ${candidate._id}`,
-    );
+    try {
+      await employeeProfile.save();
+      this.logger.log(
+        `Successfully saved employee profile ${employeeProfile._id} from candidate ${candidate._id}`,
+      );
+      this.logger.log(
+        `Temporary default password set for employee ${fullName}: "${tempPassword}" (employee should change on first login)`,
+      );
+    } catch (saveError) {
+      this.logger.error(
+        `Failed to save employee profile for candidate ${candidate._id}: ${saveError instanceof Error ? saveError.message : String(saveError)}`,
+      );
+      this.logger.error(
+        `Save error details: ${saveError instanceof Error ? saveError.stack : 'No stack trace'}`,
+      );
+      throw saveError; // Re-throw to be caught by outer try-catch
+    }
 
     // Create onboarding automatically
-    await this.createOnboardingForNewEmployee(
-      employeeProfile._id.toString(),
-      offer._id.toString(),
-    );
+    this.logger.log(`Creating onboarding for new employee ${employeeProfile._id}`);
+    try {
+      await this.createOnboardingForNewEmployee(
+        employeeProfile._id.toString(),
+        offer._id.toString(),
+      );
+      this.logger.log(`Successfully created onboarding for employee ${employeeProfile._id}`);
+    } catch (onboardingError) {
+      this.logger.error(
+        `Failed to create onboarding for employee ${employeeProfile._id}: ${onboardingError instanceof Error ? onboardingError.message : String(onboardingError)}`,
+      );
+      // Don't throw here - employee profile was created successfully, onboarding can be retried
+    }
 
     // Process signing bonus if applicable
     if (offer.signingBonus && offer.signingBonus > 0) {
@@ -2557,6 +2616,94 @@ export class RecruitmentService {
   }
 
   /**
+   * Find all onboarding records with optional filters
+   * @param filters - Optional filters for status, department, date range
+   * @returns Array of onboarding documents with populated employee information
+   */
+  async findAllOnboardings(filters?: {
+    status?: string;
+    department?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<OnboardingDocument[]> {
+    const query: any = {};
+
+    // Filter by completion status
+    if (filters?.status) {
+      if (filters.status === 'completed') {
+        query.completed = true;
+      } else if (filters.status === 'pending') {
+        query.completed = false;
+      }
+    }
+
+    // Filter by date range (based on createdAt)
+    if (filters?.startDate || filters?.endDate) {
+      query.createdAt = {};
+      if (filters.startDate) {
+        query.createdAt.$gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        query.createdAt.$lte = new Date(filters.endDate);
+      }
+    }
+
+    // Get all onboarding records with populated employee and offer information
+    let onboardings = await this.onboardingModel
+      .find(query)
+      .populate('offerId', 'role grossSalary')
+      .populate({
+        path: 'employeeId',
+        select: 'firstName lastName fullName primaryDepartmentId workEmail employeeNumber',
+        populate: {
+          path: 'primaryDepartmentId',
+          select: 'name code',
+        },
+      })
+      .sort({ createdAt: -1 })
+      .exec();
+
+    // Filter by department if specified (after population)
+    if (filters?.department) {
+      onboardings = onboardings.filter((onboarding: any) => {
+        const employee = onboarding.employeeId;
+        if (!employee || !employee.primaryDepartmentId) return false;
+        const deptId = typeof employee.primaryDepartmentId === 'object'
+          ? employee.primaryDepartmentId._id?.toString()
+          : employee.primaryDepartmentId?.toString();
+        return deptId === filters.department;
+      });
+    }
+
+    return onboardings;
+  }
+
+  /**
+   * Find onboarding by ID
+   * @param id - Onboarding ID
+   * @returns Onboarding document or null
+   */
+  async findOnboardingById(id: string): Promise<OnboardingDocument | null> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid onboarding ID');
+    }
+
+    return await this.onboardingModel
+      .findById(id)
+      .populate('offerId', 'role grossSalary')
+      .populate({
+        path: 'employeeId',
+        select: 'firstName lastName fullName primaryDepartmentId workEmail employeeNumber',
+        populate: {
+          path: 'primaryDepartmentId',
+          select: 'name code',
+        },
+      })
+      .populate('tasks.documentId')
+      .exec();
+  }
+
+  /**
    * Find onboarding by employee ID
    * @param employeeId - Employee ID
    * @returns Onboarding document or null
@@ -2615,7 +2762,19 @@ export class RecruitmentService {
       task.notes = updateDto.notes;
     }
 
-    return await onboarding.save();
+    const updated = await onboarding.save();
+
+    // Check if all tasks are completed and mark onboarding as complete
+    if (updated.tasks.length > 0 && updated.tasks.every((t: any) => t.status === OnboardingTaskStatus.COMPLETED)) {
+      if (!updated.completed) {
+        updated.completed = true;
+        updated.completedAt = new Date();
+        await updated.save();
+        this.logger.log(`Onboarding ${id} marked as complete - all tasks completed`);
+      }
+    }
+
+    return updated;
   }
 
   /**
@@ -2670,7 +2829,7 @@ export class RecruitmentService {
    * Create termination request
    * @param createDto - Termination request creation data
    * @returns Created termination request document
-   * @throws BadRequestException if employee or contract ID is invalid
+   * @throws BadRequestException if employee or offer ID is invalid
    */
   async createTerminationRequest(
     createDto: CreateTerminationRequestDto,
@@ -2678,8 +2837,8 @@ export class RecruitmentService {
     if (!Types.ObjectId.isValid(createDto.employeeId)) {
       throw new BadRequestException('Invalid employee ID');
     }
-    if (!Types.ObjectId.isValid(createDto.contractId)) {
-      throw new BadRequestException('Invalid contract ID');
+    if (!Types.ObjectId.isValid(createDto.offerId)) {
+      throw new BadRequestException('Invalid offer ID');
     }
 
     const termination = new this.terminationRequestModel({
@@ -2691,7 +2850,7 @@ export class RecruitmentService {
       terminationDate: createDto.terminationDate
         ? new Date(createDto.terminationDate)
         : undefined,
-      contractId: new Types.ObjectId(createDto.contractId),
+      offerId: new Types.ObjectId(createDto.offerId),
       status: TerminationStatus.PENDING,
     });
 
@@ -2709,7 +2868,7 @@ export class RecruitmentService {
     const query = this.terminationRequestModel
       .find()
       .populate('employeeId')
-      .populate('contractId');
+      .populate('offerId');
 
     if (filters?.status) {
       query.where('status').equals(filters.status);
@@ -2740,7 +2899,7 @@ export class RecruitmentService {
     const termination = await this.terminationRequestModel
       .findById(id)
       .populate('employeeId')
-      .populate('contractId')
+      .populate('offerId')
       .exec();
 
     if (!termination) {

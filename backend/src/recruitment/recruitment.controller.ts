@@ -807,6 +807,28 @@ export class RecruitmentController {
 
   // ==================== Onboarding Endpoints ====================
 
+  @Get('onboarding')
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.HR_EMPLOYEE, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Get all onboarding records', description: 'Retrieves all onboarding records with optional filtering' })
+  @ApiQuery({ name: 'status', required: false, description: 'Filter by completion status (completed, pending)' })
+  @ApiQuery({ name: 'department', required: false, description: 'Filter by department ID' })
+  @ApiQuery({ name: 'startDate', required: false, description: 'Filter by start date (ISO string)' })
+  @ApiQuery({ name: 'endDate', required: false, description: 'Filter by end date (ISO string)' })
+  @ApiResponse({ status: 200, description: 'Onboarding records retrieved successfully' })
+  async getAllOnboardings(
+    @Query('status') status?: string,
+    @Query('department') department?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.recruitmentService.findAllOnboardings({
+      status,
+      department,
+      startDate,
+      endDate,
+    });
+  }
+
   @Post('onboarding')
   @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
   @HttpCode(HttpStatus.CREATED)
@@ -816,6 +838,16 @@ export class RecruitmentController {
   @ApiResponse({ status: 400, description: 'Bad request - validation error' })
   async createOnboarding(@Body() createDto: CreateOnboardingDto) {
     return this.recruitmentService.createOnboarding(createDto);
+  }
+
+  @Get('onboarding/by-id/:id')
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.HR_EMPLOYEE, SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Get onboarding by ID', description: 'Retrieves onboarding information by onboarding ID' })
+  @ApiParam({ name: 'id', description: 'Onboarding ID' })
+  @ApiResponse({ status: 200, description: 'Onboarding information retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Onboarding not found' })
+  async getOnboardingById(@Param('id') id: string) {
+    return this.recruitmentService.findOnboardingById(id);
   }
 
   @Get('onboarding/:employeeId')
