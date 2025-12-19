@@ -27,7 +27,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return super.canActivate(context);
   }
 
-  handleRequest(err: any, user: any, info: any) {
+  handleRequest(err: any, user: any, info: any, context?: ExecutionContext) {
     // Log error details in production for debugging
     if (err) {
       console.error('[JwtAuthGuard] Error:', err.message || err);
@@ -35,8 +35,22 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     }
     
     if (!user) {
-      // Log info for debugging (JWT might be missing, expired, or invalid)
-      console.error('[JwtAuthGuard] No user found. Info:', info?.message || 'Token validation failed');
+      // Log detailed info for debugging (JWT might be missing, expired, or invalid)
+      let requestDetails = {};
+      if (context) {
+        const request = context.switchToHttp().getRequest();
+        requestDetails = {
+          hasCookies: !!request?.cookies,
+          cookieKeys: request?.cookies ? Object.keys(request.cookies) : [],
+          hasAuthToken: !!request?.cookies?.auth_token,
+          hasAuthHeader: !!request?.headers?.authorization,
+        };
+      }
+      console.error('[JwtAuthGuard] No user found. Info:', {
+        message: info?.message || 'Token validation failed',
+        name: info?.name,
+        ...requestDetails,
+      });
       throw new UnauthorizedException('Invalid or expired token. Please login again.');
     }
     

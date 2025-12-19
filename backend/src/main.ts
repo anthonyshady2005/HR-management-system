@@ -43,6 +43,23 @@ async function bootstrap() {
 
   // Parse cookies for JWT strategy to read auth_token
   app.use(cookieParser());
+  
+  // Debug middleware to log cookies in production (remove after debugging)
+  if (process.env.NODE_ENV === 'production') {
+    app.use((req, res, next) => {
+      if (req.path === '/auth/select-role' || req.path === '/auth/me') {
+        console.log('[CookieDebug]', {
+          path: req.path,
+          hasCookies: !!req.cookies,
+          cookieKeys: req.cookies ? Object.keys(req.cookies) : [],
+          hasAuthToken: !!req.cookies?.auth_token,
+          origin: req.get('origin'),
+          referer: req.get('referer'),
+        });
+      }
+      next();
+    });
+  }
 
   const config = new DocumentBuilder()
     .setTitle('HR Platform API')

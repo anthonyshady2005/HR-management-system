@@ -10,7 +10,6 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Authentication')
 @Controller('auth')
-@Public()
 export class AuthController {
     constructor(private authService: AuthService) {}
 
@@ -81,10 +80,20 @@ export class AuthController {
         @Req() req: Request,
         @Res({ passthrough: true }) res: Response,
     ) {
+        // Debug logging
+        console.log('[selectRole] Request received:', {
+            hasCookies: !!req.cookies,
+            cookieKeys: req.cookies ? Object.keys(req.cookies) : [],
+            hasAuthToken: !!req.cookies?.auth_token,
+            hasUser: !!req.user,
+            body: dto,
+        });
+
         const user = req.user as any; // {_id, roles} from JwtStrategy
 
         // Defensive check: ensure user and roles exist
         if (!user) {
+            console.error('[selectRole] No user found in request');
             throw new UnauthorizedException('User not authenticated. Please login again.');
         }
 
