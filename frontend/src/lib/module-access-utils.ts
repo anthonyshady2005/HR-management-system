@@ -123,6 +123,7 @@ export function canAccessPerformance(role: string | null | undefined): boolean {
     normalizedRole === 'system admin' ||
     normalizedRole === 'hr manager' ||
     normalizedRole === 'hr admin' ||
+    normalizedRole === 'hr employee' ||
     normalizedRole === 'department head' ||
     normalizedRole === 'department employee'
   );
