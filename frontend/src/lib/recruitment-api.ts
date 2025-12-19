@@ -102,6 +102,15 @@ export interface Offer {
   role?: string;
   deadline?: string;
   createdAt?: string;
+  candidateSignedAt?: string;
+  candidateTypedName?: string;
+  candidateSigningIp?: string;
+  hrSignedAt?: string;
+  hrTypedName?: string;
+  hrSigningIp?: string;
+  managerSignedAt?: string;
+  managerTypedName?: string;
+  managerSigningIp?: string;
 }
 
 export interface Consent {
@@ -397,25 +406,6 @@ export const recruitmentApi = {
     return response.data;
   },
 
-  sendCalendarInvite: async (interviewId: string): Promise<any> => {
-    const response = await api.post(`/recruitment/interviews/${interviewId}/send-calendar-invite`);
-    return response.data;
-  },
-
-  createInterview: async (data: {
-    applicationId: string;
-    stage: string;
-    scheduledDate: string;
-    method: string;
-    location?: string;
-    videoLink?: string;
-    panel?: string[];
-    notes?: string;
-  }): Promise<any> => {
-    const response = await api.post(`/recruitment/interviews`, data);
-    return response.data;
-  },
-
   // Offers
   getOffers: async (filters?: {
     applicationId?: string;
@@ -602,9 +592,11 @@ export const recruitmentApi = {
     stage: string;
     scheduledDate?: string;
     method?: string;
+    location?: string;
     panel?: string[];
     videoLink?: string;
     calendarEventId?: string;
+    notes?: string;
   }): Promise<Interview> => {
     const response = await api.post("/recruitment/interviews", data);
     return response.data;
@@ -626,6 +618,10 @@ export const recruitmentApi = {
       status,
     });
     return response.data;
+  },
+
+  deleteInterview: async (id: string): Promise<void> => {
+    await api.delete(`/recruitment/interviews/${id}`);
   },
 
   sendCalendarInvite: async (interviewId: string): Promise<any> => {
