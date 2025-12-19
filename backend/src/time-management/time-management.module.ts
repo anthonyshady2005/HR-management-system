@@ -40,6 +40,11 @@ import {
   NotificationLog,
   NotificationLogSchema,
 } from './models/notification-log.schema';
+import {
+  ShiftExpiryNotification,
+  ShiftExpiryNotificationSchema,
+} from './models/shift-expiry-notification.schema';
+
 
 // External modules
 import { EmployeeProfileModule } from '../employee-profile/employee-profile.module';
@@ -65,6 +70,7 @@ import { OrganizationStructureModule } from '../organization-structure/organizat
         schema: AttendanceCorrectionRequestSchema,
       },
       { name: NotificationLog.name, schema: NotificationLogSchema },
+      { name: ShiftExpiryNotification.name, schema: ShiftExpiryNotificationSchema },
     ]),
 
     // External Modules (safe)
