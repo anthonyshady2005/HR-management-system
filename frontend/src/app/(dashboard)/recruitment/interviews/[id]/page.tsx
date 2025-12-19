@@ -178,10 +178,16 @@ export default function InterviewDetailPage() {
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Application ID</p>
                   <Link
-                    href={`/recruitment/applications/${interview.applicationId}`}
+                    href={`/recruitment/applications/${
+                      typeof interview.applicationId === 'object' && interview.applicationId?._id
+                        ? interview.applicationId._id
+                        : interview.applicationId
+                    }`}
                     className="text-blue-400 hover:text-blue-300"
                   >
-                    {interview.applicationId?.toString() || "N/A"}
+                    {typeof interview.applicationId === 'object' && interview.applicationId?._id
+                      ? interview.applicationId._id.toString()
+                      : interview.applicationId?.toString() || "N/A"}
                   </Link>
                 </div>
               </div>

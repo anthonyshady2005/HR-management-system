@@ -79,6 +79,8 @@ import {
   NotificationLog,
   updateLeaveRequest,
   fetchMyRequestById,
+  AuditTrailEntry,
+  fetchEmployeeAuditTrail,
 } from "@/app/leaves/services/leaves";
 
 const ALLOWED_ROLES = ["department employee"];
@@ -109,6 +111,11 @@ export default function EmployeeLeavesPage() {
   const [calculating, setCalculating] = useState(false);
   const [notifications, setNotifications] = useState<NotificationLog[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [auditTrail, setAuditTrail] = useState<AuditTrailEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditFromDate, setAuditFromDate] = useState("");
+  const [auditToDate, setAuditToDate] = useState("");
+  const [auditTypeFilter, setAuditTypeFilter] = useState("all");
 
   const [form, setForm] = useState({
     leaveTypeId: "",
@@ -317,10 +324,26 @@ export default function EmployeeLeavesPage() {
     }
   };
 
+  const loadAuditTrail = async () => {
+    if (!user?.id) return;
+    setAuditLoading(true);
+    setError(null);
+    try {
+      const data = await fetchEmployeeAuditTrail(user.id);
+      setAuditTrail(data || []);
+    } catch (err: any) {
+      setAuditTrail([]);
+      setError(err?.response?.data?.message || "Failed to load audit trail.");
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (status === "authenticated" && user?.id) {
       void loadData();
       void loadNotifications();
+      void loadAuditTrail();
     }
   }, [status, user?.id]);
 
@@ -428,6 +451,33 @@ export default function EmployeeLeavesPage() {
     }
     return base;
   }, [requests]);
+  const filteredAuditTrail = useMemo(() => {
+    if (!auditTrail.length) return [];
+    const typeFilter = (auditTypeFilter || "all").toLowerCase();
+    const from = auditFromDate ? new Date(auditFromDate) : null;
+    const to = auditToDate ? new Date(auditToDate) : null;
+    if (from) from.setHours(0, 0, 0, 0);
+    if (to) to.setHours(23, 59, 59, 999);
+
+    return auditTrail.filter((entry) => {
+      const entryType = (entry.adjustmentType || "").toString().toLowerCase();
+      if (typeFilter !== "all" && entryType !== typeFilter) return false;
+      if (!from && !to) return true;
+      if (!entry.createdAt) return false;
+      const createdAt = new Date(entry.createdAt);
+      if (Number.isNaN(createdAt.getTime())) return false;
+      if (from && createdAt < from) return false;
+      if (to && createdAt > to) return false;
+      return true;
+    });
+  }, [auditTrail, auditTypeFilter, auditFromDate, auditToDate]);
+  const filteredAuditAmountTotal = useMemo(() => {
+    if (!filteredAuditTrail.length) return 0;
+    return filteredAuditTrail.reduce((sum, entry) => {
+      const amount = typeof entry.amount === "number" ? entry.amount : Number(entry.amount);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+  }, [filteredAuditTrail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1549,6 +1599,130 @@ export default function EmployeeLeavesPage() {
                 )}
               </DialogContent>
             </Dialog>
+
+            <Card className="bg-white/5 border-white/10 text-white">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5" />
+                  Audit Trail
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-400">
+                    Showing only your adjustment history.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={loadAuditTrail}
+                    disabled={auditLoading}
+                  >
+                    {auditLoading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Refreshing...
+                      </span>
+                    ) : (
+                      "Refresh"
+                    )}
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">From</Label>
+                    <Input
+                      type="date"
+                      value={auditFromDate}
+                      onChange={(e) => setAuditFromDate(e.target.value)}
+                      className="bg-white/5 border-white/10 text-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">To</Label>
+                    <Input
+                      type="date"
+                      value={auditToDate}
+                      onChange={(e) => setAuditToDate(e.target.value)}
+                      className="bg-white/5 border-white/10 text-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Type</Label>
+                    <Select
+                      value={auditTypeFilter}
+                      onValueChange={(value) => setAuditTypeFilter(value)}
+                    >
+                      <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-900 text-white border-white/10">
+                        <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="add">Add</SelectItem>
+                        <SelectItem value="deduct">Deduct</SelectItem>
+                        <SelectItem value="encashment">Encashment</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                  <span>
+                    Showing {filteredAuditTrail.length} of {auditTrail.length}
+                  </span>
+                  <span>
+                    Total amount:{" "}
+                    {filteredAuditAmountTotal.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setAuditFromDate("");
+                      setAuditToDate("");
+                      setAuditTypeFilter("all");
+                    }}
+                    disabled={!auditFromDate && !auditToDate && auditTypeFilter === "all"}
+                  >
+                    Clear filters
+                  </Button>
+                </div>
+                {auditLoading ? (
+                  <div className="flex items-center gap-2 text-slate-300 text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading audit trail...
+                  </div>
+                ) : auditTrail.length === 0 ? (
+                  <p className="text-sm text-slate-400">No audit entries.</p>
+                ) : filteredAuditTrail.length ? (
+                  <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
+                    {filteredAuditTrail.map((entry) => (
+                      <div
+                        key={entry.adjustmentId}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
+                      >
+                        <div className="text-sm space-y-1">
+                          <p className="font-semibold">{entry.leaveType}</p>
+                          <p className="text-xs text-slate-300">
+                            {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
+                            {entry.createdAt ? formatDate(entry.createdAt) : ""}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">
+                    No audit entries match the current filters.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Notifications - Last */}
             <Card className="bg-white/5 border-white/10 text-white">

@@ -54,11 +54,17 @@ export default function ApplicationsPage() {
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (app) =>
+      filtered = filtered.filter((app) => {
+        const candidateName = typeof app.candidateId === 'object' && app.candidateId !== null
+          ? (app.candidateId as any).firstName && (app.candidateId as any).lastName
+            ? `${(app.candidateId as any).firstName} ${(app.candidateId as any).lastName}`.toLowerCase()
+            : (app.candidateId as any)._id?.toString().toLowerCase() || ''
+          : app.candidateId?.toString().toLowerCase() || '';
+        return (
           app._id.toLowerCase().includes(query) ||
-          app.candidateId?.toString().toLowerCase().includes(query)
-      );
+          candidateName.includes(query)
+        );
+      });
     }
 
     if (filters.status) {
@@ -70,9 +76,12 @@ export default function ApplicationsPage() {
     }
 
     if (filters.requisitionId) {
-      filtered = filtered.filter(
-        (app) => app.requisitionId?.toString() === filters.requisitionId
-      );
+      filtered = filtered.filter((app) => {
+        const reqId = typeof app.requisitionId === 'object' && app.requisitionId !== null
+          ? (app.requisitionId as any)._id?.toString() || ''
+          : app.requisitionId?.toString() || '';
+        return reqId === filters.requisitionId;
+      });
     }
 
     setFilteredApplications(filtered);
@@ -294,12 +303,18 @@ export default function ApplicationsPage() {
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-slate-300">
-                              {app.candidateId?.toString().slice(-8) || "N/A"}
+                              {typeof app.candidateId === 'object' && app.candidateId !== null
+                                ? (app.candidateId as any).firstName && (app.candidateId as any).lastName
+                                  ? `${(app.candidateId as any).firstName} ${(app.candidateId as any).lastName}`
+                                  : (app.candidateId as any)._id?.toString().slice(-8) || "N/A"
+                                : app.candidateId?.toString().slice(-8) || "N/A"}
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-slate-300">
-                              {app.requisitionId?.toString().slice(-8) || "N/A"}
+                              {typeof app.requisitionId === 'object' && app.requisitionId !== null
+                                ? (app.requisitionId as any).title || (app.requisitionId as any)._id?.toString().slice(-8) || "N/A"
+                                : app.requisitionId?.toString().slice(-8) || "N/A"}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -322,9 +337,13 @@ export default function ApplicationsPage() {
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-slate-300 text-sm">
-                              {app.assignedHr
-                                ? app.assignedHr.toString().slice(-8)
-                                : "Unassigned"}
+                              {typeof app.assignedHr === 'object' && app.assignedHr !== null
+                                ? (app.assignedHr as any).fullName || (app.assignedHr as any).firstName && (app.assignedHr as any).lastName
+                                  ? `${(app.assignedHr as any).firstName} ${(app.assignedHr as any).lastName}`
+                                  : (app.assignedHr as any)._id?.toString().slice(-8) || "Unassigned"
+                                : app.assignedHr
+                                  ? app.assignedHr.toString().slice(-8)
+                                  : "Unassigned"}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -399,11 +418,19 @@ export default function ApplicationsPage() {
                             </span>
                           </div>
                           <p className="text-xs text-slate-400">
-                            Candidate: {app.candidateId?.toString().slice(-8)}
+                            Candidate: {typeof app.candidateId === 'object' && app.candidateId !== null
+                              ? (app.candidateId as any).firstName && (app.candidateId as any).lastName
+                                ? `${(app.candidateId as any).firstName} ${(app.candidateId as any).lastName}`
+                                : (app.candidateId as any)._id?.toString().slice(-8) || "N/A"
+                              : app.candidateId?.toString().slice(-8) || "N/A"}
                           </p>
                           {app.assignedHr && (
                             <p className="text-xs text-slate-400 mt-1">
-                              HR: {app.assignedHr.toString().slice(-8)}
+                              HR: {typeof app.assignedHr === 'object' && app.assignedHr !== null
+                                ? (app.assignedHr as any).fullName || ((app.assignedHr as any).firstName && (app.assignedHr as any).lastName
+                                  ? `${(app.assignedHr as any).firstName} ${(app.assignedHr as any).lastName}`
+                                  : (app.assignedHr as any)._id?.toString().slice(-8) || "N/A")
+                                : app.assignedHr.toString().slice(-8)}
                             </p>
                           )}
                         </div>

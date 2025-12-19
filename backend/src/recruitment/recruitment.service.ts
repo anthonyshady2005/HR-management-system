@@ -759,7 +759,13 @@ export class RecruitmentService {
       application.assignedHr?.toString() || application.candidateId.toString(),
     );
 
-    return updated;
+    // Populate relations before returning
+    return await this.applicationModel
+      .findById(id)
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
+      .exec() as ApplicationDocument;
   }
 
   /**
@@ -797,6 +803,14 @@ export class RecruitmentService {
       application.assignedHr?.toString() || application.candidateId.toString(),
     );
 
+    // Populate relations before returning
+    const populated = await this.applicationModel
+      .findById(id)
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
+      .exec() as ApplicationDocument;
+
     // Send notification for status update
     if (oldStatus !== updateDto.status) {
       const candidate = await this.candidateModel.findById(application.candidateId).exec();
@@ -824,7 +838,7 @@ export class RecruitmentService {
       }
     }
 
-    return updated;
+    return populated;
   }
 
   /**
@@ -851,6 +865,9 @@ export class RecruitmentService {
         { assignedHr: new Types.ObjectId(hrId) },
         { new: true, runValidators: true },
       )
+      .populate('candidateId')
+      .populate('requisitionId')
+      .populate('assignedHr')
       .exec();
 
     if (!application) {
@@ -1170,6 +1187,26 @@ export class RecruitmentService {
       throw new NotFoundException(`Interview with ID ${id} not found`);
     }
     return interview;
+  }
+
+  /**
+   * Delete an interview
+   * @param id - Interview ID
+   * @returns void
+   * @throws NotFoundException if interview not found
+   */
+  async deleteInterview(id: string): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid interview ID');
+    }
+
+    const interview = await this.interviewModel.findByIdAndDelete(id).exec();
+
+    if (!interview) {
+      throw new NotFoundException(`Interview with ID ${id} not found`);
+    }
+
+    this.logger.log(`Interview ${id} deleted successfully`);
   }
 
   /**

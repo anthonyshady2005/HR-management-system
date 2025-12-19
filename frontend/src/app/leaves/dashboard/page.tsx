@@ -58,6 +58,7 @@ import {
     fetchLeaveTypes,
     flagIrregularRequest,
     overrideRequest,
+    runDailyResetAndAccrual,
     runAccrual,
     runStaleEscalations,
     updateLeaveCategory,
@@ -312,6 +313,9 @@ export default function LeavesDashboardPage() {
     const [auditEmployeeId, setAuditEmployeeId] = useState("");
     const [auditTrail, setAuditTrail] = useState<AuditTrailEntry[]>([]);
     const [auditLoading, setAuditLoading] = useState(false);
+    const [auditFromDate, setAuditFromDate] = useState("");
+    const [auditToDate, setAuditToDate] = useState("");
+    const [auditTypeFilter, setAuditTypeFilter] = useState("all");
 
     // Bulk selection state
     const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
@@ -335,6 +339,7 @@ export default function LeavesDashboardPage() {
     const [batchResult, setBatchResult] = useState<BatchEntitlementResponse | null>(null);
     const [batchSubmitting, setBatchSubmitting] = useState(false);
     const [runningEscalations, setRunningEscalations] = useState(false);
+    const [runningDailyReset, setRunningDailyReset] = useState(false);
 
 
     // Approval flow editing state
@@ -354,6 +359,33 @@ export default function LeavesDashboardPage() {
         () => requests.reduce((sum, req) => sum + getRequestDurationDays(req), 0),
         [requests],
     );
+    const filteredAuditTrail = useMemo(() => {
+        if (!auditTrail.length) return [];
+        const typeFilter = (auditTypeFilter || "all").toLowerCase();
+        const from = auditFromDate ? new Date(auditFromDate) : null;
+        const to = auditToDate ? new Date(auditToDate) : null;
+        if (from) from.setHours(0, 0, 0, 0);
+        if (to) to.setHours(23, 59, 59, 999);
+
+        return auditTrail.filter((entry) => {
+            const entryType = (entry.adjustmentType || "").toString().toLowerCase();
+            if (typeFilter !== "all" && entryType !== typeFilter) return false;
+            if (!from && !to) return true;
+            if (!entry.createdAt) return false;
+            const createdAt = new Date(entry.createdAt);
+            if (Number.isNaN(createdAt.getTime())) return false;
+            if (from && createdAt < from) return false;
+            if (to && createdAt > to) return false;
+            return true;
+        });
+    }, [auditTrail, auditTypeFilter, auditFromDate, auditToDate]);
+    const filteredAuditAmountTotal = useMemo(() => {
+        if (!filteredAuditTrail.length) return 0;
+        return filteredAuditTrail.reduce((sum, entry) => {
+            const amount = typeof entry.amount === "number" ? entry.amount : Number(entry.amount);
+            return sum + (Number.isFinite(amount) ? amount : 0);
+        }, 0);
+    }, [filteredAuditTrail]);
 
     useEffect(() => {
         if (status === "unauthenticated") {
@@ -1415,6 +1447,28 @@ export default function LeavesDashboardPage() {
         } finally {
             setSubmittingAdjustment(false);
             setSavingEntitlement(false);
+        }
+    };
+
+    const handleRunDailyReset = async () => {
+        if (!can("canRunOps")) return;
+        setActionMessage(null);
+        setError(null);
+        setRunningDailyReset(true);
+        try {
+            const res = await runDailyResetAndAccrual();
+            if (res?.message) {
+                setActionMessage(res.message);
+            } else if (typeof res?.reset === "number" || typeof res?.accrued === "number") {
+                setActionMessage(`Daily reset completed. Reset: ${res?.reset ?? 0}, accrued: ${res?.accrued ?? 0}.`);
+            } else {
+                setActionMessage("Daily reset and accrual triggered.");
+            }
+            await loadRequests();
+        } catch (err: any) {
+            setError(err?.response?.data?.message || "Operation failed.");
+        } finally {
+            setRunningDailyReset(false);
         }
     };
 
@@ -3530,26 +3584,93 @@ export default function LeavesDashboardPage() {
                                             {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Load audit"}
                                         </Button>
                                     </div>
-                                    {auditTrail.length ? (
-                                        <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
-                                            {auditTrail.map((entry) => (
-                                                <div
-                                                    key={entry.adjustmentId}
-                                                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
-                                                >
-                                                    <div className="text-sm space-y-1">
-                                                        <p className="font-semibold">{entry.leaveType}</p>
-                                                        <p className="text-xs text-slate-300">
-                                                            {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
-                                                        </p>
-                                                        <p className="text-xs text-slate-400">
-                              HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
-                                                            {entry.createdAt ? formatDate(entry.createdAt) : ""}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">From</Label>
+                                            <Input
+                                                type="date"
+                                                value={auditFromDate}
+                                                onChange={(e) => setAuditFromDate(e.target.value)}
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
                                         </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">To</Label>
+                                            <Input
+                                                type="date"
+                                                value={auditToDate}
+                                                onChange={(e) => setAuditToDate(e.target.value)}
+                                                className="bg-white/5 border-white/10 text-white"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Type</Label>
+                                            <Select
+                                                value={auditTypeFilter}
+                                                onValueChange={(value) => setAuditTypeFilter(value)}
+                                            >
+                                                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                                                    <SelectValue placeholder="All types" />
+                                                </SelectTrigger>
+                                                <SelectContent className="bg-slate-900 text-white border-white/10">
+                                                    <SelectItem value="all">All types</SelectItem>
+                                                    <SelectItem value="add">Add</SelectItem>
+                                                    <SelectItem value="deduct">Deduct</SelectItem>
+                                                    <SelectItem value="encashment">Encashment</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs text-slate-400">
+                                        <span>
+                                            Showing {filteredAuditTrail.length} of {auditTrail.length}
+                                        </span>
+                                        <span>
+                                            Total amount:{" "}
+                                            {filteredAuditAmountTotal.toLocaleString(undefined, {
+                                                maximumFractionDigits: 2,
+                                            })}
+                                        </span>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => {
+                                                setAuditFromDate("");
+                                                setAuditToDate("");
+                                                setAuditTypeFilter("all");
+                                            }}
+                                            disabled={!auditFromDate && !auditToDate && auditTypeFilter === "all"}
+                                        >
+                                            Clear filters
+                                        </Button>
+                                    </div>
+                                    {auditTrail.length ? (
+                                        filteredAuditTrail.length ? (
+                                            <div className="space-y-2 max-h-64 overflow-auto border border-white/10 rounded-xl p-3 bg-white/5">
+                                                {filteredAuditTrail.map((entry) => (
+                                                    <div
+                                                        key={entry.adjustmentId}
+                                                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border border-white/10 rounded-lg px-3 py-2"
+                                                    >
+                                                        <div className="text-sm space-y-1">
+                                                            <p className="font-semibold">{entry.leaveType}</p>
+                                                            <p className="text-xs text-slate-300">
+                                                                {entry.adjustmentType} {entry.amount} - {entry.reason || "No reason"}
+                                                            </p>
+                                                            <p className="text-xs text-slate-400">
+                                                                HR: {entry.hrUserName || entry.hrUserId || "N/A"} -{" "}
+                                                                {entry.createdAt ? formatDate(entry.createdAt) : ""}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-slate-400">
+                                                No audit entries match the current filters.
+                                            </p>
+                                        )
                                     ) : (
                                         <p className="text-xs text-slate-400">No audit entries loaded.</p>
                                     )}
@@ -4627,15 +4748,30 @@ export default function LeavesDashboardPage() {
                                 <Button
                                     size ="full"
                                     onClick={handleRunAccrual}
-                                    disabled={loading || runningEscalations}
+                                    disabled={loading || runningEscalations || runningDailyReset}
                                 >
                                     Run accrual
                                 </Button>
                                 <Button
                                     size="full"
+                                    variant="secondary"
+                                    onClick={handleRunDailyReset}
+                                    disabled={runningDailyReset || loading || runningEscalations}
+                                >
+                                    {runningDailyReset ? (
+                                        <span className="flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Running daily reset...
+                                        </span>
+                                    ) : (
+                                        "Run daily reset & accrual"
+                                    )}
+                                </Button>
+                                <Button
+                                    size="full"
                                     variant="outline"
                                     onClick={handleRunStaleEscalations}
-                                    disabled={runningEscalations || loading}
+                                    disabled={runningEscalations || loading || runningDailyReset}
                                 >
                                     {runningEscalations ? (
                                         <span className="flex items-center gap-2">
