@@ -15,6 +15,7 @@ import {
   Check
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 
 type PendingAssignment = {
   _id: string;
@@ -23,15 +24,15 @@ type PendingAssignment = {
     fullName: string;
     email: string;
     _id: string;
-  };
+  } | null;
   managerProfileId: {
     fullName: string;
     email: string;
     _id: string;
-  };
+  } | null;
   departmentId: {
     name: string;
-  };
+  } | null;
 };
 
 export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
@@ -58,7 +59,8 @@ export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
     try {
       await api.post(`/performance/reminder/${id}`);
       setRemindedIds(prev => new Set(prev).add(id));
-      // Simple success handling
+      toast.success(`Reminder sent to ${managerName}`);
+      // Clear the reminder state after 3 seconds
       setTimeout(() => {
         setRemindedIds(prev => {
           const next = new Set(prev);
@@ -66,9 +68,12 @@ export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
           return next;
         });
       }, 3000);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Failed to send reminder", err);
-      alert("Failed to send reminder. Please try again.");
+      const errorMessage = err && typeof err === 'object' && 'response' in err 
+        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message 
+        : 'Failed to send reminder';
+      toast.error(errorMessage || 'Failed to send reminder. Please try again.');
     }
   };
 
@@ -140,8 +145,8 @@ export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
                       </div>
                       <div>
                         <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-1">Employee</p>
-                        <p className="text-white font-semibold">{item.employeeProfileId.fullName}</p>
-                        <p className="text-xs text-slate-400">{item.departmentId.name}</p>
+                        <p className="text-white font-semibold">{item.employeeProfileId?.fullName ?? 'Unknown Employee'}</p>
+                        <p className="text-xs text-slate-400">{item.departmentId?.name ?? 'No Department'}</p>
                       </div>
                     </div>
 
@@ -152,7 +157,7 @@ export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
                       </div>
                       <div>
                         <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-1">Manager/Reviewer</p>
-                        <p className="text-white font-semibold">{item.managerProfileId.fullName}</p>
+                        <p className="text-white font-semibold">{item.managerProfileId?.fullName ?? 'Unknown Manager'}</p>
                         <p className="text-xs text-slate-400">Responsible for review</p>
                       </div>
                     </div>
@@ -174,11 +179,13 @@ export default function PendingAppraisals({ cycleId }: { cycleId: string }) {
                   {/* Actions */}
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => sendReminder(item._id, item.managerProfileId.fullName)}
-                      disabled={remindedIds.has(item._id)}
+                      onClick={() => sendReminder(item._id, item.managerProfileId?.fullName ?? 'Manager')}
+                      disabled={remindedIds.has(item._id) || !item.managerProfileId}
                       className={`px-6 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2 whitespace-nowrap ${remindedIds.has(item._id)
                           ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                          : 'bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 shadow-lg'
+                          : !item.managerProfileId
+                            ? 'bg-slate-500/20 text-slate-500 cursor-not-allowed'
+                            : 'bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 shadow-lg'
                         }`}
                     >
                       {remindedIds.has(item._id) ? (

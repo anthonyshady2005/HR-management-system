@@ -587,14 +587,23 @@ export class PerformanceService {
       .populate('employeeProfileId')
       .populate('managerProfileId');
 
-    if (!assignment) return;
+    if (!assignment) {
+      throw new BadRequestException('Assignment not found');
+    }
+
+    if (!assignment.managerProfileId) {
+      throw new BadRequestException('Manager not found for this assignment');
+    }
 
     // Send reminder to the manager, not the employee, as they are the reviewer
+    const employeeName = assignment.employeeProfileId?.['fullName'] || 'your direct report';
     await this.notificationLogModel.create({
       to: assignment.managerProfileId._id,
       type: 'APPRAISAL_REMINDER',
-      message: `Reminder: Please complete the performance appraisal for ${assignment.employeeProfileId['fullName'] || 'your direct report'}.`,
+      message: `Reminder: Please complete the performance appraisal for ${employeeName}.`,
     });
+
+    return { success: true, message: 'Reminder sent successfully' };
   }
 
   // REQ-OD-01: View final ratings, feedback, and development notes (Req 9)
