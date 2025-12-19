@@ -569,6 +569,7 @@ export class OrganizationStructureController {
     'Manager',
     'Employee',
     'department employee',
+    'Payroll Specialist',
   )
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all active departments (for dropdowns)' })
