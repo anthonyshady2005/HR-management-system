@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { attendanceService } from "../../services/attendance.service";
-import { AttendanceRecord } from "../../models";
+import {
+  attendanceService,
+  type AttendanceRecord,
+} from "../../services/attendance.service";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,8 +104,13 @@ export default function AttendanceDetailsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <p className="text-sm text-muted-foreground">Employee ID</p>
-              <p className="font-medium">{record.employeeId}</p>
+              <p className="text-sm text-muted-foreground">Employee</p>
+              <p className="font-medium">
+                {record.employeeId.firstName} {record.employeeId.lastName}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {record.employeeId.personalEmail || record.employeeId._id}
+              </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Total Work Time</p>

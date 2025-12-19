@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
 import { useRequireRole } from "@/hooks/use-require-role";
@@ -30,7 +30,7 @@ import type {
 
 const ALLOWED_ROLES = ["HR Employee", "HR Manager", "HR Admin", "System Admin"];
 
-export default function DirectoryPage() {
+function DirectoryPageContent() {
   const { status, roles } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -387,5 +387,25 @@ export default function DirectoryPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function DirectoryPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
+          <Navbar />
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+              <p className="text-slate-400">Loading...</p>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <DirectoryPageContent />
+    </Suspense>
   );
 }
