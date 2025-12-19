@@ -13,6 +13,7 @@ export function canAccessRecruitment(role: string | null | undefined): boolean {
     normalizedRole === 'system admin' ||
     normalizedRole === 'hr manager' ||
     normalizedRole === 'hr admin' ||
+    normalizedRole === "legal & policy admin"||
     normalizedRole === 'hr employee' ||
     normalizedRole === 'recruiter'
   );
