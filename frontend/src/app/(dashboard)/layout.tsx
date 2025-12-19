@@ -35,6 +35,9 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const isRecruitment = pathname?.startsWith("/recruitment");
+  const isOnboarding = pathname?.startsWith("/onboarding");
+  const isOffboarding = pathname?.startsWith("/offboarding");
+  const showSidebar = isRecruitment || isOnboarding || isOffboarding;
 
   // Define allowed roles for recruitment module (matching backend SystemRole enum values)
   const recruitmentRoles = [
@@ -46,8 +49,8 @@ export default function DashboardLayout({
     "System Admin",
   ];
 
-  return (
-    <ProtectedRoute allowedRoles={recruitmentRoles}>
+  // Only apply ProtectedRoute for recruitment/onboarding/offboarding routes
+  const content = (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-foreground relative">
       {/* Navbar */}
       <Navbar />
@@ -60,10 +63,11 @@ export default function DashboardLayout({
 
       {/* Main content with floating sidebar */}
       <div className="relative z-10 mx-auto w-full px-6 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-[18rem_1fr] xl:grid-cols-[20rem_1fr] gap-6">
-          {/* Floating Sidebar */}
-          <div className="rounded-2xl overflow-hidden">
-            <aside className="h-full w-full backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 md:p-6 text-slate-200 shadow-lg shadow-black/20">
+        <div className={showSidebar ? "grid grid-cols-1 md:grid-cols-[18rem_1fr] xl:grid-cols-[20rem_1fr] gap-6" : ""}>
+          {/* Floating Sidebar - Only show for recruitment/onboarding/offboarding */}
+          {showSidebar && (
+            <div className="rounded-2xl overflow-hidden">
+              <aside className="h-full w-full backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 md:p-6 text-slate-200 shadow-lg shadow-black/20">
               <div className="mb-6 flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center">
                   <Briefcase className="w-6 h-6 text-white" />
@@ -126,14 +130,22 @@ export default function DashboardLayout({
               </nav>
             </aside>
           </div>
+          )}
           
           {/* Main content area */}
-          <main className="min-w-0 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8 shadow-lg shadow-black/20">
+          <main className={showSidebar ? "min-w-0 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8 shadow-lg shadow-black/20" : "w-full"}>
             {children}
           </main>
         </div>
       </div>
     </div>
-    </ProtectedRoute>
   );
+
+  // Only wrap with ProtectedRoute for recruitment/onboarding/offboarding routes
+  if (showSidebar) {
+    return <ProtectedRoute allowedRoles={recruitmentRoles}>{content}</ProtectedRoute>;
+  }
+
+  // For admin and other routes, render without ProtectedRoute wrapper
+  return content;
 }
