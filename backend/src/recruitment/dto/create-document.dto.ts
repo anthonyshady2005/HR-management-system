@@ -21,8 +21,9 @@ export class CreateDocumentDto {
   @IsEnum(DocumentType)
   type!: DocumentType;
 
+  @IsOptional()
   @IsString()
-  filePath!: string;
+  filePath?: string; // Set from uploaded file, not from form data
 
   // Support for linking documents to applications, candidates, etc.
   @IsOptional()

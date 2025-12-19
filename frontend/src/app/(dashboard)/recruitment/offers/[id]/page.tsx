@@ -21,7 +21,9 @@ import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
 export default function OfferDetailPage() {
   const router = useRouter();
   const params = useParams();
-  const id = params.id as string;
+  const rawId = params.id;
+  // Ensure id is always a string
+  const id = typeof rawId === 'string' ? rawId : (rawId as any)?._id?.toString() || String(rawId);
   const [loading, setLoading] = useState(true);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "approval" | "signing">("overview");
@@ -30,12 +32,21 @@ export default function OfferDetailPage() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (id) {
+    if (id && id !== '[object Object]' && id.length > 0) {
       loadOffer();
+    } else {
+      console.error("Invalid offer ID:", id);
+      setLoading(false);
     }
   }, [id]);
 
   const loadOffer = async () => {
+    // Double-check the ID is valid
+    if (!id || id === '[object Object]' || id.length === 0) {
+      console.error("Invalid offer ID:", id);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const data = await recruitmentApi.getOfferById(id);

@@ -363,6 +363,25 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  sendCalendarInvite: async (interviewId: string): Promise<any> => {
+    const response = await api.post(`/recruitment/interviews/${interviewId}/send-calendar-invite`);
+    return response.data;
+  },
+
+  createInterview: async (data: {
+    applicationId: string;
+    stage: string;
+    scheduledDate: string;
+    method: string;
+    location?: string;
+    videoLink?: string;
+    panel?: string[];
+    notes?: string;
+  }): Promise<any> => {
+    const response = await api.post(`/recruitment/interviews`, data);
+    return response.data;
+  },
+
   // Offers
   getOffers: async (filters?: {
     applicationId?: string;
@@ -575,6 +594,10 @@ export const recruitmentApi = {
     return response.data;
   },
 
+  deleteInterview: async (id: string): Promise<void> => {
+    await api.delete(`/recruitment/interviews/${id}`);
+  },
+
   submitAssessment: async (
     interviewId: string,
     data: {
@@ -615,6 +638,10 @@ export const recruitmentApi = {
     }>;
   }): Promise<Offer> => {
     const response = await api.post("/recruitment/offers", data);
+    // Ensure _id is a string
+    if (response.data && response.data._id && typeof response.data._id !== 'string') {
+      response.data._id = response.data._id.toString();
+    }
     return response.data;
   },
 

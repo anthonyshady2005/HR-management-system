@@ -23,7 +23,7 @@ import express from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
-import * as path from 'path';
+import * as fs from 'fs';
 import {
   ApiTags,
   ApiOperation,
@@ -473,6 +473,17 @@ export class RecruitmentController {
     return this.recruitmentService.sendCalendarInvite(id);
   }
 
+  @Delete('interviews/:id')
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.RECRUITER, SystemRole.SYSTEM_ADMIN)
+  @ApiOperation({ summary: 'Delete interview', description: 'Deletes an interview by ID' })
+  @ApiParam({ name: 'id', description: 'Interview ID' })
+  @ApiResponse({ status: 200, description: 'Interview deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Interview not found' })
+  async deleteInterview(@Param('id') id: string) {
+    await this.recruitmentService.deleteInterview(id);
+    return { message: 'Interview deleted successfully' };
+  }
+
   // ==================== Offer Endpoints ====================
 
   @Post('offers')
@@ -841,7 +852,14 @@ export class RecruitmentController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: './uploads/documents',
+        destination: (req, file, cb) => {
+          const uploadDir = './uploads/documents';
+          // Ensure directory exists
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          cb(null, uploadDir);
+        },
         filename: (req, file, cb) => {
           const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = path.extname(file.originalname);
@@ -884,6 +902,10 @@ export class RecruitmentController {
     file: any, // Express.Multer.File - type will be available when multer types are installed
     @Body() documentDto: CreateDocumentDto,
   ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
     return this.recruitmentService.createDocument({
       ...documentDto,
       filePath: file.path,
