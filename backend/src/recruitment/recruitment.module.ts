@@ -23,6 +23,8 @@ import { NotificationLog, NotificationLogSchema } from '../time-management/model
 import { Department, DepartmentSchema } from '../organization-structure/models/department.schema';
 import { employeeSigningBonus, employeeSigningBonusSchema } from '../payroll-execution/models/EmployeeSigningBonus.schema';
 import { signingBonus, signingBonusSchema } from '../payroll-configuration/models/signingBonus.schema';
+import { EmployeeTerminationResignation, EmployeeTerminationResignationSchema } from '../payroll-execution/models/EmployeeTerminationResignation.schema';
+import { terminationAndResignationBenefits, terminationAndResignationBenefitsSchema } from '../payroll-configuration/models/terminationAndResignationBenefits';
 import { PayrollExecutionModule } from '../payroll-execution/payroll-execution.module';
 import { LeavesModule } from '../leaves/leaves.module';
 import { NotificationIntegrationService } from './integrations/notification-integration.service';
@@ -56,6 +58,8 @@ import { CalendarIntegrationService } from './integrations/calendar-integration.
       { name: NotificationLog.name, schema: NotificationLogSchema },
       { name: employeeSigningBonus.name, schema: employeeSigningBonusSchema },
       { name: signingBonus.name, schema: signingBonusSchema },
+      { name: EmployeeTerminationResignation.name, schema: EmployeeTerminationResignationSchema },
+      { name: terminationAndResignationBenefits.name, schema: terminationAndResignationBenefitsSchema },
     ]),
     EmployeeProfileModule,
     forwardRef(() => PayrollExecutionModule),
