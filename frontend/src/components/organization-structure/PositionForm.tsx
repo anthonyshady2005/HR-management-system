@@ -20,7 +20,7 @@ interface Position {
   code: string;
   title: string;
   description?: string;
-  departmentId: string | { _id: string; name: string; code: string };
+  departmentId: string | { _id: string; name: string; code?: string };
   reportsToPositionId?: string | { _id: string; title: string; code: string };
   payGradeId?: string | { _id: string; grade: string };
   isActive: boolean;

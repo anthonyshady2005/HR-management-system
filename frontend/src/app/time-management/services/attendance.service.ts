@@ -77,6 +77,7 @@ export interface AttendanceRecord {
   punches: Punch[];
   totalWorkMinutes: number;
   hasMissedPunch: boolean;
+  exceptionIds?: string[];
   status: string;
   finalisedForPayroll: boolean;
 }
@@ -404,5 +405,5 @@ async getUnfinalizedAttendance(params?: {
 
 /* ===================== EXPORT ===================== */
 
-export const attendanceOverviewService =
-  new AttendanceOverviewService();
+export const attendanceOverviewService = new AttendanceOverviewService();
+export const attendanceService = attendanceOverviewService;

@@ -220,10 +220,22 @@ export default function RecruitmentDashboard() {
     const query = searchQuery.toLowerCase();
     return (
       req.title?.toLowerCase().includes(query) ||
-      req.department?.toLowerCase().includes(query) ||
+      getDepartmentLabel(req.department).toLowerCase().includes(query) ||
       req.location?.toLowerCase().includes(query)
     );
   });
+
+  function getDepartmentLabel(
+    department: JobRequisition["department"]
+  ): string {
+    if (!department) {
+      return "";
+    }
+    if (typeof department === "string") {
+      return department;
+    }
+    return department.name || department.code || department._id || "";
+  }
 
   const getStageColor = (stage: string) => {
     switch (stage?.toLowerCase()) {
@@ -802,7 +814,7 @@ export default function RecruitmentDashboard() {
                         </div>
                       </td>
                         <td className="px-6 py-4 text-slate-300">
-                          {req.department || "N/A"}
+                          {getDepartmentLabel(req.department) || "N/A"}
                         </td>
                         <td className="px-6 py-4 text-slate-300">
                           {req.location || "N/A"}

@@ -41,7 +41,7 @@ interface Position {
   code: string;
   title: string;
   description?: string;
-  departmentId: string | { _id: string; name: string; code: string };
+  departmentId: string | { _id: string; name: string; code?: string };
   reportsToPositionId?: string | { _id: string; title: string; code: string };
   isActive: boolean;
   createdAt?: string;
@@ -59,6 +59,19 @@ export function PositionsManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
+
+  const isDepartmentRef = (
+    department: Position["departmentId"]
+  ): department is { _id: string; name: string; code?: string } => {
+    return Boolean(department) && typeof department === "object" && "_id" in department;
+  };
+
+  const getDepartmentId = (department: Position["departmentId"]): string => {
+    if (typeof department === "string") {
+      return department;
+    }
+    return department._id;
+  };
 
   useEffect(() => {
     fetchPositions();
@@ -117,9 +130,12 @@ export function PositionsManagement() {
     }
   };
 
-  const getDepartmentName = (dept: string | { _id: string; name: string; code: string }) => {
-    if (typeof dept === 'string') return dept;
-    return dept.name || dept.code || 'Unknown';
+  const getDepartmentName = (
+    dept: string | { _id: string; name: string; code?: string } | undefined
+  ) => {
+    if (!dept) return "-";
+    if (typeof dept === "string") return dept;
+    return dept.name || dept.code || "Unknown";
   };
 
   const getReportsToName = (pos: string | { _id: string; title: string; code: string } | undefined) => {
@@ -141,8 +157,7 @@ export function PositionsManagement() {
 
     const matchesDepartment =
       departmentFilter === "all" ||
-      (typeof pos.departmentId === 'object' && pos.departmentId._id === departmentFilter) ||
-      (typeof pos.departmentId === 'string' && pos.departmentId === departmentFilter);
+      getDepartmentId(pos.departmentId) === departmentFilter;
 
     return matchesSearch && matchesStatus && matchesDepartment;
   });
@@ -151,8 +166,9 @@ export function PositionsManagement() {
   const departments = Array.from(
     new Map(
       positions
-        .filter((pos) => typeof pos.departmentId === 'object')
-        .map((pos) => [pos.departmentId._id, pos.departmentId])
+        .map((pos) => pos.departmentId)
+        .filter(isDepartmentRef)
+        .map((dept) => [dept._id, dept])
     ).values()
   );
 

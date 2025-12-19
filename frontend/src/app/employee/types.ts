@@ -105,6 +105,16 @@ export interface Department {
   description?: string;
 }
 
+export interface PayGrade {
+  _id?: string;
+  grade?: string;
+  gradeName?: string;
+  gradeLevel?: number;
+  baseSalary?: number;
+  grossSalary?: number;
+  status?: string;
+}
+
 export interface AppraisalRecord {
   _id: string;
   totalScore?: number;
@@ -158,13 +168,14 @@ export interface EmployeeProfile {
   workType?: WorkType;
   status: EmployeeStatus;
   terminationDate?: Date | string;
+  jobTitle?: string;
   
   // Organizational Structure (can be ObjectId or populated)
   positionId?: string | Position;
   primaryPositionId?: string | Position; // Backend field name
   departmentId?: string | Department;
   primaryDepartmentId?: string | Department; // Backend field name
-  payGradeId?: string | PayGradeEnum; // Changed to use Enum string
+  payGradeId?: string | PayGradeEnum | PayGrade; // Changed to use Enum string
   supervisorPositionId?: string | Position;
   
   // Performance Data (populated)
