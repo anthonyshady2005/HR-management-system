@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -16,7 +16,7 @@ import {
 import { recruitmentApi } from "@/lib/recruitment-api";
 import { api } from "@/lib/api";
 
-export default function NewOfferPage() {
+function NewOfferPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const applicationId = searchParams.get("applicationId") || "";
@@ -497,6 +497,20 @@ export default function NewOfferPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function NewOfferPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black flex items-center justify-center">
+          <div className="text-white text-xl">Loading...</div>
+        </div>
+      }
+    >
+      <NewOfferPageContent />
+    </Suspense>
   );
 }
 
