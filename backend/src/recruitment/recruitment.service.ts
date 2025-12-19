@@ -2033,37 +2033,29 @@ export class RecruitmentService {
 
     const savedContract = await contract.save();
 
+    // NOTE: Contract model is being removed - offer signing now handles employee profile creation
     // Integration: If both parties have signed, create employee profile and initialize onboarding
-    if (savedContract.employeeSignedAt && savedContract.employerSignedAt) {
-      try {
-        await this.handleContractSigned(savedContract);
-      } catch (error) {
-        this.logger.error(
-          `Failed to process contract signed integration for contract ${savedContract._id}:`,
-          error instanceof Error ? error.stack : undefined,
-        );
-        // Don't fail contract creation if integration fails - log and continue
-      }
-    }
+    // if (savedContract.employeeSignedAt && savedContract.employerSignedAt) {
+    //   try {
+    //     await this.handleOfferSigned(savedContract);
+    //   } catch (error) {
+    //     this.logger.error(
+    //       `Failed to process contract signed integration for contract ${savedContract._id}:`,
+    //       error instanceof Error ? error.stack : undefined,
+    //     );
+    //     // Don't fail contract creation if integration fails - log and continue
+    //   }
+    // }
 
     return savedContract;
   }
 
   /**
-   * Handle contract signed - create employee profile and initialize onboarding
-   * This is called automatically when both parties sign the contract
+   * Handle offer signed - create employee profile and initialize onboarding
+   * This is called automatically when both candidate and HR sign the offer
    */
-  private async handleContractSigned(contract: ContractDocument): Promise<void> {
-    // Get offer and candidate data
-    const offer = await this.offerModel
-      .findById(contract.offerId)
-      .populate('candidateId')
-      .exec();
-
-    if (!offer) {
-      throw new NotFoundException('Offer not found for contract');
-    }
-
+  private async handleOfferSigned(offer: OfferDocument): Promise<void> {
+    // Get candidate data
     const candidate = await this.candidateModel.findById(offer.candidateId).exec();
     if (!candidate) {
       throw new NotFoundException('Candidate not found for offer');
@@ -2083,7 +2075,7 @@ export class RecruitmentService {
 
     // Create employee profile from candidate
     const employeeNumber = `EMP-${Date.now()}`;
-    const dateOfHire = contract.acceptanceDate || new Date();
+    const dateOfHire = offer.candidateSignedAt || new Date();
 
     // Check if profile already exists
     const existingProfileDoc = await this.employeeProfileModel
@@ -2131,15 +2123,15 @@ export class RecruitmentService {
     // Create onboarding automatically
     await this.createOnboardingForNewEmployee(
       employeeProfile._id.toString(),
-      contract._id.toString(),
+      offer._id.toString(),
     );
 
     // Process signing bonus if applicable
-    if (contract.signingBonus && contract.signingBonus > 0) {
+    if (offer.signingBonus && offer.signingBonus > 0) {
       await this.payrollIntegration.processSigningBonus(
         employeeProfile._id.toString(),
-        contract._id.toString(),
-        contract.signingBonus,
+        offer._id.toString(),
+        offer.signingBonus,
       );
     }
 
@@ -2159,7 +2151,7 @@ export class RecruitmentService {
    */
   private async createOnboardingForNewEmployee(
     employeeId: string,
-    contractId: string,
+    offerId: string,
   ): Promise<void> {
     // Default onboarding tasks based on department/role
     // These can be customized based on business rules
@@ -2196,10 +2188,10 @@ export class RecruitmentService {
       },
     ];
 
-    // Create onboarding directly with contractId (required field)
+    // Create onboarding directly with offerId (required field)
     const onboarding = new this.onboardingModel({
       employeeId: new Types.ObjectId(employeeId),
-      contractId: new Types.ObjectId(contractId),
+      offerId: new Types.ObjectId(offerId),
       tasks: defaultTasks.map((task) => ({
         name: task.name,
         department: task.department,
@@ -2413,18 +2405,19 @@ export class RecruitmentService {
       throw new NotFoundException(`Contract with ID ${id} not found`);
     }
 
+    // NOTE: Contract model is being removed - offer signing now handles employee profile creation
     // Integration: If both parties have signed, create employee profile and initialize onboarding
-    if (updated.employeeSignedAt && updated.employerSignedAt) {
-      try {
-        await this.handleContractSigned(updated);
-      } catch (error) {
-        this.logger.error(
-          `Failed to process contract signed integration for contract ${updated._id}:`,
-          error instanceof Error ? error.stack : undefined,
-        );
-        // Don't fail contract signing if integration fails - log and continue
-      }
-    }
+    // if (updated.employeeSignedAt && updated.employerSignedAt) {
+    //   try {
+    //     await this.handleOfferSigned(updated);
+    //   } catch (error) {
+    //     this.logger.error(
+    //       `Failed to process contract signed integration for contract ${updated._id}:`,
+    //       error instanceof Error ? error.stack : undefined,
+    //     );
+    //     // Don't fail contract signing if integration fails - log and continue
+    //   }
+    // }
 
     return updated;
   }

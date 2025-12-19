@@ -12,7 +12,6 @@ import {
   XCircle,
   Clock,
   User,
-  Mail,
   Loader,
   Copy,
   Link as LinkIcon,
@@ -41,7 +40,6 @@ export default function OfferDetailPage() {
   const [loading, setLoading] = useState(true);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "approval" | "signing">("overview");
-  const [sendingEmail, setSendingEmail] = useState(false);
   const [candidateSigningLink, setCandidateSigningLink] = useState<string | null>(null);
   const [generatingLink, setGeneratingLink] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -173,25 +171,10 @@ export default function OfferDetailPage() {
     }
   };
 
-  const handleSendEmail = async () => {
-    try {
-      setSendingEmail(true);
-      const result = await recruitmentApi.sendOfferToCandidate(id);
-      if (result.signingUrl) {
-        setCandidateSigningLink(result.signingUrl);
-      }
-      alert("Offer email sent successfully to candidate!");
-    } catch (error) {
-      console.error("Error sending email:", error);
-      alert("Failed to send email. Please try again.");
-    } finally {
-      setSendingEmail(false);
-    }
-  };
 
   // Determine if current user can sign and what type
   const getSigningEligibility = () => {
-    if (!currentUserProfile || !roles || !currentRole) {
+    if (!currentUserProfile || !roles || roles.length === 0) {
       return { canSign: false, signerType: null, role: null, fullName: null };
     }
 
@@ -328,18 +311,6 @@ export default function OfferDetailPage() {
                 >
                   <RefreshCw className="w-4 h-4" />
                   Refresh
-                </button>
-                <button
-                  onClick={handleSendEmail}
-                  disabled={sendingEmail}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
-                >
-                  {sendingEmail ? (
-                    <Loader className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Mail className="w-4 h-4" />
-                  )}
-                  {sendingEmail ? "Sending..." : "Send to Candidate"}
                 </button>
               </div>
             </div>
