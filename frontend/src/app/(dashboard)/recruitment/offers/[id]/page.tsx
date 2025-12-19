@@ -12,30 +12,93 @@ import {
   XCircle,
   Clock,
   User,
-  Download,
-  Mail,
   Loader,
+  Copy,
+  Link as LinkIcon,
+  RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 import { recruitmentApi, type Offer } from "@/lib/recruitment-api";
+import { api } from "@/lib/api";
+import { useAuth } from "@/providers/auth-provider";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function OfferDetailPage() {
   const router = useRouter();
   const params = useParams();
-  const id = params.id as string;
+  const { user, roles, currentRole } = useAuth();
+  const rawId = params.id;
+  // Ensure id is always a string
+  const id = typeof rawId === 'string' ? rawId : (rawId as any)?._id?.toString() || String(rawId);
   const [loading, setLoading] = useState(true);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "approval" | "signing">("overview");
-  const [generatingPDF, setGeneratingPDF] = useState(false);
-  const [sendingEmail, setSendingEmail] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [candidateSigningLink, setCandidateSigningLink] = useState<string | null>(null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
+  const [signingModalOpen, setSigningModalOpen] = useState(false);
+  const [signingType, setSigningType] = useState<'hr' | 'manager' | null>(null);
+  const [typedName, setTypedName] = useState("");
+  const [signing, setSigning] = useState(false);
+  const [nameError, setNameError] = useState("");
 
   useEffect(() => {
-    if (id) {
-      loadOffer();
+    // If the ID is "new", redirect to the new offer page
+    if (id === 'new') {
+      router.push('/recruitment/offers/new');
+      return;
     }
-  }, [id]);
+    if (id && id !== '[object Object]' && id.length > 0) {
+      loadOffer();
+    } else {
+      console.error("Invalid offer ID:", id);
+      setLoading(false);
+    }
+  }, [id, router]);
+
+  // Auto-refresh offer status every 5 seconds if candidate hasn't signed yet
+  useEffect(() => {
+    if (!offer || offer.candidateSignedAt) {
+      return; // Don't poll if already signed
+    }
+
+    const interval = setInterval(() => {
+      loadOffer();
+    }, 5000); // Refresh every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [offer?.candidateSignedAt, id]);
+
+  // Load current user profile
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      try {
+        const response = await api.get('/employee-profile/me');
+        setCurrentUserProfile(response.data);
+      } catch (error) {
+        console.error('Failed to load current user profile:', error);
+      }
+    };
+    if (user) {
+      loadCurrentUser();
+    }
+  }, [user]);
 
   const loadOffer = async () => {
+    // Double-check the ID is valid
+    if (!id || id === '[object Object]' || id.length === 0) {
+      console.error("Invalid offer ID:", id);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const data = await recruitmentApi.getOfferById(id);
@@ -60,34 +123,138 @@ export default function OfferDetailPage() {
     }
   };
 
-  const handleGeneratePDF = async () => {
+  const handleGenerateSigningLink = async () => {
     try {
-      setGeneratingPDF(true);
-      const result = await recruitmentApi.generateOfferPDF(id);
-      if (result.pdfUrl) {
-        setPdfUrl(result.pdfUrl);
-        // Open PDF in new tab
-        window.open(result.pdfUrl, '_blank');
+      setGeneratingLink(true);
+      // Try the direct endpoint first
+      try {
+        const result = await recruitmentApi.generateOfferSigningLink(id, 'candidate', 7);
+        setCandidateSigningLink(result.signingUrl);
+        alert("Signing link generated successfully!");
+      } catch (directError: any) {
+        // Fallback: Use sendOfferToCandidate which already generates the signing link
+        // This works even if the new endpoint isn't registered yet
+        console.warn("Direct endpoint failed, using sendOfferToCandidate as fallback:", directError);
+        const result = await recruitmentApi.sendOfferToCandidate(id);
+        if (result.signingUrl) {
+          setCandidateSigningLink(result.signingUrl);
+          alert("Signing link generated! (Note: Email was also sent to candidate. To avoid sending email, please restart your backend server to register the new endpoint.)");
+        } else {
+          throw new Error("No signing URL returned");
+        }
       }
-      alert("PDF generated successfully!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      alert("Failed to generate PDF. Please try again.");
+    } catch (error: any) {
+      console.error("Error generating link:", error);
+      alert(`Failed to generate link: ${error.response?.data?.message || error.message || "Please restart the backend server."}`);
     } finally {
-      setGeneratingPDF(false);
+      setGeneratingLink(false);
     }
   };
 
-  const handleSendEmail = async () => {
+  const handleCopyLink = async () => {
+    if (candidateSigningLink) {
+      try {
+        await navigator.clipboard.writeText(candidateSigningLink);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } catch (error) {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = candidateSigningLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      }
+    }
+  };
+
+
+  // Determine if current user can sign and what type
+  const getSigningEligibility = () => {
+    if (!currentUserProfile || !roles || roles.length === 0) {
+      return { canSign: false, signerType: null, role: null, fullName: null };
+    }
+
+    const userFullName = currentUserProfile.fullName || `${currentUserProfile.firstName || ''} ${currentUserProfile.lastName || ''}`.trim();
+    
+    // Use currentRole if available, otherwise check all roles
+    const activeRole = currentRole || roles[0];
+    
+    // Check if current role is an HR role (using actual backend enum values)
+    const hasHrRole = activeRole === 'HR Manager' || 
+      activeRole === 'HR Admin' || 
+      activeRole === 'HR Employee' ||
+      activeRole === 'System Admin';
+
+    // Check if current role is a Manager role (using actual backend enum values)
+    const hasManagerRole = activeRole === 'department head' ||
+      activeRole === 'System Admin';
+
+    // Determine which signature they can provide
+    if (hasHrRole && !offer?.hrSignedAt) {
+      return { 
+        canSign: true, 
+        signerType: 'hr' as const, 
+        role: 'HR',
+        fullName: userFullName
+      };
+    }
+    
+    if (hasManagerRole && !offer?.managerSignedAt) {
+      return { 
+        canSign: true, 
+        signerType: 'manager' as const, 
+        role: 'Manager',
+        fullName: userFullName
+      };
+    }
+
+    return { canSign: false, signerType: null, role: null, fullName: userFullName };
+  };
+
+  const handleOpenSigningModal = (type: 'hr' | 'manager') => {
+    setSigningType(type);
+    setTypedName("");
+    setNameError("");
+    setSigningModalOpen(true);
+  };
+
+  const handleSignOffer = async () => {
+    if (!signingType || !typedName.trim()) {
+      setNameError("Please enter your full name");
+      return;
+    }
+
+    const eligibility = getSigningEligibility();
+    if (!eligibility.fullName) {
+      setNameError("Unable to verify your identity. Please refresh the page.");
+      return;
+    }
+
+    // Case-sensitive name verification
+    if (typedName.trim() !== eligibility.fullName) {
+      setNameError(`Name must match exactly: "${eligibility.fullName}" (case-sensitive)`);
+      return;
+    }
+
     try {
-      setSendingEmail(true);
-      const result = await recruitmentApi.sendOfferToCandidate(id);
-      alert("Offer email sent successfully to candidate!");
-    } catch (error) {
-      console.error("Error sending email:", error);
-      alert("Failed to send email. Please try again.");
+      setSigning(true);
+      setNameError("");
+      await api.post(`/recruitment/offers/${id}/sign`, {
+        signerType: signingType,
+        typedName: typedName.trim(),
+      });
+      setSigningModalOpen(false);
+      setTypedName("");
+      alert('Offer signed successfully!');
+      loadOffer();
+    } catch (error: any) {
+      setNameError(error.response?.data?.message || "Failed to sign offer. Please try again.");
     } finally {
-      setSendingEmail(false);
+      setSigning(false);
     }
   };
 
@@ -137,28 +304,12 @@ export default function OfferDetailPage() {
               </div>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={handleGeneratePDF}
-                  disabled={generatingPDF}
-                  className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
+                  onClick={loadOffer}
+                  className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm"
+                  title="Refresh offer status"
                 >
-                  {generatingPDF ? (
-                    <Loader className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  {generatingPDF ? "Generating..." : "Generate PDF"}
-                </button>
-                <button
-                  onClick={handleSendEmail}
-                  disabled={sendingEmail}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 transition-all flex items-center gap-2 text-sm disabled:opacity-50"
-                >
-                  {sendingEmail ? (
-                    <Loader className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Mail className="w-4 h-4" />
-                  )}
-                  {sendingEmail ? "Sending..." : "Send to Candidate"}
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh
                 </button>
               </div>
             </div>
@@ -212,15 +363,25 @@ export default function OfferDetailPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Candidate ID</p>
-                  <p className="text-white">{offer.candidateId?.toString() || "N/A"}</p>
+                  <p className="text-white">
+                    {typeof offer.candidateId === 'object' && offer.candidateId?._id
+                      ? offer.candidateId._id.toString()
+                      : offer.candidateId?.toString() || "N/A"}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Application ID</p>
                   <Link
-                    href={`/recruitment/applications/${offer.applicationId}`}
+                    href={`/recruitment/applications/${
+                      typeof offer.applicationId === 'object' && offer.applicationId?._id
+                        ? offer.applicationId._id
+                        : offer.applicationId
+                    }`}
                     className="text-blue-400 hover:text-blue-300"
                   >
-                    {offer.applicationId?.toString() || "N/A"}
+                    {typeof offer.applicationId === 'object' && offer.applicationId?._id
+                      ? offer.applicationId._id.toString()
+                      : offer.applicationId?.toString() || "N/A"}
                   </Link>
                 </div>
                 <div>
@@ -270,20 +431,86 @@ export default function OfferDetailPage() {
                   </div>
                 </div>
               )}
-              {pdfUrl && (
-                <div className="mt-6 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
-                  <p className="text-green-400 text-sm mb-2">PDF Generated</p>
-                  <a
-                    href={pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Offer PDF
-                  </a>
+
+              {/* Candidate Signing Link Section */}
+              <div className="mt-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <LinkIcon className="w-5 h-5 text-blue-400" />
+                    <p className="text-blue-400 font-semibold">Candidate Signing Link</p>
+                  </div>
+                  {!candidateSigningLink && (
+                    <button
+                      onClick={handleGenerateSigningLink}
+                      disabled={generatingLink}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      {generatingLink ? (
+                        <>
+                          <Loader className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="w-4 h-4" />
+                          Generate Link
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-              )}
+                {candidateSigningLink ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 p-2 bg-white/5 rounded border border-white/10">
+                      <input
+                        type="text"
+                        value={candidateSigningLink}
+                        readOnly
+                        className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                      />
+                      <button
+                        onClick={handleCopyLink}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                        title="Copy link"
+                      >
+                        {linkCopied ? (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={candidateSigningLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+                      >
+                        <LinkIcon className="w-4 h-4" />
+                        Open in new tab
+                      </a>
+                      <span className="text-slate-400 text-xs">•</span>
+                      <span className="text-slate-400 text-xs">Link expires in 7 days</span>
+                    </div>
+                    {!offer.candidateSignedAt && (
+                      <p className="text-yellow-400 text-xs mt-2">
+                        ⚠️ Share this link with the candidate to sign the offer
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">
+                    Generate a signing link to share with the candidate
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -299,13 +526,297 @@ export default function OfferDetailPage() {
           {activeTab === "signing" && (
             <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
               <h2 className="text-xl text-white mb-6">Signing Status</h2>
-              <p className="text-slate-400">
-                Signature management coming soon
-              </p>
+              
+              <div className="space-y-6">
+                {/* Candidate Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">Candidate Signature</h3>
+                    {offer.candidateSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.candidateSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.candidateSignedAt).toLocaleString()}
+                      </p>
+                      {offer.candidateTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.candidateTypedName}
+                        </p>
+                      )}
+                      {offer.candidateSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.candidateSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.candidateSignedAt && !candidateSigningLink && (
+                    <button
+                      onClick={handleGenerateSigningLink}
+                      disabled={generatingLink}
+                      className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors flex items-center gap-2"
+                    >
+                      {generatingLink ? (
+                        <>
+                          <Loader className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <LinkIcon className="w-4 h-4" />
+                          Generate Signing Link
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {candidateSigningLink && !offer.candidateSignedAt && (
+                    <div className="mt-2 space-y-2">
+                      <div className="flex items-center gap-2 p-2 bg-white/5 rounded border border-white/10">
+                        <input
+                          type="text"
+                          value={candidateSigningLink}
+                          readOnly
+                          className="flex-1 bg-transparent text-white text-sm focus:outline-none"
+                        />
+                        <button
+                          onClick={handleCopyLink}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors flex items-center gap-2"
+                          title="Copy link"
+                        >
+                          {linkCopied ? (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              Copied!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              Copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <a
+                        href={candidateSigningLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+                      >
+                        <LinkIcon className="w-4 h-4" />
+                        Open in new tab
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* HR Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">HR Signature</h3>
+                    {offer.hrSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.hrSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.hrSignedAt).toLocaleString()}
+                      </p>
+                      {offer.hrTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.hrTypedName}
+                        </p>
+                      )}
+                      {offer.hrSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.hrSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.hrSignedAt && (() => {
+                    const eligibility = getSigningEligibility();
+                    const canSignAsHr = eligibility.canSign && eligibility.signerType === 'hr';
+                    return canSignAsHr ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-sm text-slate-400 mb-1">Current User</p>
+                          <p className="text-white font-semibold">{eligibility.fullName}</p>
+                          <p className="text-xs text-slate-400 mt-1">Role: {eligibility.role}</p>
+                        </div>
+                        <button
+                          onClick={() => handleOpenSigningModal('hr')}
+                          className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          Sign as HR
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-400 text-sm">
+                        {!currentUserProfile ? "Loading user information..." : "You are not eligible to sign as HR"}
+                      </p>
+                    );
+                  })()}
+                </div>
+
+                {/* Manager Signature */}
+                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">Manager Signature</h3>
+                    {offer.managerSignedAt ? (
+                      <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">
+                        Pending
+                      </span>
+                    )}
+                  </div>
+                  {offer.managerSignedAt && (
+                    <div className="space-y-2 text-sm">
+                      <p className="text-slate-400">
+                        Signed: {new Date(offer.managerSignedAt).toLocaleString()}
+                      </p>
+                      {offer.managerTypedName && (
+                        <p className="text-slate-300">
+                          Name: {offer.managerTypedName}
+                        </p>
+                      )}
+                      {offer.managerSigningIp && (
+                        <p className="text-slate-400 text-xs">
+                          IP: {offer.managerSigningIp}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!offer.managerSignedAt && (() => {
+                    const eligibility = getSigningEligibility();
+                    const canSignAsManager = eligibility.canSign && eligibility.signerType === 'manager';
+                    return canSignAsManager ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-sm text-slate-400 mb-1">Current User</p>
+                          <p className="text-white font-semibold">{eligibility.fullName}</p>
+                          <p className="text-xs text-slate-400 mt-1">Role: {eligibility.role}</p>
+                        </div>
+                        <button
+                          onClick={() => handleOpenSigningModal('manager')}
+                          className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          Sign as Manager
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-400 text-sm">
+                        {!currentUserProfile ? "Loading user information..." : "You are not eligible to sign as Manager"}
+                      </p>
+                    );
+                  })()}
+                </div>
+              </div>
             </div>
           )}
         </main>
       </div>
+
+      {/* Signing Modal */}
+      <Dialog open={signingModalOpen} onOpenChange={setSigningModalOpen}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              Sign Offer as {signingType === 'hr' ? 'HR' : 'Manager'}
+            </DialogTitle>
+            <DialogDescription className="text-slate-300">
+              Please verify your identity by typing your full name exactly as it appears in your profile.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+              <p className="text-sm text-slate-400 mb-1">Your Profile Name</p>
+              <p className="text-white font-semibold">
+                {getSigningEligibility().fullName || "Loading..."}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 mb-2 text-sm">
+                Type your full name (case-sensitive):
+              </label>
+              <input
+                type="text"
+                value={typedName}
+                onChange={(e) => {
+                  setTypedName(e.target.value);
+                  setNameError("");
+                }}
+                placeholder="Enter your full name exactly as shown above"
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={signing}
+                autoFocus
+              />
+              {nameError && (
+                <p className="text-red-400 text-sm mt-2 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  {nameError}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              onClick={() => {
+                setSigningModalOpen(false);
+                setTypedName("");
+                setNameError("");
+              }}
+              disabled={signing}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSignOffer}
+              disabled={signing || !typedName.trim()}
+              className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg text-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {signing ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Signing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  Sign
+                </>
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

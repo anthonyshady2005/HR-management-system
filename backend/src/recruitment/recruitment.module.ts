@@ -20,6 +20,7 @@ import { EmployeeProfileModule } from '../employee-profile/employee-profile.modu
 import { Candidate, CandidateSchema } from '../employee-profile/models/candidate.schema';
 import { EmployeeProfile, EmployeeProfileSchema } from '../employee-profile/models/employee-profile.schema';
 import { NotificationLog, NotificationLogSchema } from '../time-management/models/notification-log.schema';
+import { Department, DepartmentSchema } from '../organization-structure/models/department.schema';
 import { employeeSigningBonus, employeeSigningBonusSchema } from '../payroll-execution/models/EmployeeSigningBonus.schema';
 import { signingBonus, signingBonusSchema } from '../payroll-configuration/models/signingBonus.schema';
 import { PayrollExecutionModule } from '../payroll-execution/payroll-execution.module';
@@ -51,6 +52,7 @@ import { CalendarIntegrationService } from './integrations/calendar-integration.
       { name: Consent.name, schema: ConsentSchema },
       { name: Candidate.name, schema: CandidateSchema },
       { name: EmployeeProfile.name, schema: EmployeeProfileSchema },
+      { name: Department.name, schema: DepartmentSchema },
       { name: NotificationLog.name, schema: NotificationLogSchema },
       { name: employeeSigningBonus.name, schema: employeeSigningBonusSchema },
       { name: signingBonus.name, schema: signingBonusSchema },

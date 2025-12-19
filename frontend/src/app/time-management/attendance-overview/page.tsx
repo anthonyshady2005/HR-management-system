@@ -71,7 +71,7 @@ export default function AttendanceManagementPage() {
 
   const reviewerId = useMemo(() => {
     if (!user) {
-      console.log("❌ No user found");
+      console.log(" No user found");
       return null;
     }
 

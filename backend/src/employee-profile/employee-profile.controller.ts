@@ -306,6 +306,24 @@ export class EmployeeProfileController {
   }
 
   /**
+   * Get list of HR Managers for dropdown selection.
+   * Used in recruitment module for selecting hiring managers.
+   * NOTE: Must be BEFORE /:employeeId routes to avoid path matching conflicts
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    SystemRole.HR_ADMIN,
+    SystemRole.HR_MANAGER,
+    SystemRole.HR_EMPLOYEE,
+    SystemRole.RECRUITER,
+    SystemRole.SYSTEM_ADMIN,
+  )
+  @Get('hr-managers/list')
+  getHrManagersList() {
+    return this.profileService.getHrManagersList();
+  }
+
+  /**
    * Get employee profile by ID (US-EP-04).
    * Full access for HR Admin.
    */

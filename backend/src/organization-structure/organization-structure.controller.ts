@@ -569,6 +569,7 @@ export class OrganizationStructureController {
     'Manager',
     'Employee',
     'department employee',
+    'Payroll Specialist',
   )
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all active departments (for dropdowns)' })
@@ -587,7 +588,7 @@ export class OrganizationStructureController {
   }
 
   @Get('departments/all')
-  @Roles('System Admin')
+  @Roles('System Admin', 'Payroll Specialist', 'Payroll Manager', 'Finance Staff' ,'Hr Admin', 'Hr Manager')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all departments (System Admin only)' })
   @ApiResponse({
@@ -600,7 +601,7 @@ export class OrganizationStructureController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden - requires System Admin role',
+    description: 'Forbidden - requires System Admin, Payroll Specialist, Payroll Manager, Finance Staff, Hr Admin, Hr Manager role',
   })
   async getAllDepartments() {
     return await this.organizationStructureService.getAllDepartments();

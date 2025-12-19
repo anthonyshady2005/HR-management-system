@@ -4,7 +4,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Users, UserCircle, Mail, Building2, Briefcase } from "lucide-react";
+import { ChevronDown, LogOut, Users, UserCircle, Mail, Building2, Briefcase, Home } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import {
   DropdownMenu,
@@ -44,12 +44,22 @@ export function Navbar() {
               <Users className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-sm text-slate-300">HR Hub</p>
+              <p className="text-sm text-slate-300">Edara HRMS</p>
               <p className="text-xs text-slate-500">Logged in as {user.fullName || user.email}</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
+            <Link href="/">
+              <Button
+                variant="outline"
+                className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:border-white/30 backdrop-blur-sm rounded-lg"
+              >
+                <Home className="w-4 h-4 mr-2" />
+                Home
+              </Button>
+            </Link>
+            
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button

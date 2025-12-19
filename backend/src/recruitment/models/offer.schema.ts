@@ -13,7 +13,7 @@ export class Offer {
   @Prop({ type: Types.ObjectId, ref: 'Candidate', required: true })
   candidateId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User' })
+  @Prop({ type: Types.ObjectId, ref: 'EmployeeProfile' })
   hrEmployeeId: Types.ObjectId;
 
   // COMPENSATION
@@ -49,7 +49,7 @@ export class Offer {
 
   @Prop([
     {
-      employeeId: { type: Types.ObjectId, ref: 'User' },
+      employeeId: { type: Types.ObjectId, ref: 'EmployeeProfile' },
       role: String,
       status: { type: String, enum: ApprovalStatus },
       actionDate: Date,
@@ -73,6 +73,38 @@ export class Offer {
 
   @Prop()
   managerSignedAt?: Date;
+
+  // SIGNING TOKENS (for public signing links)
+  @Prop()
+  candidateSigningToken?: string;
+
+  @Prop()
+  candidateSigningTokenExpiresAt?: Date;
+
+  @Prop()
+  hrSigningToken?: string;
+
+  @Prop()
+  hrSigningTokenExpiresAt?: Date;
+
+  // SIGNATURE DETAILS
+  @Prop()
+  candidateTypedName?: string;
+
+  @Prop()
+  candidateSigningIp?: string;
+
+  @Prop()
+  hrTypedName?: string;
+
+  @Prop()
+  hrSigningIp?: string;
+
+  @Prop()
+  managerTypedName?: string;
+
+  @Prop()
+  managerSigningIp?: string;
 }
 
 export type OfferDocument = HydratedDocument<Offer>;

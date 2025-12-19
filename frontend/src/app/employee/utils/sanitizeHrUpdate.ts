@@ -56,7 +56,7 @@ export function sanitizeHrUpdatePayload(payload: any): any {
 
     // Convert populated objects to IDs
     if (typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Date)) {
-      if (value._id) {
+      if ("_id" in value && value._id) {
         clean[key] = value._id;
         return;
       }

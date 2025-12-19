@@ -64,6 +64,18 @@ export function ChangeRequestDialog({ onSuccess }: ChangeRequestDialogProps) {
   const [selectedField, setSelectedField] = useState("");
   const [newValue, setNewValue] = useState("");
 
+  const getEntityId = (
+    value?: string | { _id: string } | null
+  ): string => {
+    if (!value) {
+      return "";
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    return value._id || "";
+  };
+
   // Load profile when dialog opens (STEP 1)
   useEffect(() => {
     if (open) {
@@ -78,15 +90,22 @@ export function ChangeRequestDialog({ onSuccess }: ChangeRequestDialogProps) {
       // Set profile as immutable source of truth
       setProfile(profileData);
       // Initialize form with current profile values
+      const dateOfBirth =
+        profileData.dateOfBirth instanceof Date
+          ? profileData.dateOfBirth.toISOString().split("T")[0]
+          : profileData.dateOfBirth
+            ? profileData.dateOfBirth.split("T")[0]
+            : "";
+
       setForm({
         firstName: profileData.firstName ?? "",
         lastName: profileData.lastName ?? "",
         nationalId: profileData.nationalId ?? "",
-        dateOfBirth: profileData.dateOfBirth ? profileData.dateOfBirth.split('T')[0] : "",
-        gender: profileData.gender ?? "",
-        maritalStatus: profileData.maritalStatus ?? "",
-        primaryPositionId: profileData.primaryPositionId?._id || profileData.primaryPositionId || "",
-        primaryDepartmentId: profileData.primaryDepartmentId?._id || profileData.primaryDepartmentId || "",
+        dateOfBirth,
+        gender: profileData.gender ?? undefined,
+        maritalStatus: profileData.maritalStatus ?? undefined,
+        primaryPositionId: getEntityId(profileData.primaryPositionId),
+        primaryDepartmentId: getEntityId(profileData.primaryDepartmentId),
         jobTitle: profileData.jobTitle ?? "",
       });
     } catch (error) {

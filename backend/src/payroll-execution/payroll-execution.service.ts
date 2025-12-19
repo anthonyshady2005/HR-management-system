@@ -368,7 +368,9 @@ export class PayrollExecutionService {
         // Count total working days and missing days in the month
         let totalWorkingDays = 0;
         let missingDays = 0;
+        let paidLeaveDays = 0; // New tracker
         const currentDate = new Date(startDate);
+        const penaltyDetailsList: { reason: string; amount: number }[] = []; // Store breakdown
 
         while (currentDate <= endDate) {
           const dayOfWeek = currentDate.getDay();
@@ -395,6 +397,10 @@ export class PayrollExecutionService {
               return isWithinDates && isPaid;
             });
 
+            if (hasPaidLeave) {
+              paidLeaveDays++;
+            }
+
             if (!hasAttendance && !hasPaidLeave) {
               missingDays++;
             }
@@ -409,15 +415,24 @@ export class PayrollExecutionService {
           const dailySalary = netSalary / 22;
           const missingDaysPenalty = missingDays * dailySalary;
           penaltyAmount += missingDaysPenalty;
-          penaltyReasons.push(`Missing ${missingDays} days`);
+          penaltyDetailsList.push({
+             reason: `Missing ${missingDays} days`,
+             amount: missingDaysPenalty
+          });
         }
 
         // 4. Calculate Missing Hours Penalty (to avoid double-counting with missing days)
         // Per requirements: TAs should work 42 hours/week, so 42 * 5 weeks = 210 hours/month
-        // But only penalize for hours on ATTENDED days (days not already penalized above)
+        // But only penalize for hours on ATTENDED days (days not already penalized above, AND not on paid leave)
         const HOURS_PER_DAY = 8.4; // 42 hours/week ÷ 5 days = 8.4 hours/day
-        const attendedDays = totalWorkingDays - missingDays;
-        const expectedHoursForAttendedDays = attendedDays * HOURS_PER_DAY;
+        
+        // Attended days are days that are NOT missing AND NOT paid leave
+        // (If you are on paid leave, you aren't expected to punch in, so don't count those hours)
+        const attendedDays = totalWorkingDays - missingDays - paidLeaveDays;
+        
+        // Safety check to avoid negative numbers if overlaps exist (though shouldn't with correct logic)
+        const effectiveExpectedDays = Math.max(0, attendedDays);
+        const expectedHoursForAttendedDays = effectiveExpectedDays * HOURS_PER_DAY;
 
         const totalMinutesWorked = attendanceRecords.reduce(
           (sum, record) => sum + (record.totalWorkMinutes || 0),
@@ -434,7 +449,10 @@ export class PayrollExecutionService {
           const missingHoursPenalty = missingHours * hourlyRate;
 
           penaltyAmount += missingHoursPenalty;
-          penaltyReasons.push(`Missing ${missingHours.toFixed(1)} hours`);
+          penaltyDetailsList.push({
+            reason: `Missing ${missingHours.toFixed(1)} hours`,
+            amount: missingHoursPenalty
+         });
         }
 
         // Fetch pending refunds directly from database
@@ -620,13 +638,7 @@ export class PayrollExecutionService {
             })),
             penalties: {
               employeeId: emp._id,
-              penalties:
-                penaltyAmount > 0
-                  ? penaltyReasons.map((reason) => ({
-                    reason,
-                    amount: penaltyAmount,
-                  }))
-                  : [],
+              penalties: penaltyDetailsList
             },
           },
           totalGrossSalary: grossSalary + signingBonusAmount + terminationBenefitAmount,
@@ -655,6 +667,10 @@ export class PayrollExecutionService {
     await run.save();
 
     return run;
+  }
+
+  async getDepartments() {
+    return this.departmentModel.find({ isActive: true }).select('name code').exec();
   }
 
   async getAllRuns() {

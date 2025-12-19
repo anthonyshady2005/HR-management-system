@@ -220,10 +220,22 @@ export default function RecruitmentDashboard() {
     const query = searchQuery.toLowerCase();
     return (
       req.title?.toLowerCase().includes(query) ||
-      req.department?.toLowerCase().includes(query) ||
+      getDepartmentLabel(req.department).toLowerCase().includes(query) ||
       req.location?.toLowerCase().includes(query)
     );
   });
+
+  function getDepartmentLabel(
+    department: JobRequisition["department"]
+  ): string {
+    if (!department) {
+      return "";
+    }
+    if (typeof department === "string") {
+      return department;
+    }
+    return department.name || department.code || department._id || "";
+  }
 
   const getStageColor = (stage: string) => {
     switch (stage?.toLowerCase()) {
@@ -307,13 +319,6 @@ export default function RecruitmentDashboard() {
                 >
                   Refresh
                 </button>
-                <Link
-                  href="/recruitment/job-requisitions/new"
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 transition-all flex items-center gap-2"
-                >
-                <Plus className="w-4 h-4" />
-                <span>New Job Posting</span>
-                </Link>
               </div>
             </div>
           </div>
@@ -809,7 +814,7 @@ export default function RecruitmentDashboard() {
                         </div>
                       </td>
                         <td className="px-6 py-4 text-slate-300">
-                          {req.department || "N/A"}
+                          {getDepartmentLabel(req.department) || "N/A"}
                         </td>
                         <td className="px-6 py-4 text-slate-300">
                           {req.location || "N/A"}

@@ -13,6 +13,7 @@ import {
   Calendar,
   MapPin,
   Users,
+  Trash2,
 } from "lucide-react";
 import { recruitmentApi, type JobRequisition } from "@/lib/recruitment-api";
 
@@ -91,6 +92,21 @@ export default function JobRequisitionDetailPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!confirm("Are you sure you want to delete this job requisition? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await recruitmentApi.deleteJobRequisition(id);
+      router.push("/recruitment/job-requisitions");
+    } catch (error: any) {
+      console.error("Error deleting requisition:", error);
+      const errorMessage = error.response?.data?.message || "Failed to delete requisition";
+      alert(errorMessage);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case "published":
@@ -102,6 +118,18 @@ export default function JobRequisitionDetailPage() {
       default:
         return "bg-gray-500/20 text-gray-300 border-gray-500/30";
     }
+  };
+
+  const getDepartmentLabel = (
+    department: JobRequisition["department"]
+  ): string => {
+    if (!department) {
+      return "N/A";
+    }
+    if (typeof department === "string") {
+      return department;
+    }
+    return department.name || department.code || department._id || "N/A";
   };
 
   if (loading) {
@@ -171,6 +199,13 @@ export default function JobRequisitionDetailPage() {
                         Close
                       </button>
                     )}
+                    <button
+                      onClick={handleDelete}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800 transition-all flex items-center gap-2 text-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
                     <button
                       onClick={() => setIsEditing(true)}
                       className="px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 text-sm"
@@ -337,7 +372,9 @@ export default function JobRequisitionDetailPage() {
                 </div>
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Department</p>
-                  <p className="text-white">{requisition.department || "N/A"}</p>
+                  <p className="text-white">
+                    {getDepartmentLabel(requisition.department)}
+                  </p>
                 </div>
               </div>
             )}

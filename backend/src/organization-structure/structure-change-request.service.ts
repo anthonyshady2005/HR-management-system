@@ -49,6 +49,12 @@ export class StructureChangeRequestService {
     dto: CreateChangeRequestDto,
     requestedByEmployeeId: string,
   ): Promise<StructureChangeRequestDocument> {
+    // Debug logging
+    console.log('[StructureChangeRequest] Creating change request:', {
+      dto: JSON.stringify(dto),
+      requestedByEmployeeId,
+    });
+
     // Validate employee ID is a valid ObjectId
     if (!Types.ObjectId.isValid(requestedByEmployeeId)) {
       throw new BadRequestException(
@@ -86,21 +92,22 @@ export class StructureChangeRequestService {
     }
 
     // Validate request type and target IDs
+    // For UPDATE_DEPARTMENT, targetDepartmentId is required (to know which department to update)
+    // For NEW_DEPARTMENT, targetDepartmentId is optional (you're creating a new one)
     if (
-      (dto.requestType === StructureRequestType.NEW_DEPARTMENT ||
-        dto.requestType === StructureRequestType.UPDATE_DEPARTMENT) &&
+      dto.requestType === StructureRequestType.UPDATE_DEPARTMENT &&
       !dto.targetDepartmentId
     ) {
       throw new BadRequestException(
-        'targetDepartmentId is required for department-related requests',
+        'targetDepartmentId is required for department update requests',
       );
     }
 
+    // For UPDATE_POSITION and CLOSE_POSITION, targetPositionId is required
+    // For NEW_POSITION, targetPositionId is optional but targetDepartmentId might be needed
     if (
-      (dto.requestType === StructureRequestType.NEW_POSITION ||
-        dto.requestType === StructureRequestType.UPDATE_POSITION ||
+      (dto.requestType === StructureRequestType.UPDATE_POSITION ||
         dto.requestType === StructureRequestType.CLOSE_POSITION) &&
-      dto.requestType !== StructureRequestType.NEW_POSITION &&
       !dto.targetPositionId
     ) {
       throw new BadRequestException(
@@ -126,25 +133,13 @@ export class StructureChangeRequestService {
     }
 
     // Only add targetDepartmentId if it exists and is valid
-    if (dto.targetDepartmentId) {
-      const deptIdStr =
-        typeof dto.targetDepartmentId === 'string'
-          ? dto.targetDepartmentId
-          : dto.targetDepartmentId.toString();
-      if (deptIdStr && deptIdStr.trim() !== '' && Types.ObjectId.isValid(deptIdStr)) {
-        changeRequestData.targetDepartmentId = deptIdStr;
-      }
+    if (dto.targetDepartmentId && dto.targetDepartmentId.trim() !== '' && Types.ObjectId.isValid(dto.targetDepartmentId)) {
+      changeRequestData.targetDepartmentId = dto.targetDepartmentId;
     }
 
     // Only add targetPositionId if it exists and is valid
-    if (dto.targetPositionId) {
-      const posIdStr =
-        typeof dto.targetPositionId === 'string'
-          ? dto.targetPositionId
-          : dto.targetPositionId.toString();
-      if (posIdStr && posIdStr.trim() !== '' && Types.ObjectId.isValid(posIdStr)) {
-        changeRequestData.targetPositionId = posIdStr;
-      }
+    if (dto.targetPositionId && dto.targetPositionId.trim() !== '' && Types.ObjectId.isValid(dto.targetPositionId)) {
+      changeRequestData.targetPositionId = dto.targetPositionId;
     }
 
     try {

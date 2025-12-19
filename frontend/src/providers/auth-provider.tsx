@@ -48,7 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Hydrate from backend on first load
   useEffect(() => {
+    // Only initialize once on mount
     initializeAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function initializeAuth() {
@@ -61,13 +63,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!backendUser?.id || !backendUser?.roles?.length) {
         // No user or roles from backend
+        console.warn("No user or roles from /auth/me:", backendUser);
         setStatus("unauthenticated");
         return;
       }
 
       // Fetch current role from backend cookie
-      const roleRes = await api.get("/auth/current-role");
-      const currentRoleValue = roleRes.data?.currentRole || backendUser.roles[0];
+      let currentRoleValue = backendUser.roles[0];
+      try {
+        const roleRes = await api.get("/auth/current-role");
+        currentRoleValue = roleRes.data?.currentRole || backendUser.roles[0];
+      } catch (roleErr: any) {
+        // If current-role fails, just use first role - not critical
+        console.warn("Failed to fetch current role, using default:", roleErr);
+      }
 
       // Set authenticated state
       setUser({ id: backendUser.id });
@@ -75,13 +84,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCurrentRole(currentRoleValue);
       setStatus("authenticated");
     } catch (err: any) {
-      // If 401/403, user not authenticated
-      if (err.response?.status === 401 || err.response?.status === 403) {
+      // Only set unauthenticated if we get a clear 401/403
+      // Network errors or other issues should not log out the user
+      const status = err.response?.status;
+      
+      if (status === 401 || status === 403) {
+        // Clear authentication - user is not authenticated
+        console.log("Authentication failed (401/403), logging out");
         setStatus("unauthenticated");
+        setUser(null);
+        setRoles([]);
+        setCurrentRole(null);
       } else {
-        // Network error - treat as unauthenticated for safety
-        console.error("Failed to initialize auth:", err);
-        setStatus("unauthenticated");
+        // Network error or other issue - keep current state if we have one
+        // This prevents logging out on temporary network issues
+        console.error("Failed to initialize auth (non-auth error):", {
+          status,
+          message: err.message,
+          code: err.code,
+        });
+        
+        // If we have existing user data, keep it (might be a temporary network issue)
+        // Otherwise, set to unauthenticated
+        if (!user) {
+          setStatus("unauthenticated");
+        } else {
+          // Keep authenticated state but log the error
+          console.warn("Auth initialization failed but keeping existing state");
+          setStatus("authenticated");
+        }
       }
     }
   }
@@ -115,9 +146,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Only update state if backend accepts
       setCurrentRole(role);
+      
+      // Move selected role to index 0 in the roles array
+      const reorderedRoles = [role, ...roles.filter(r => r !== role)];
+      setRoles(reorderedRoles);
+      
       return true;
     } catch (err: any) {
       console.error("Failed to set current role:", err);
+      console.error("Error details:", {
+        message: err.response?.data?.message || err.message,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+      });
       return false;
     }
   };

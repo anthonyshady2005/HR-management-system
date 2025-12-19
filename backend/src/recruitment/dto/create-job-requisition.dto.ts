@@ -30,6 +30,14 @@ export class CreateJobRequisitionDto {
   requisitionId!: string;
 
   @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  departmentId?: string;
+
+  @IsOptional()
   @IsMongoId()
   templateId?: string;
 
@@ -55,4 +63,8 @@ export class CreateJobRequisitionDto {
   @IsOptional()
   @IsDateString()
   expiryDate?: string;
+
+  @IsOptional()
+  @IsString()
+  tags?: string; // Comma-separated tags, will be converted to array
 }

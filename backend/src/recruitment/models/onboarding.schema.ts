@@ -8,8 +8,8 @@ export class Onboarding {
   @Prop({ type: Types.ObjectId, ref: 'EmployeeProfile', required: true })
   employeeId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Contract', required: true })
-  contractId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Offer', required: true })
+  offerId: Types.ObjectId;
 
   @Prop([
     {

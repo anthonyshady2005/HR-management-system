@@ -34,6 +34,17 @@ export default function ApplicationDetailPage() {
   const [newStage, setNewStage] = useState("");
   const [newStatus, setNewStatus] = useState("");
   const [hrId, setHrId] = useState("");
+  const [hrManagers, setHrManagers] = useState<Array<{
+    _id: string;
+    id: string;
+    employeeNumber: string;
+    name: string;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    workEmail?: string;
+  }>>([]);
+  const [loadingHrManagers, setLoadingHrManagers] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -89,7 +100,23 @@ export default function ApplicationDetailPage() {
     }
   };
 
+  const loadHrManagers = async () => {
+    try {
+      setLoadingHrManagers(true);
+      const data = await recruitmentApi.getHrManagers();
+      setHrManagers(data || []);
+    } catch (error) {
+      console.error("Error loading HR Managers:", error);
+    } finally {
+      setLoadingHrManagers(false);
+    }
+  };
+
   const handleAssignHr = async () => {
+    if (!hrId) {
+      alert("Please select an HR representative");
+      return;
+    }
     try {
       await recruitmentApi.assignHrToApplication(id, hrId);
       await loadApplication();
@@ -240,9 +267,13 @@ export default function ApplicationDetailPage() {
             <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
               <p className="text-sm text-slate-400 mb-2">Assigned HR</p>
               <p className="text-white mb-4">
-                {application.assignedHr
-                  ? application.assignedHr.toString().slice(-8)
-                  : "Unassigned"}
+                {typeof application.assignedHr === 'object' && application.assignedHr !== null
+                  ? (application.assignedHr as any).fullName || ((application.assignedHr as any).firstName && (application.assignedHr as any).lastName
+                    ? `${(application.assignedHr as any).firstName} ${(application.assignedHr as any).lastName}`
+                    : (application.assignedHr as any)._id?.toString().slice(-8) || "Unassigned")
+                  : application.assignedHr
+                    ? application.assignedHr.toString().slice(-8)
+                    : "Unassigned"}
               </p>
               <button
                 onClick={() => setShowAssignHrModal(true)}
@@ -281,18 +312,28 @@ export default function ApplicationDetailPage() {
                   <p className="text-white">{application._id}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-400 mb-1">Candidate ID</p>
+                  <p className="text-sm text-slate-400 mb-1">Candidate</p>
                   <p className="text-white">
-                    {application.candidateId?.toString() || "N/A"}
+                    {typeof application.candidateId === 'object' && application.candidateId !== null
+                      ? (application.candidateId as any).firstName && (application.candidateId as any).lastName
+                        ? `${(application.candidateId as any).firstName} ${(application.candidateId as any).lastName}`
+                        : (application.candidateId as any)._id?.toString() || "N/A"
+                      : application.candidateId?.toString() || "N/A"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-400 mb-1">Job Requisition ID</p>
+                  <p className="text-sm text-slate-400 mb-1">Job Requisition</p>
                   <Link
-                    href={`/recruitment/job-requisitions/${application.requisitionId}`}
+                    href={`/recruitment/job-requisitions/${
+                      typeof application.requisitionId === 'object' && application.requisitionId !== null
+                        ? (application.requisitionId as any)._id?.toString() || (application.requisitionId as any).toString()
+                        : application.requisitionId?.toString() || ""
+                    }`}
                     className="text-blue-400 hover:text-blue-300"
                   >
-                    {application.requisitionId?.toString() || "N/A"}
+                    {typeof application.requisitionId === 'object' && application.requisitionId !== null
+                      ? (application.requisitionId as any).title || (application.requisitionId as any)._id?.toString() || "N/A"
+                      : application.requisitionId?.toString() || "N/A"}
                   </Link>
                 </div>
                 <div>
@@ -435,22 +476,51 @@ export default function ApplicationDetailPage() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl p-6 max-w-md w-full mx-4">
             <h3 className="text-white text-xl mb-4">Assign HR Representative</h3>
-            <input
-              type="text"
+            <select
               value={hrId}
               onChange={(e) => setHrId(e.target.value)}
-              placeholder="Enter HR Employee ID"
-              className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-500/50 mb-4"
-            />
+              className="w-full px-4 py-3 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-slate-500/50 [&>option]:bg-slate-900 [&>option]:text-white mb-4"
+              style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                color: 'white',
+              }}
+              disabled={loadingHrManagers}
+              onFocus={() => {
+                if (hrManagers.length === 0) {
+                  loadHrManagers();
+                }
+              }}
+            >
+              <option value="" className="bg-slate-900 text-white">
+                {loadingHrManagers
+                  ? "Loading HR Managers..."
+                  : "Select an HR representative"}
+              </option>
+              {hrManagers.map((manager) => (
+                <option key={manager._id} value={manager._id} className="bg-slate-900 text-white">
+                  {manager.fullName} ({manager.employeeNumber})
+                  {manager.workEmail ? ` - ${manager.workEmail}` : ""}
+                </option>
+              ))}
+            </select>
+            {hrManagers.length === 0 && !loadingHrManagers && (
+              <p className="text-xs text-slate-400 mb-4">
+                Click on the dropdown to load HR managers
+              </p>
+            )}
             <div className="flex items-center gap-3">
               <button
                 onClick={handleAssignHr}
                 className="flex-1 px-4 py-2 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-700 hover:to-slate-800 transition-all"
+                disabled={!hrId || loadingHrManagers}
               >
                 Assign
               </button>
               <button
-                onClick={() => setShowAssignHrModal(false)}
+                onClick={() => {
+                  setShowAssignHrModal(false);
+                  setHrId("");
+                }}
                 className="flex-1 px-4 py-2 rounded-xl backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
               >
                 Cancel
