@@ -6,8 +6,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Parser as Json2CsvParser } from 'json2csv';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
 // Schemas (Models)
-import { AttendanceRecord, AttendanceRecordDocument } from './models/attendance-record.schema';
+import { AttendanceRecord, AttendanceRecordDocument, Punch } from './models/attendance-record.schema';
 import { AttendanceCorrectionRequest, AttendanceCorrectionRequestDocument } from './models/attendance-correction-request.schema';
 import { Shift, ShiftDocument } from './models/shift.schema';
 import { ShiftAssignment, ShiftAssignmentDocument } from './models/shift-assignment.schema';
@@ -27,7 +28,7 @@ import {PayrollTrackingService} from 'src/payroll-tracking/payroll-tracking.serv
 import { EmployeeSystemRole, EmployeeSystemRoleDocument } from 'src/employee-profile/models/employee-system-role.schema';
 import { PositionAssignment } from '../organization-structure/models/position-assignment.schema';
 import {ShiftExpiryNotification,ShiftExpiryNotificationDocument} from './models/shift-expiry-notification.schema';
-
+import { Calendar,CalendarDocument } from 'src/leaves/models/calendar.schema';
 // Enums
 import {
   PunchType,
@@ -82,6 +83,23 @@ import { differenceInMinutes, isBefore, isAfter, parseISO } from 'date-fns';
 
 @Injectable()
 export class TimeManagementService {
+  private readonly timeManagementNotificationTypes: string[] = [
+    'MISSED_PUNCH',
+    'MISSED_PUNCH_SUPERVISOR',
+    'EMPLOYEE_LATE',
+    'EMPLOYEE_REPEATED_LATENESS',
+    'HOLIDAY_APPLIED',
+    'PERMISSION_SUBMITTED',
+    'PERMISSION_DECISION',
+    'PERMISSION_ESCALATED',
+    'TIME_EXCEPTION_DECISION',
+    'TIME_EXCEPTION_ESCALATED',
+    'CORRECTION_REQUEST_SUBMITTED',
+    'CORRECTION_REQUEST_DECISION',
+    'CORRECTION_REQUEST_ESCALATED',
+    'REQUEST_ESCALATED',
+    'EXCEPTION_ESCALATED',
+  ];
   constructor(
     @InjectModel(ShiftAssignment.name)
     private readonly shiftAssignmentModel: Model<ShiftAssignmentDocument>,
@@ -144,8 +162,13 @@ export class TimeManagementService {
        @InjectModel(PositionAssignment.name)
     private readonly positionAssignmentModel: Model<PositionAssignment>,
 
+    @InjectModel(Calendar.name)
+    private readonly calendarModel: Model<CalendarDocument>,
+
    @InjectModel(ShiftExpiryNotification.name)
     private readonly shiftExpiryNotificationModel: Model<ShiftExpiryNotificationDocument>,
+
+    
 
 
 
@@ -154,6 +177,7 @@ export class TimeManagementService {
 
 
   ) {}
+  
   // ================================================
   // USER STORY 1 — SHIFT ASSIGNMENT MANAGEMENT
   // ================================================
@@ -1499,6 +1523,104 @@ async getAttendanceRecords(params?: {
     totalPages: Math.ceil(total / limit),
   };
 }
+async getDepartmentAttendanceRecords(
+  managerUser: any,
+  params?: {
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    limit?: number;
+  }
+) {
+  /**
+   * STEP 1: Resolve manager employee profile
+   */
+  const managerEmployee = await this.employeeModel.findOne({
+    userId: new Types.ObjectId(managerUser._id),
+  });
+
+  if (!managerEmployee?.primaryDepartmentId) {
+    throw new BadRequestException(
+      "Manager does not belong to a primary department"
+    );
+  }
+
+  const departmentId = managerEmployee.primaryDepartmentId;
+
+  /**
+   * STEP 2: Get all employees in the same department
+   */
+  const departmentEmployees = await this.employeeModel
+    .find(
+      { primaryDepartmentId: departmentId },
+      { _id: 1 }
+    )
+    .lean();
+
+  const employeeIds = departmentEmployees.map(e => e._id);
+
+  if (employeeIds.length === 0) {
+    return {
+      data: [],
+      total: 0,
+      page: 1,
+      limit: Number(params?.limit) || 10,
+      totalPages: 0,
+    };
+  }
+
+  /**
+   * STEP 3: Build attendance query (same logic as existing)
+   */
+  const query: any = {
+    finalisedForPayroll: { $ne: true },
+    employeeId: { $in: employeeIds },
+  };
+
+  if (params?.startDate || params?.endDate) {
+    query["punches.time"] = {};
+    if (params.startDate) {
+      query["punches.time"].$gte = new Date(params.startDate);
+    }
+    if (params.endDate) {
+      query["punches.time"].$lte = new Date(params.endDate);
+    }
+  }
+
+  /**
+   * STEP 4: Pagination
+   */
+  const page = Number(params?.page) || 1;
+  const limit = Number(params?.limit) || 10;
+  const skip = (page - 1) * limit;
+
+  /**
+   * STEP 5: Query attendance records
+   */
+  const [data, total] = await Promise.all([
+    this.attendanceRecordModel
+      .find(query)
+      .populate(
+        "employeeId",
+        "firstName lastName personalEmail workEmail primaryDepartmentId"
+      )
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec(),
+
+    this.attendanceRecordModel.countDocuments(query),
+  ]);
+
+  return {
+    data,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  };
+}
+
 async getAttendanceRecordsFinalized(params?: {
   page?: number;
   limit?: number;
@@ -3633,220 +3755,407 @@ async autoEscalatePendingPermissions() {
   };
 }
 // ============================================================================
-// USER STORY 16 — VACATION PACKAGE INTEGRATION (DIRECT SERVICE CALL VERSION)
-// BR-TM-19: Link leave/vacation days to attendance & shift schedules
+// USER STORY 16 — VACATION PACKAGE INTEGRATION
+// BR-TM-19: Time off automatically reflected in attendance
 // ============================================================================
 
+/**
+ * US16 — Sync holidays from Leaves calendar and create attendance records
+ */
+async syncHolidaysFromLeavesCalendar(year: number) {
+  try {
+    // 1. Fetch calendar from Leaves module
+    const leavesCalendar = await this.getCalendarByYear(year);
 
-  // 1. FETCH APPROVED LEAVES DIRECTLY FROM LEAVES MODULE
-  // ============================================================================
-  private async fetchApprovedLeaves(
-    employeeId: Types.ObjectId,
-    range: { start: Date; end: Date },
-  ): Promise<Array<{ date: string }>> {
-
-    try {
-      // Query the LeaveRequest model for approved leaves in the provided range
-      const leaves = await this.leaveRequestService
-        .find({
-          employeeId,
-          status: 'APPROVED',
-          date: { $gte: range.start, $lte: range.end },
-        })
-        .select('date')
-        .lean();
-
-      // Must return simplified structure: [{ date: "YYYY-MM-DD" }]
-      return leaves.map((l: any) => {
-        const d = l.date instanceof Date ? l.date : new Date(l.date);
-        if (isNaN(d.getTime())) {
-          // If date is not valid, return as-is string to avoid data loss
-          return { date: String(l.date) };
-        }
-        return { date: d.toISOString().split('T')[0] };
-      });
-    } catch (err) {
-      throw new BadRequestException('Failed to load approved leaves from Leaves subsystem.');
-    }
-  }
-
-  // ============================================================================
-  // 2. MARK ATTENDANCE AS LEAVE DAY (NO SCHEMA CHANGES)
-  // ============================================================================
-  private async applyLeaveToAttendance(
-    employeeId: Types.ObjectId,
-    leaveDays: Array<{ date: string }>,
-  ) {
-    for (const entry of leaveDays) {
-      const leaveDate = new Date(entry.date);
-
-      // Try to find existing attendance record
-      let record = await this.attendanceRecordModel.findOne({
-        employeeId,
-        day: entry.date, // if you don't have day, I will adjust (just tell me)
-      });
-
-      if (!record) {
-        record = new this.attendanceRecordModel({
-          employeeId,
-          punches: [],
-          totalWorkMinutes: 0,
-          hasMissedPunch: false,
-          exceptionIds: [],
-          finalisedForPayroll: true,
-        });
-      }
-
-      // On leave day → no work, no penalties
-      record.totalWorkMinutes = 0;
-      record.hasMissedPunch = false;
-      record.finalisedForPayroll = true;
-
-      await record.save();
-    }
-  }
-
-  // ============================================================================
-  // 3. PUBLIC METHOD — FULL INTEGRATION EXECUTION
-  // ============================================================================
-  async integrateVacationPackages(
-    employeeId: Types.ObjectId,
-    range: { start: Date; end: Date },
-  ) {
-    // Step 1: Get approved leave days
-    const leaveDays = await this.fetchApprovedLeaves(employeeId, range);
-
-    if (leaveDays.length === 0) {
-      return { message: 'No approved leaves for this employee in this range.' };
+    if (!leavesCalendar || !leavesCalendar.holidays) {
+      throw new BadRequestException('No holidays found in Leaves calendar');
     }
 
-    // Step 2: Apply to attendance
-    await this.applyLeaveToAttendance(employeeId, leaveDays);
+    const holidayDates = this.extractHolidayDates(leavesCalendar.holidays);
+    
+    let totalRecordsCreated = 0;
+    const affectedEmployees = new Set<string>();
 
-    // Step 3: Send notification
-    await this.notificationLogModel.create({
-      to: employeeId,
-      type: 'LEAVE_INTEGRATION',
-      message: `Your approved leave days were reflected in the attendance system.`,
-    });
+    // 2. Process each holiday date
+    for (const holidayDate of holidayDates) {
+      const result = await this.createAttendanceRecordsForHoliday(holidayDate);
+      totalRecordsCreated += result.recordsCreated;
+      result.employeeIds.forEach(id => affectedEmployees.add(id.toString()));
+    }
 
     return {
-      message: `Integrated ${leaveDays.length} leave days successfully.`,
-      leaveDays,
+      success: true,
+      message: `Holiday sync completed for ${year}`,
+      year,
+      totalHolidayDates: holidayDates.length,
+      totalRecordsCreated,
+      affectedEmployeesCount: affectedEmployees.size,
     };
+  } catch (error) {
+    console.error('Failed to sync holidays from Leaves calendar:', error);
+    throw error;
   }
-  // ============================================================================
+}
+
+/**
+ * US16 — Preview which employees will be affected by holiday sync
+ */
+/**
+ * US16 — Preview which employees will be affected by holiday sync
+ */
+async previewHolidaySync(year: number) {
+  try {
+    const leavesCalendar = await this.getCalendarByYear(year);
+
+    if (!leavesCalendar || !leavesCalendar.holidays) {
+      throw new BadRequestException('No holidays found in Leaves calendar');
+    }
+
+    const holidayDates = this.extractHolidayDates(leavesCalendar.holidays);
+    const preview: Array<{
+      date: string;
+      affectedEmployees: Array<{
+        employeeId: any;
+        employeeName: string;
+        employeeEmail: any;
+        shiftName: any;
+        shiftTime: string;
+      }>;
+    }> = []; // ← Fixed: Explicitly typed array
+
+    for (const holidayDate of holidayDates) {
+      const dayStart = new Date(holidayDate);
+      dayStart.setHours(0, 0, 0, 0);
+      
+      const dayEnd = new Date(holidayDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      // Find shift assignments for this date
+      const assignments = await this.shiftAssignmentModel
+        .find({
+          startDate: { $lte: dayEnd },
+          $or: [
+            { endDate: { $gte: dayStart } },
+            { endDate: null },
+          ],
+          status: ShiftAssignmentStatus.APPROVED,
+          employeeId: { $exists: true, $ne: null },
+        })
+        .populate('employeeId', 'firstName lastName personalEmail')
+        .populate('shiftId', 'name startTime endTime')
+        .lean();
+
+      if (assignments.length > 0) {
+        preview.push({
+          date: holidayDate.toISOString().split('T')[0],
+          affectedEmployees: assignments.map(a => ({
+            employeeId: (a.employeeId as any)?._id,
+            employeeName: `${(a.employeeId as any)?.firstName} ${(a.employeeId as any)?.lastName}`,
+            employeeEmail: (a.employeeId as any)?.personalEmail,
+            shiftName: (a.shiftId as any)?.name,
+            shiftTime: `${(a.shiftId as any)?.startTime} - ${(a.shiftId as any)?.endTime}`,
+          })),
+        });
+      }
+    }
+
+    return {
+      year,
+      totalHolidayDates: holidayDates.length,
+      preview,
+      totalAffectedEmployees: preview.reduce((sum, p) => sum + p.affectedEmployees.length, 0),
+    };
+  } catch (error) {
+    console.error('Failed to preview holiday sync:', error);
+    throw error;
+  }
+}
+/**
+ * US16 — Fetch Leaves calendar from Leaves module
+ */
+
+async getCalendarByYear(year: number) {
+    const calendar = await this.calendarModel
+      .findOne({ year })
+      .populate('holidays')
+      .exec();
+
+    if (!calendar) {
+      throw new NotFoundException(`Calendar for year ${year} not found`);
+    }
+
+    return calendar;
+  }
+/**
+ * US16 — Extract all dates from holidays (handle multi-day holidays)
+ */
+private extractHolidayDates(holidays: any[]): Date[] {
+  const dates: Date[] = [];
+
+  for (const holiday of holidays) {
+    if (!holiday.active) continue;
+
+    const startDate = new Date(holiday.startDate);
+    const endDate = holiday.endDate ? new Date(holiday.endDate) : startDate;
+
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      dates.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+  }
+
+  return dates;
+}
+
+/**
+ * US16 — Create attendance records for all employees with shifts on a holiday
+ */
+private async createAttendanceRecordsForHoliday(holidayDate: Date) {
+  const dayStart = new Date(holidayDate);
+  dayStart.setHours(0, 0, 0, 0);
+
+  const dayEnd = new Date(holidayDate);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  const assignments = await this.shiftAssignmentModel
+    .find({
+      startDate: { $lte: dayEnd },
+      $or: [{ endDate: { $gte: dayStart } }, { endDate: null }],
+      status: ShiftAssignmentStatus.APPROVED,
+      employeeId: { $exists: true, $ne: null },
+    })
+    .populate('shiftId')
+    .lean();
+
+  let recordsCreated = 0;
+  const employeeIds: Types.ObjectId[] = [];
+
+  for (const assignment of assignments) {
+    if (!assignment.employeeId || !assignment.shiftId) continue;
+
+    const shift = assignment.shiftId as any;
+
+    // ⏱ Build shift start & end datetime
+    const [startH, startM] = shift.startTime.split(':').map(Number);
+    const [endH, endM] = shift.endTime.split(':').map(Number);
+
+    const punchInTime = new Date(holidayDate);
+    punchInTime.setHours(startH, startM, 0, 0);
+
+    const punchOutTime = new Date(holidayDate);
+    punchOutTime.setHours(endH, endM, 0, 0);
+
+    const totalWorkMinutes =
+      (punchOutTime.getTime() - punchInTime.getTime()) / (1000 * 60);
+
+   const punches: Punch[] = [
+  { type: PunchType.IN, time: punchInTime },
+  { type: PunchType.OUT, time: punchOutTime },
+];
+
+
+    const existingRecord = await this.attendanceRecordModel.findOne({
+      employeeId: assignment.employeeId,
+      'punches.time': { $gte: dayStart, $lte: dayEnd },
+    });
+
+    if (existingRecord) {
+      existingRecord.punches = punches;
+      existingRecord.totalWorkMinutes = totalWorkMinutes;
+      existingRecord.hasMissedPunch = false;
+      existingRecord.finalisedForPayroll = true;
+      await existingRecord.save();
+    } else {
+      await this.attendanceRecordModel.create({
+        employeeId: assignment.employeeId,
+        punches,
+        totalWorkMinutes,
+        hasMissedPunch: false,
+        finalisedForPayroll: true,
+      });
+      recordsCreated++;
+    }
+
+    employeeIds.push(assignment.employeeId);
+
+    await this.notificationLogModel.create({
+      to: assignment.employeeId,
+      type: 'HOLIDAY_APPLIED',
+      message: `Holiday applied on ${holidayDate.toDateString()}. Attendance marked as fully paid.`,
+    });
+  }
+
+  return { recordsCreated, employeeIds };
+}
+
+// ============================================================================
 // USER STORY 17 — HOLIDAY & REST DAY CONFIGURATION
 // BR-TM-19: No shifts or penalties should apply during holiday or rest days
 // ============================================================================
 
+// ============================================================================
+// 1. CREATE HOLIDAY (Admin config)
+// ============================================================================
+async createHoliday(dto: {
+  type: HolidayType;
+  startDate: Date;
+  endDate?: Date;
+  name?: string;
+}) {
+  const holiday = new this.holidayModel(dto);
+  return holiday.save();
+}
 
+// ============================================================================
+// 2. GET ALL HOLIDAYS (with filters)
+// ============================================================================
+async getAllHolidays(filters?: {
+  type?: string;
+  year?: number;
+  startDate?: Date;
+  endDate?: Date;
+}) {
+  const query: any = { active: true };
 
-  // ============================================================================
-  // 1. CREATE HOLIDAY (Admin config)
-  // ============================================================================
-  async createHoliday(dto: {
-    type: HolidayType;
-    startDate: Date;
+  if (filters?.type) {
+    query.type = filters.type;
+  }
+
+  if (filters?.year) {
+    const yearStart = new Date(filters.year, 0, 1);
+    const yearEnd = new Date(filters.year, 11, 31, 23, 59, 59);
+    query.startDate = { $gte: yearStart, $lte: yearEnd };
+  }
+
+  if (filters?.startDate || filters?.endDate) {
+    query.startDate = {};
+    if (filters.startDate) {
+      query.startDate.$gte = filters.startDate;
+    }
+    if (filters.endDate) {
+      query.startDate.$lte = filters.endDate;
+    }
+  }
+
+  return this.holidayModel
+    .find(query)
+    .sort({ startDate: 1 })
+    .lean();
+}
+
+// ============================================================================
+// 3. GET SINGLE HOLIDAY BY ID
+// ============================================================================
+async getHolidayById(holidayId: Types.ObjectId) {
+  const holiday = await this.holidayModel.findById(holidayId);
+  
+  if (!holiday) {
+    throw new NotFoundException('Holiday not found');
+  }
+
+  return holiday;
+}
+
+// ============================================================================
+// 4. UPDATE HOLIDAY
+// ============================================================================
+async updateHoliday(
+  holidayId: Types.ObjectId,
+  dto: {
+    type?: HolidayType;
+    startDate?: Date;
     endDate?: Date;
     name?: string;
-  }) {
-    const holiday = new this.holidayModel(dto);
-    return holiday.save();
+  },
+) {
+  const holiday = await this.holidayModel.findById(holidayId);
+
+  if (!holiday) {
+    throw new NotFoundException('Holiday not found');
   }
 
-  // ============================================================================
-  // 2. FETCH ALL HOLIDAYS AFFECTING A SPECIFIC DATE
-  // ============================================================================
-  private async getHolidaysForDate(date: Date) {
-    return this.holidayModel.find({
+  if (dto.type !== undefined) holiday.type = dto.type;
+  if (dto.startDate !== undefined) holiday.startDate = dto.startDate;
+  if (dto.endDate !== undefined) holiday.endDate = dto.endDate;
+  if (dto.name !== undefined) holiday.name = dto.name;
+
+  await holiday.save();
+
+  return {
+    success: true,
+    message: 'Holiday updated successfully',
+    holiday,
+  };
+}
+
+// ============================================================================
+// 5. DELETE HOLIDAY (soft delete by setting active = false)
+// ============================================================================
+async deleteHoliday(holidayId: Types.ObjectId) {
+  const holiday = await this.holidayModel.findById(holidayId);
+
+  if (!holiday) {
+    throw new NotFoundException('Holiday not found');
+  }
+
+  // Soft delete
+  holiday.active = false;
+  await holiday.save();
+
+  return {
+    success: true,
+    message: 'Holiday deleted successfully',
+  };
+}
+
+// ============================================================================
+// 6. GET UPCOMING HOLIDAYS
+// ============================================================================
+async getUpcomingHolidays(days: number = 30) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const futureDate = new Date(today);
+  futureDate.setDate(futureDate.getDate() + days);
+
+  return this.holidayModel
+    .find({
       active: true,
-      startDate: { $lte: date },
-      $or: [{ endDate: { $gte: date } }, { endDate: null }],
-    });
-  }
+      startDate: { $gte: today, $lte: futureDate },
+    })
+    .sort({ startDate: 1 })
+    .lean();
+}
 
-  // ============================================================================
-  // 3. DETERMINE IF A DATE IS HOLIDAY OR WEEKLY REST DAY
-  // ============================================================================
-  private async isHoliday(date: Date): Promise<boolean> {
-    const list = await this.getHolidaysForDate(date);
-    return list.length > 0;
-  }
+// ============================================================================
+// 7. CHECK IF SPECIFIC DATE IS A HOLIDAY
+// ============================================================================
+async checkIfHoliday(date: Date) {
+  const holidays = await this.getHolidaysForDate(date);
+  
+  return {
+    isHoliday: holidays.length > 0,
+    holidays: holidays.map(h => ({
+      id: h._id,
+      name: h.name,
+      type: h.type,
+      startDate: h.startDate,
+      endDate: h.endDate,
+    })),
+  };
+}
 
-  // ============================================================================
-  // 4. APPLY HOLIDAY RULES TO ATTENDANCE
-  // ============================================================================
-  private async applyHolidayRules(
-    employeeId: Types.ObjectId,
-    date: Date,
-  ) {
-    const isHoliday = await this.isHoliday(date);
-    if (!isHoliday) return; // normal working day → no change
-
-    let record = await this.attendanceRecordModel.findOne({
-      employeeId,
-      'punches.time': {
-        $gte: new Date(date.setHours(0, 0, 0, 0)),
-        $lte: new Date(date.setHours(23, 59, 59, 999)),
-      },
-    });
-
-    if (!record) {
-      // Create a clean attendance record for the holiday
-      record = new this.attendanceRecordModel({
-        employeeId,
-        punches: [],
-        totalWorkMinutes: 0,
-        hasMissedPunch: false,
-        finalisedForPayroll: true,
-      });
-    }
-
-    // No penalties, no lateness, no missed punches
-    record.totalWorkMinutes = 0;
-    record.hasMissedPunch = false;
-    record.finalisedForPayroll = true;
-
-    await record.save();
-
-    // Notify employee (optional)
-    await this.notificationLogModel.create({
-      to: employeeId,
-      type: 'HOLIDAY_APPLIED',
-      message: `Holiday rules applied for ${date.toDateString()}.`,
-    });
-  }
-
-  // ============================================================================
-  // 5. PUBLIC METHOD — APPLY HOLIDAY RULES FOR AN EMPLOYEE RANGE
-  // ----------------------------------------------------------------------------
-  // Called by:
-  // - daily cron
-  // - HR Admin
-  // ============================================================================
-  async applyHolidayRange(
-    employeeId: Types.ObjectId,
-    range: { start: Date; end: Date },
-  ) {
-    const days: Date[] = [];
-    let current = new Date(range.start);
-
-    while (current <= range.end) {
-      days.push(new Date(current));
-      current.setDate(current.getDate() + 1);
-    }
-
-    for (const day of days) {
-      await this.applyHolidayRules(employeeId, day);
-    }
-
-    return {
-      message: 'Holiday & Rest Day rules applied successfully.',
-      totalDays: days.length,
-    };
-  }
-
+// ============================================================================
+// 8. FETCH ALL HOLIDAYS AFFECTING A SPECIFIC DATE (Helper)
+// ============================================================================
+private async getHolidaysForDate(date: Date) {
+  return this.holidayModel.find({
+    active: true,
+    startDate: { $lte: date },
+    $or: [{ endDate: { $gte: date } }, { endDate: null }],
+  });
+}
   // ============================================================================
 // USER STORY 18 — ESCALATION BEFORE PAYROLL CUT-OFF
 // BR-TM-20: Unreviewed requests must escalate before payroll finalization.
@@ -3854,54 +4163,57 @@ async autoEscalatePendingPermissions() {
 
 
 
-  // ============================================================================
-  // 1. ESCALATE ATTENDANCE CORRECTION REQUESTS
-  // ============================================================================
-  private async escalateCorrectionRequests(cutoff: Date) {
-    const pending = await this.correctionRequestModel.find({
-      status: { $in: ['SUBMITTED', 'IN_REVIEW'] },
-      createdAt: { $lte: cutoff },
+// ============================================================================
+// 1. ESCALATE ATTENDANCE CORRECTION REQUESTS
+// ============================================================================
+private async escalateCorrectionRequests(cutoff: Date) {
+  const pending = await this.correctionRequestModel.find({
+    status: { $in: ['SUBMITTED', 'IN_REVIEW'] },
+    // Remove createdAt filter to escalate ALL pending
+    // createdAt: { $lte: cutoff },
+  });
+
+  console.log(`Found ${pending.length} correction requests to escalate`); // Debug log
+
+  for (const req of pending) {
+    req.status = CorrectionRequestStatus.ESCALATED;
+    await req.save();
+
+    await this.notificationLogModel.create({
+      to: req.employeeId,
+      type: 'REQUEST_ESCALATED',
+      message: `Your attendance correction request was escalated due to payroll cut-off.`,
     });
-
-    for (const req of pending) {
-      req.status = CorrectionRequestStatus.ESCALATED;
-
-      await req.save();
-
-      await this.notificationLogModel.create({
-        to: req.employeeId,
-        type: 'REQUEST_ESCALATED',
-        message: `Your attendance correction request was escalated due to payroll cut-off.`,
-      });
-    }
-
-    return pending.length;
   }
 
-  // ============================================================================
-  // 2. ESCALATE TIME EXCEPTIONS
-  // ============================================================================
-  private async escalateTimeExceptions(cutoff: Date) {
-    const pending = await this.timeExceptionModel.find({
-      status: { $in: ['OPEN', 'PENDING'] },
-      createdAt: { $lte: cutoff },
+  return pending.length;
+}
+
+// ============================================================================
+// 2. ESCALATE TIME EXCEPTIONS
+// ============================================================================
+private async escalateTimeExceptions(cutoff: Date) {
+  const pending = await this.timeExceptionModel.find({
+    status: { $in: ['OPEN', 'PENDING'] },
+    // Remove createdAt filter to escalate ALL pending
+    // createdAt: { $lte: cutoff },
+  });
+
+  console.log(`Found ${pending.length} time exceptions to escalate`); // Debug log
+
+  for (const ex of pending) {
+    ex.status = TimeExceptionStatus.ESCALATED;
+    await ex.save();
+
+    await this.notificationLogModel.create({
+      to: ex.employeeId,
+      type: 'EXCEPTION_ESCALATED',
+      message: `Your time exception request was escalated due to payroll cut-off.`,
     });
-
-    for (const ex of pending) {
-      ex.status = TimeExceptionStatus.ESCALATED;
-
-
-      await ex.save();
-
-      await this.notificationLogModel.create({
-        to: ex.employeeId,
-        type: 'EXCEPTION_ESCALATED',
-        message: `Your time exception request was escalated due to payroll cut-off.`,
-      });
-    }
-
-    return pending.length;
   }
+
+  return pending.length;
+}
 
   // ============================================================================
   // 3. PUBLIC METHOD — FULL ESCALATION PROCESS
@@ -3918,108 +4230,320 @@ async autoEscalatePendingPermissions() {
       timeExceptionsEscalated: exceptions,
     };
   }
-// ============================================================================
-// USER STORY 19 — OVERTIME & EXCEPTION REPORTS (FIXED TYPING)
-// ============================================================================
-
-
-  // ============================================================================
-  // 1. OVERTIME REPORT
-  // ============================================================================
-  async getOvertimeReport(range: { start: Date; end: Date }) {
-    const records = await this.attendanceRecordModel
+  /**
+ * US18 — Get pending requests that need escalation
+ */
+async getPendingEscalations(cutoffDate: Date) {
+  const [corrections, exceptions] = await Promise.all([
+    this.correctionRequestModel
       .find({
-        'punches.time': {
-          $gte: range.start,
-          $lte: range.end,
-        },
+        status: { $in: [CorrectionRequestStatus.SUBMITTED, CorrectionRequestStatus.IN_REVIEW] },
+        createdAt: { $lte: cutoffDate },
       })
-      .populate('employeeId') // gets full employee object
+      .populate('employeeId', 'firstName lastName personalEmail')
+      .lean(),
+
+    this.timeExceptionModel
+      .find({
+        status: { $in: [TimeExceptionStatus.OPEN, TimeExceptionStatus.PENDING] },
+        createdAt: { $lte: cutoffDate },
+      })
+      .populate('employeeId', 'firstName lastName personalEmail')
+      .lean(),
+  ]);
+
+  return {
+    cutoffDate,
+    pendingCorrections: corrections.length,
+    pendingExceptions: exceptions.length,
+    totalPending: corrections.length + exceptions.length,
+    corrections,
+    exceptions,
+  };
+}
+
+/**
+ * US18 — Get escalation history
+ */
+
+/**
+ * US18 — Get escalation history
+ */
+async getEscalationHistory(filters: {
+  startDate?: Date;
+  endDate?: Date;
+}) {
+  const query: any = {};
+
+  if (filters.startDate || filters.endDate) {
+    query.updatedAt = {};
+    if (filters.startDate) {
+      query.updatedAt.$gte = filters.startDate;
+    }
+    if (filters.endDate) {
+      query.updatedAt.$lte = filters.endDate;
+    }
+  }
+
+  const [corrections, exceptions] = await Promise.all([
+    this.correctionRequestModel
+      .find({ ...query, status: CorrectionRequestStatus.ESCALATED })
+      .populate('employeeId', 'firstName lastName personalEmail')
+      .sort({ updatedAt: -1 })
+      .lean(),
+
+    this.timeExceptionModel
+      .find({ ...query, status: TimeExceptionStatus.ESCALATED })
+      .populate('employeeId', 'firstName lastName personalEmail')
+      .sort({ updatedAt: -1 })
+      .lean(),
+  ]);
+
+  return {
+    totalEscalated: corrections.length + exceptions.length,
+    corrections,
+    exceptions,
+  };
+} // ← THIS WAS MISSING!
+// ============================================================================
+// USER STORY 19 — OVERTIME & EXCEPTION REPORTS (SIMPLE, PUNCH-BASED)
+// ============================================================================
+
+/**
+ * Helper: get the latest OUT punch time from punches array.
+ */
+private getLastOutPunchTime(punches: Punch[] = []): Date | null {
+  if (!punches || punches.length === 0) return null;
+
+  const outPunches = punches.filter(
+    (p: any) => p.type === PunchType.OUT || p.type === 'OUT',
+  );
+  if (!outPunches.length) return null;
+
+  const latest = outPunches.reduce((acc, curr) => {
+    const accTime = new Date(acc.time).getTime();
+    const currTime = new Date(curr.time).getTime();
+    return currTime > accTime ? curr : acc;
+  });
+
+  return new Date(latest.time);
+}
+
+/**
+ * Helper: derive “attendance date” from punches.
+ * We take the earliest punch and normalize it to that day (00:00).
+ */
+private getAttendanceDateFromPunches(punches: Punch[] = []): Date | null {
+  if (!punches || punches.length === 0) return null;
+
+  const sorted = [...punches].sort(
+    (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
+  );
+  const first = sorted[0];
+  const d = new Date(first.time);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Helper: build scheduled shift end Date from shift.endTime ("HH:mm")
+ * and an attendance date (the day we computed from punches).
+ */
+private buildShiftEndForAttendance(attendanceDate: Date, shift: any): Date | null {
+  if (!shift || !shift.endTime) return null;
+
+  const [hRaw, mRaw] = String(shift.endTime).split(':');
+  const h = parseInt(hRaw, 10);
+  const m = parseInt(mRaw, 10);
+
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+
+  const scheduledEnd = new Date(attendanceDate);
+  scheduledEnd.setHours(h || 0, m || 0, 0, 0);
+  return scheduledEnd;
+}
+
+/**
+ * Helper: export data array to CSV.
+ */
+private exportToCsv(data: any[], fileName: string) {
+  const parser = new Json2CsvParser({ header: true });
+  const csv = parser.parse(data);
+
+  return {
+    fileName,
+    mimeType: 'text/csv',
+    content: csv,
+  };
+}
+
+/**
+ * OVERTIME REPORT (based only on punches + shift end time)
+ *
+ * Logic:
+ *  - Filter attendance records where punches.time is in [start, end]
+ *  - For each record:
+ *      * derive attendanceDate from first punch
+ *      * find a shift assignment covering that date
+ *      * build scheduledEnd from shift.endTime and attendanceDate
+ *      * get last OUT punch
+ *      * overtimeMinutes = differenceInMinutes(lastOut, scheduledEnd) if > 0
+ */
+async generateOvertimeReport(params: {
+  startDate: string;
+  endDate: string;
+  employeeId?: string;
+  exportCsv?: boolean;
+}) {
+  const { startDate, endDate, employeeId, exportCsv } = params;
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    throw new BadRequestException('Invalid startDate or endDate.');
+  }
+  if (start > end) {
+    throw new BadRequestException('startDate cannot be after endDate.');
+  }
+
+  const recordQuery: any = {
+    'punches.time': { $gte: start, $lte: end },
+  };
+
+  if (employeeId) {
+    recordQuery.employeeId = new Types.ObjectId(employeeId);
+  }
+
+  const records = await this.attendanceRecordModel
+    .find(recordQuery)
+    .populate({
+      path: 'employeeId',
+      select: 'firstName lastName personalEmail',
+    })
+    .lean();
+
+  const rows: any[] = [];
+  let totalOvertimeMinutes = 0;
+
+  for (const rec of records) {
+    const punches = (rec as any).punches || [];
+    const employee = rec.employeeId as any;
+
+    const attendanceDate = this.getAttendanceDateFromPunches(punches);
+    if (!attendanceDate) continue;
+
+    const assignment = await this.shiftAssignmentModel
+      .findOne({
+        employeeId: employee._id,
+        startDate: { $lte: attendanceDate },
+        $or: [{ endDate: null }, { endDate: { $gte: attendanceDate } }],
+      })
+      .populate('shiftId')
       .lean();
 
-    const report = records.map((rec) => {
-      const emp = rec.employeeId as any; // FIX FOR TS ERROR
+    if (!assignment || !assignment.shiftId) continue;
 
-      return {
-        employeeName: emp ? `${emp.firstName} ${emp.lastName}` : 'Unknown',
-        employeeEmail: emp?.email || '',
-        totalWorkMinutes: rec.totalWorkMinutes,
-        hasMissedPunch: rec.hasMissedPunch,
-        exceptionCount: rec.exceptionIds?.length || 0,
-      };
-    });
+    const shift = assignment.shiftId as any;
+    const scheduledEnd = this.buildShiftEndForAttendance(attendanceDate, shift);
+    if (!scheduledEnd) continue;
 
-    return report;
-  }
+    const lastOut = this.getLastOutPunchTime(punches);
+    if (!lastOut) continue;
 
-  // ============================================================================
-  // 2. EXCEPTION REPORT
-  // ============================================================================
-  async getExceptionReport(range: { start: Date; end: Date }) {
-    const exceptions = await this.timeExceptionModel
-      .find({
-        createdAt: {
-          $gte: range.start,
-          $lte: range.end,
-        },
-      })
-      .populate('employeeId')
-      .populate('attendanceRecordId')
-      .lean();
+    const diffMinutes = differenceInMinutes(lastOut, scheduledEnd);
 
-    return exceptions.map((ex) => {
-      const emp = ex.employeeId as any; // FIX FOR TS ERROR
+    // Only positive → overtime
+    if (diffMinutes <= 0) continue;
 
-      return {
-        employeeName: `${emp?.firstName || ''} ${emp?.lastName || ''}`.trim(),
-        employeeEmail: emp?.personalEmail || '',
-        type: ex.type,
-        status: ex.status,
-        reason: ex.reason || '',
-        attendanceRecordId: ex.attendanceRecordId?._id || '',
-      };
+    const overtimeHours = Number((diffMinutes / 60).toFixed(2));
+    totalOvertimeMinutes += diffMinutes;
+
+    rows.push({
+      date: attendanceDate.toISOString().split('T')[0],
+      employeeId: String(employee._id),
+      employeeName: `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim(),
+      employeeEmail: employee.personalEmail || '',
+      shiftName: shift.name || '',
+      scheduledEnd: scheduledEnd.toISOString(),
+      lastOut: lastOut.toISOString(),
+      overtimeMinutes: diffMinutes,
+      overtimeHours,
     });
   }
 
-  // ============================================================================
-  // 3. EXPORT TO CSV
-  // ============================================================================
-  private exportToCsv(data: any[], fileName: string) {
-    const parser = new Json2CsvParser({ header: true });
-    const csv = parser.parse(data);
+  const result = {
+    summary: {
+      totalRecordsWithOvertime: rows.length,
+      totalOvertimeMinutes,
+      totalOvertimeHours: Number((totalOvertimeMinutes / 60).toFixed(2)),
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0],
+    },
+    rows,
+  };
 
-    return {
-      fileName,
-      mimeType: 'text/csv',
-      content: csv,
-    };
+  if (!exportCsv) {
+    return result;
   }
 
-  // ============================================================================
-  // 4. PUBLIC — OVERTIME REPORT
-  // ============================================================================
-  async generateOvertimeReport(
-    range: { start: Date; end: Date },
-    exportAsCsv = false,
-  ) {
-    const report = await this.getOvertimeReport(range);
-    if (!exportAsCsv) return report;
+  return {
+    ...result,
+    ...this.exportToCsv(rows, 'overtime-report.csv'),
+  };
+}
 
-    return this.exportToCsv(report, 'overtime-report.csv');
+/**
+ * EXCEPTION REPORT (unchanged logic, just simple)
+ * Reads directly from TimeException collection.
+ */
+// ============================================================================
+// USER STORY 19 — EXCEPTION REPORT (FIXED & SIMPLE)
+// ============================================================================
+// ================================================
+// USER STORY 19 — EXCEPTION REPORT (Notification Logs)
+// ================================================
+async generateExceptionReport(
+  _range?: { start?: Date; end?: Date }, // kept for signature compatibility but unused
+  exportCsv = false,
+  employeeId?: string,
+) {
+  const query: any = {
+    // Only include Time Management–related notification types
+    type: { $in: this.timeManagementNotificationTypes },
+  };
+
+  // Optional filter by employee
+  if (employeeId) {
+    if (!Types.ObjectId.isValid(employeeId)) {
+      throw new BadRequestException('Invalid employeeId filter');
+    }
+    query.to = new Types.ObjectId(employeeId);
   }
 
-  // ============================================================================
-  // 5. PUBLIC — EXCEPTION REPORT
-  // ============================================================================
-  async generateExceptionReport(
-    range: { start: Date; end: Date },
-    exportAsCsv = false,
-  ) {
-    const report = await this.getExceptionReport(range);
-    if (!exportAsCsv) return report;
+  const logs = await this.notificationLogModel
+    .find(query)
+    .sort({ createdAt: 1 }) // sort is fine; we don't *read* createdAt
+    .lean()
+    .exec();
 
-    return this.exportToCsv(report, 'exception-report.csv');
+  const rows = logs.map((log: any) => ({
+    to: log.to?.toString?.() ?? '',
+    title: log.type,          // "type" used as Title
+    message: log.message ?? '',
+  }));
+
+  if (exportCsv) {
+    // Simple static filename; no createdAt usage
+    return this.exportToCsv(rows, 'exception-report.csv');
   }
+
+  return {
+    count: rows.length,
+    rows,
+  };
+}
+
   // ============================================================================
 // USER STORY 20 — CROSS-MODULE DATA SYNCHRONIZATION
 // BR-TM-22: Sync daily with Payroll & Leaves modules

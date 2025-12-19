@@ -447,6 +447,7 @@ deactivateScheduleRule(@Param('id') id: string) {
 @Roles(
   SystemRole.SYSTEM_ADMIN,
   SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER
 )
 @Post('shift-assignments/notify-expiry')
 notifyUpcomingShiftExpiry(@Query('daysBefore') daysBefore?: string) {
@@ -457,7 +458,7 @@ notifyUpcomingShiftExpiry(@Query('daysBefore') daysBefore?: string) {
 
 
 @UseGuards(RolesGuard)
-@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.HR_MANAGER)
 @Get('notifications/shift-expiry')
 getShiftExpiryNotifications(
   @Query('limit') limit?: string,
@@ -669,15 +670,31 @@ async processExcelData(
   }
 
   @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN, SystemRole.PAYROLL_SPECIALIST)
+  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN, SystemRole.PAYROLL_SPECIALIST, SystemRole.DEPARTMENT_HEAD)
   @Get('attendance')
   async getAttendanceRecords(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string, @Query('employeeId') employeeId?: string, @Query('page') page?: number, @Query('limit') limit?: number) {
     return this.timeManagementService.getAttendanceRecords({ startDate, endDate, employeeId, page, limit });
   }
+@UseGuards( RolesGuard)
+@Roles(SystemRole.DEPARTMENT_HEAD)
+@Get("attendance/department")
+async getDepartmentAttendance(
+  @Req() req: any,
+  @Query("startDate") startDate?: string,
+  @Query("endDate") endDate?: string,
+  @Query("page") page?: number,
+  @Query("limit") limit?: number,
+) {
+  return this.timeManagementService.getDepartmentAttendanceRecords(
+    req.user,
+    { startDate, endDate, page, limit }
+  );
+}
+
 
 
   @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_EMPLOYEE, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
+  @Roles(SystemRole.HR_EMPLOYEE,SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN, SystemRole.SYSTEM_ADMIN)
   @Get('attendance/stats')
   async getAttendanceStats(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
     return this.timeManagementService.getAttendanceStats({ startDate, endDate });
@@ -1267,6 +1284,7 @@ async reviewTimeException(
 // 3) Get pending correction requests (for HR workflow)
 @UseGuards(RolesGuard)
 @Roles(
+  SystemRole.DEPARTMENT_HEAD,
   SystemRole.HR_MANAGER,
   SystemRole.HR_ADMIN,
   SystemRole.SYSTEM_ADMIN,
@@ -1479,52 +1497,61 @@ getPendingPermissions() {
 
 // ================================================
 // USER STORY 16 — VACATION PACKAGE INTEGRATION
+// BR-TM-19: Time off automatically reflected in attendance
 // ================================================
 
-// Run vacation → attendance sync for ONE employee
+/**
+ * US16 — Sync holidays with attendance from Leaves calendar
+ * Fetches holidays from Leaves module and creates attendance records for employees with shifts
+ */
 @UseGuards(RolesGuard)
 @Roles(
-  SystemRole.HR_MANAGER,
-  SystemRole.HR_ADMIN,
   SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
 )
-@Post('vacation/integrate/:employeeId')
-integrateVacationPackages(
-  @Param('employeeId') employeeId: string,
-  @Body() dto: { start: string; end: string },
-) {
-  return this.timeManagementService.integrateVacationPackages(
-    new Types.ObjectId(employeeId),
-    {
-      start: new Date(dto.start),
-      end: new Date(dto.end),
-    },
+@Post('holidays/sync-from-leaves/:year')
+async syncHolidaysFromLeaves(@Param('year') year: string) {
+  return this.timeManagementService.syncHolidaysFromLeavesCalendar(
+    parseInt(year),
   );
 }
 
-// OPTIONAL: Run integration for ALL employees (if needed later)
-// This depends on whether you want batch sync; comment out if not needed.
-/*
-@UseGuards(RolesGuard)
-@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
-@Post('vacation/integrate-all')
-integrateVacationForAll(@Body() dto: { start: string; end: string }) {
-  return this.timeManagementService.integrateVacationForAll({
-    start: new Date(dto.start),
-    end: new Date(dto.end),
-  });
-}
-*/
-// ================================================
-// USER STORY 17 — HOLIDAY & REST DAY CONFIGURATION
-// ================================================
-
-// 1) Create a holiday (Admin only)
+/**
+ * US16 — Preview which employees will be affected by holiday sync
+ */
 @UseGuards(RolesGuard)
 @Roles(
   SystemRole.SYSTEM_ADMIN,
   SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
 )
+@Get('holidays/sync-preview/:year')
+async previewHolidaySync(@Param('year') year: string) {
+  return this.timeManagementService.previewHolidaySync(parseInt(year));
+}
+// ================================================
+// USER STORY 17 — HOLIDAY & REST DAY CONFIGURATION
+// ================================================
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.DEPARTMENT_HEAD,
+  SystemRole.DEPARTMENT_EMPLOYEE,
+)
+@Get('holidays/upcoming')
+getUpcomingHolidays(@Query('days') days?: string) {
+  return this.timeManagementService.getUpcomingHolidays(
+    days ? parseInt(days) : 30,
+  );
+}
+/**
+ * US17 — Create a holiday (Admin only)
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
 @Post('holidays')
 createHoliday(@Body() dto: any) {
   return this.timeManagementService.createHoliday({
@@ -1535,46 +1562,154 @@ createHoliday(@Body() dto: any) {
   });
 }
 
-// 2) Apply holiday rules for employee within range
+/**
+ * US17 — Get all holidays
+ */
 @UseGuards(RolesGuard)
 @Roles(
   SystemRole.SYSTEM_ADMIN,
-  SystemRole.HR_MANAGER,
   SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.DEPARTMENT_HEAD,
 )
-@Post('holidays/apply/:employeeId')
-applyHolidayRange(
-  @Param('employeeId') employeeId: string,
-  @Body() dto: { start: string; end: string },
+@Get('holidays')
+getAllHolidays(
+  @Query('type') type?: string,
+  @Query('year') year?: string,
+  @Query('startDate') startDate?: string,
+  @Query('endDate') endDate?: string,
 ) {
-  return this.timeManagementService.applyHolidayRange(
-    new Types.ObjectId(employeeId),
-    {
-      start: new Date(dto.start),
-      end: new Date(dto.end),
-    },
+  return this.timeManagementService.getAllHolidays({
+    type,
+    year: year ? parseInt(year) : undefined,
+    startDate: startDate ? new Date(startDate) : undefined,
+    endDate: endDate ? new Date(endDate) : undefined,
+  });
+}
+
+/**
+ * US17 — Get single holiday by ID
+ */
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.DEPARTMENT_HEAD,
+)
+@Get('holidays/:id')
+getHolidayById(@Param('id') id: string) {
+  return this.timeManagementService.getHolidayById(new Types.ObjectId(id));
+}
+
+/**
+ * US17 — Update a holiday
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
+@Patch('holidays/:id')
+updateHoliday(@Param('id') id: string, @Body() dto: any) {
+  return this.timeManagementService.updateHoliday(new Types.ObjectId(id), {
+    type: dto.type,
+    startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+    endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+    name: dto.name,
+  });
+}
+
+/**
+ * US17 — Delete a holiday
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
+@Delete('holidays/:id')
+deleteHoliday(@Param('id') id: string) {
+  return this.timeManagementService.deleteHoliday(new Types.ObjectId(id));
+}
+
+/**
+
+
+/**
+ * US17 — Get upcoming holidays
+ */
+
+
+/**
+ * US17 — Check if a specific date is a holiday
+ */
+@UseGuards(RolesGuard)
+@Roles(
+  SystemRole.SYSTEM_ADMIN,
+  SystemRole.HR_ADMIN,
+  SystemRole.HR_MANAGER,
+  SystemRole.DEPARTMENT_HEAD,
+)
+@Get('holidays/check/:date')
+checkIfHoliday(@Param('date') date: string) {
+  return this.timeManagementService.checkIfHoliday(new Date(date));
+}
+// ================================================
+// USER STORY 18 — ESCALATION BEFORE PAYROLL CUT-OFF
+// BR-TM-20: Unreviewed requests escalate before payroll
+// ================================================
+
+/**
+ * US18 — Get pending requests that need escalation
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.HR_MANAGER)
+@Get('escalations/pending')
+getPendingEscalations(@Query('cutoff') cutoff?: string) {
+  const cutoffDate = cutoff ? new Date(cutoff) : new Date();
+  cutoffDate.setHours(23, 59, 59, 999);
+  
+  return this.timeManagementService.getPendingEscalations(cutoffDate);
+}
+
+/**
+ * US18 — Get escalation history/logs
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN, SystemRole.HR_MANAGER)
+@Get('escalations/history')
+getEscalationHistory(
+  @Query('startDate') startDate?: string,
+  @Query('endDate') endDate?: string,
+) {
+  return this.timeManagementService.getEscalationHistory({
+    startDate: startDate ? new Date(startDate) : undefined,
+    endDate: endDate ? new Date(endDate) : undefined,
+  });
+}
+
+/**
+ * US18 — Trigger escalation for current month-end
+ */
+@UseGuards(RolesGuard)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
+@Post('escalations/payroll/current-month')
+escalateForCurrentMonth() {
+  const today = new Date();
+  const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  lastDayOfMonth.setHours(23, 59, 59, 999);
+  
+  return this.timeManagementService.escalatePendingRequestsBeforePayroll(
+    lastDayOfMonth,
   );
 }
 
-
-
-// ================================================
-// USER STORY 18 — ESCALATION BEFORE PAYROLL CUT-OFF
-// ================================================
-
-// Trigger escalation job before payroll cut-off
+/**
+ * US18 — Trigger escalation with custom date (manual)
+ */
 @UseGuards(RolesGuard)
-@Roles(
-  SystemRole.SYSTEM_ADMIN,
-  SystemRole.HR_ADMIN,
-)
+@Roles(SystemRole.SYSTEM_ADMIN, SystemRole.HR_ADMIN)
 @Post('escalations/payroll')
 escalatePendingRequestsBeforePayroll(@Body() dto: { cutoff: string }) {
   return this.timeManagementService.escalatePendingRequestsBeforePayroll(
     new Date(dto.cutoff),
   );
 }
-
 // ================================================
 // USER STORY 19 — OVERTIME & EXCEPTION REPORTS
 // ================================================
@@ -1591,33 +1726,41 @@ escalatePendingRequestsBeforePayroll(@Body() dto: { cutoff: string }) {
 async generateOvertimeReport(
   @Query('start') start: string,
   @Query('end') end: string,
+  @Query('employeeId') employeeId?: string,
   @Query('exportCsv') exportCsv?: string,
 ) {
-  return this.timeManagementService.generateOvertimeReport(
-    { start: new Date(start), end: new Date(end) },
-    exportCsv === 'true',
-  );
+  return this.timeManagementService.generateOvertimeReport({
+    startDate: start,
+    endDate: end,
+    employeeId,
+    exportCsv: exportCsv === 'true',
+  });
 }
 
+// 2) Generate exception report (JSON or CSV)
 // 2) Generate exception report (JSON or CSV)
 @UseGuards(RolesGuard)
 @Roles(
   SystemRole.HR_MANAGER,
   SystemRole.HR_ADMIN,
-  SystemRole.PAYROLL_SPECIALIST,
   SystemRole.SYSTEM_ADMIN,
 )
 @Get('reports/exceptions')
 async generateExceptionReport(
-  @Query('start') start: string,
-  @Query('end') end: string,
+  @Query('start') start?: string,
+  @Query('end') end?: string,
   @Query('exportCsv') exportCsv?: string,
 ) {
+  const startDate = start ? new Date(start) : undefined;
+  const endDate = end ? new Date(end) : undefined;
+
   return this.timeManagementService.generateExceptionReport(
-    { start: new Date(start), end: new Date(end) },
+    { start: startDate, end: endDate },
     exportCsv === 'true',
   );
 }
+
+
 // ================================================
 // USER STORY 20 — CROSS-MODULE DATA SYNCHRONIZATION
 // ================================================

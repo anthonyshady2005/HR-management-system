@@ -23,8 +23,13 @@ import {
   CreateHolidayInput,
   UpdateHolidayInput,
 } from "../services/holiday.service";
+import { useAuth } from "@/providers/auth-provider";
+import { useRequireRole } from "@/hooks/use-require-role";
+const ALLOWED_ROLES = ["HR Admin", "System Admin"];
 
 export default function HolidayManagementPage() {
+  const { status } = useAuth();
+  useRequireRole(ALLOWED_ROLES, "/");
   /* ===================== STATE ===================== */
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [upcomingHolidays, setUpcomingHolidays] = useState<Holiday[]>([]);
@@ -225,6 +230,7 @@ export default function HolidayManagementPage() {
   };
 
   /* ===================== UI ===================== */
+  if (status === "loading") {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -820,4 +826,5 @@ export default function HolidayManagementPage() {
       )}
     </div>
   );
+}
 }
