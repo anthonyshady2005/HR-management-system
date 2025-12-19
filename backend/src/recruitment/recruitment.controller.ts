@@ -572,6 +572,7 @@ export class RecruitmentController {
   async signOffer(@Param('id') id: string, @Body() signDto: any, @Req() req: any) {
     const ipAddress = req.ip || req.connection?.remoteAddress || req.headers?.['x-forwarded-for']?.split(',')[0] || 'unknown';
     const userId = (req as any).user?._id?.toString() || (req as any).user?.sub?.toString();
+    const userRoles = (req as any).user?.roles || [];
     return this.recruitmentService.signOffer(
       id,
       signDto.signerType,
@@ -579,6 +580,7 @@ export class RecruitmentController {
       ipAddress,
       signDto.token,
       userId,
+      userRoles,
     );
   }
 

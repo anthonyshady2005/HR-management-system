@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import Navbar from "@/components/Navbar";
 
 export default function CareersPage() {
   const router = useRouter();
@@ -57,13 +56,20 @@ export default function CareersPage() {
 
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (job) =>
-          job.templateId?.title?.toLowerCase().includes(query) ||
-          job.templateId?.department?.toLowerCase().includes(query) ||
+      filtered = filtered.filter((job) => {
+        const department = typeof job.departmentId === 'object' && job.departmentId !== null
+          ? (job.departmentId as { name?: string; code?: string }).name?.toLowerCase() || ''
+          : '';
+        const template = job.templateId as any;
+        return (
+          job.title?.toLowerCase().includes(query) ||
+          template?.title?.toLowerCase().includes(query) ||
+          department.includes(query) ||
+          template?.department?.toLowerCase().includes(query) ||
           job.requisitionId?.toLowerCase().includes(query) ||
-          job.templateId?.description?.toLowerCase().includes(query)
-      );
+          template?.description?.toLowerCase().includes(query)
+        );
+      });
     }
 
     if (locationFilter) {
@@ -95,7 +101,6 @@ export default function CareersPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white">
-      <Navbar />
       <main className="container mx-auto px-4 py-12">
         {/* Header */}
         <div className="text-center mb-12">
@@ -159,6 +164,9 @@ export default function CareersPage() {
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {filteredJobs.map((job) => {
               const template = job.templateId as any;
+              const department = typeof job.departmentId === 'object' && job.departmentId !== null
+                ? (job.departmentId as { name?: string; code?: string }).name
+                : null;
               const daysSincePosted = getDaysSincePosted(job.postingDate);
               const isExpired =
                 job.expiryDate && new Date(job.expiryDate) < new Date();
@@ -172,13 +180,13 @@ export default function CareersPage() {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <h3 className="text-xl font-semibold mb-2 group-hover:text-white transition-colors">
-                        {template?.title || "Job Title"}
+                        {job.title || template?.title || "Job Title"}
                       </h3>
                       <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-                        {template?.department && (
+                        {department && (
                           <span className="flex items-center gap-1">
                             <Briefcase className="w-4 h-4" />
-                            {template.department}
+                            {department}
                           </span>
                         )}
                         {job.location && (

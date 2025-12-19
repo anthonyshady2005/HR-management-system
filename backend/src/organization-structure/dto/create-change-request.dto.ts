@@ -6,6 +6,7 @@ import {
   ValidateIf,
   IsMongoId,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { StructureRequestType } from '../enums/organization-structure.enums';
 import { Types } from 'mongoose';
@@ -24,13 +25,21 @@ export class CreateChangeRequestDto {
     description: 'Target department ID (for department-related requests). Required for UPDATE_DEPARTMENT, optional for NEW_DEPARTMENT.',
     type: String,
   })
+  @Transform(({ value, obj }) => {
+    // Convert empty strings to undefined for optional fields
+    // For NEW_DEPARTMENT, parent department is optional, so empty string should be treated as undefined
+    if (value === '' || value === null) {
+      return undefined;
+    }
+    return value;
+  })
   @IsOptional()
   // Only validate as MongoId if:
   // 1. UPDATE_DEPARTMENT (required, so validate)
   // 2. OR if a non-empty value is provided (optional but validate format)
   @ValidateIf((o) => 
     o.requestType === StructureRequestType.UPDATE_DEPARTMENT ||
-    (o.targetDepartmentId && o.targetDepartmentId !== '')
+    (o.targetDepartmentId && o.targetDepartmentId !== '' && o.targetDepartmentId !== undefined && o.targetDepartmentId !== null)
   )
   @IsMongoId({ message: 'targetDepartmentId must be a valid MongoDB ObjectId' })
   targetDepartmentId?: string;
