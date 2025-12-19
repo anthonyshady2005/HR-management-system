@@ -361,14 +361,35 @@ export default function EmployeeDetailPage() {
       router.push("/offboarding");
     } catch (error: any) {
       console.error("Failed to initiate offboarding:", error);
-      console.error("Error response:", error.response?.data);
+      console.error("Error response data:", JSON.stringify(error.response?.data, null, 2));
+      console.error("Error response status:", error.response?.status);
+      console.error("Error response headers:", error.response?.headers);
       
       // Show detailed error message if available
-      const errorMessage = error.response?.data?.message 
-        || error.response?.data?.error
-        || (Array.isArray(error.response?.data?.message) 
-            ? error.response.data.message.join(", ") 
-            : "Failed to initiate offboarding workflow");
+      let errorMessage = "Failed to initiate offboarding workflow";
+      
+      if (error.response?.data) {
+        const data = error.response.data;
+        // NestJS BadRequestException format: { statusCode: 400, message: "...", error: "Bad Request" }
+        if (data.message) {
+          errorMessage = Array.isArray(data.message) ? data.message.join(", ") : data.message;
+        } else if (data.error && typeof data.error === 'string') {
+          errorMessage = data.error;
+        } else if (typeof data === 'string') {
+          errorMessage = data;
+        } else if (Object.keys(data).length > 0) {
+          // Try to extract any error information from the object
+          const messages = Object.values(data)
+            .filter(val => val && (typeof val === 'string' || Array.isArray(val)))
+            .map(val => Array.isArray(val) ? val.join(", ") : val);
+          if (messages.length > 0) {
+            errorMessage = messages.join("; ");
+          }
+        }
+      }
+      
+      // Log the full error for debugging
+      console.error("Extracted error message:", errorMessage);
       
       toast.error(errorMessage);
     }
@@ -402,6 +423,7 @@ export default function EmployeeDetailPage() {
   const department = profile?.primaryDepartmentId as Department | undefined;
   
   const isHrOrAdmin = currentRole === "HR Admin" || currentRole === "HR Manager" || currentRole === "System Admin";
+  const isHrManager = currentRole === "HR Manager"; // Only HR Manager can initiate termination
 
   return (
     <ProtectedRoute allowedRoles={ALLOWED_ROLES}>
@@ -454,20 +476,22 @@ export default function EmployeeDetailPage() {
             <StatusBadge status={profile.status} className="ml-4" />
           </div>
           <div className="flex gap-2">
+            {!editing && isHrManager && (
+              <Button
+                onClick={() => setShowDeactivateDialog(true)}
+                variant="destructive"
+                size="sm"
+                disabled={
+                  profile.status === "TERMINATED" ||
+                  profile.status === "RETIRED"
+                }
+              >
+                <Ban className="w-4 h-4 mr-2" />
+                Initiate Termination/Offboarding
+              </Button>
+            )}
             {!editing && isHrOrAdmin && (
               <>
-                <Button
-                  onClick={() => setShowDeactivateDialog(true)}
-                  variant="destructive"
-                  size="sm"
-                  disabled={
-                    profile.status === "TERMINATED" ||
-                    profile.status === "RETIRED"
-                  }
-                >
-                  <Ban className="w-4 h-4 mr-2" />
-                  Initiate Termination/Offboarding
-                </Button>
                 <Button
                   onClick={() => {
                     setEditing(true);
